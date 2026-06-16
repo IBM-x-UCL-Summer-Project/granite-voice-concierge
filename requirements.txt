@@ -1,6 +1,0 @@
-# Audio & Wake Word Detection
-pyaudio
-numpy
-openwakeword
-
-
