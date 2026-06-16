@@ -1,3 +1,10 @@
+# Base Dependencies
+-r requirements.txt
+
+# Linting & Formatting
 black
 ruff
+
+# Testing
 pytest
+pytest-cov
