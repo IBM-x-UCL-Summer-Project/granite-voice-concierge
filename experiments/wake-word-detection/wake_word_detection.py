@@ -1,4 +1,6 @@
 # Standard library
+import time
+import tracemalloc
 from typing import Callable, Deque
 
 # Third-party
@@ -19,14 +21,15 @@ CONFIDENCE_THRESHOLD: float = 0.3 # higher threshold -> less sensitive
 # Load the model — downloads pre-trained models on first run
 openwakeword.utils.download_models()
 oww_model: Model = Model(
-    wakeword_models=["hey_jarvis_v0.1.onnx"],  # swap this for your chosen wake word
-    inference_framework="onnx"       # ONNX is the recommended backend
+    wakeword_models=["hey_jarvis_v0.1.onnx"],
+    inference_framework="onnx"
 )
 
 def listen_for_wake_word(callback: Callable[[], None]) -> None:
     """
     Continuously listens to the microphone.
     Calls callback() when the wake word is detected.
+    Logs latency and RAM measurements on each detection.
     """
     p: pyaudio.PyAudio = pyaudio.PyAudio()
     stream: pyaudio.Stream = p.open(
@@ -37,6 +40,9 @@ def listen_for_wake_word(callback: Callable[[], None]) -> None:
         frames_per_buffer=CHUNK
     )
 
+    # Start RAM tracking
+    tracemalloc.start()
+
     print("Listening for wake word...")
 
     try:
@@ -46,14 +52,24 @@ def listen_for_wake_word(callback: Callable[[], None]) -> None:
             audio_np: np.ndarray = np.frombuffer(audio_chunk, dtype=np.int16)
 
             # Run wake word detection on this chunk
+            t_start: float = time.perf_counter()
             oww_model.predict(audio_np)
+            t_predict: float = time.perf_counter() - t_start
 
             # Check if any wake word exceeded the confidence threshold
             wake_word: str
             confidence: Deque[float]
             for wake_word, confidence in oww_model.prediction_buffer.items():
                 if confidence[-1] > CONFIDENCE_THRESHOLD:
+                    t_detection: float = time.perf_counter() - t_start
+                    current_ram, peak_ram = tracemalloc.get_traced_memory()
+
                     print(f"Wake word detected: '{wake_word}' (confidence: {confidence[-1]:.2f})")
+                    print(f"  Predict time : {t_predict * 1000:.1f} ms")
+                    print(f"  Detection time : {t_detection * 1000:.1f} ms")
+                    print(f"  RAM current : {current_ram / 1024 / 1024:.1f} MB")
+                    print(f"  RAM peak : {peak_ram / 1024 / 1024:.1f} MB")
+
                     oww_model.reset()  # reset buffers to avoid repeat triggers
                     callback()
                     break
@@ -61,6 +77,7 @@ def listen_for_wake_word(callback: Callable[[], None]) -> None:
     except KeyboardInterrupt:
         print("Stopping...")
     finally:
+        tracemalloc.stop()
         stream.stop_stream()
         stream.close()
         p.terminate()

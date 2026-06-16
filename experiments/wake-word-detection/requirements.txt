@@ -2,5 +2,5 @@
 pyaudio
 numpy
 openwakeword
-
-
+soundfile
+sounddevice
