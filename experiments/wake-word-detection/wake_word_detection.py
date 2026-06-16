@@ -1,10 +1,10 @@
-# Third-party
+# Standard library
 from typing import Any
 
-
+# Third-party
 import pyaudio
 import numpy as np
-
+import openwakeword.utils
 from openwakeword.model import Model
 
 # Audio config — these values are required by openWakeWord
@@ -17,8 +17,9 @@ RATE: int = 16000          # openWakeWord requires 16kHz mono audio
 CONFIDENCE_THRESHOLD: float = 0.5
 
 # Load the model — downloads pre-trained models on first run
+openwakeword.utils.download_models()
 oww_model: Model = Model(
-    wakeword_models=["hey_jarvis"],  # swap this for your chosen wake word
+    wakeword_models=["hey_jarvis_v0.1.onnx"],  # swap this for your chosen wake word
     inference_framework="onnx"       # ONNX is the recommended backend
 )
 
