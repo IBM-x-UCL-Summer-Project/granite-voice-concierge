@@ -14,7 +14,7 @@ CHANNELS: int = 1
 RATE: int = 16000          # openWakeWord requires 16kHz mono audio
 
 # Wake word config
-CONFIDENCE_THRESHOLD: float = 0.5
+CONFIDENCE_THRESHOLD: float = 0.3 # higher threshold -> less sensitive
 
 # Load the model — downloads pre-trained models on first run
 openwakeword.utils.download_models()
