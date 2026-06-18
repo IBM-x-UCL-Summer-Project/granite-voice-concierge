@@ -16,11 +16,11 @@ if str(SRC_DIR) not in sys.path:
 
 from voice_concierge.reasoning import (  # noqa: E402
     DEFAULT_REASONING_MODEL,
+    DeterministicReasoningFake,
     OllamaConfig,
     OllamaReasoningEngine,
     OllamaReasoningError,
     ReasoningEngine,
-    RuleBasedReasoningPrototype,
 )
 from voice_concierge.reasoning.benchmark import (  # noqa: E402
     EVALUATION_MODES,
@@ -54,8 +54,8 @@ def parse_args() -> argparse.Namespace:
     )
     run_parser.add_argument(
         "--engine",
-        choices=("prototype", "ollama"),
-        default="prototype",
+        choices=("fake", "ollama"),
+        default="fake",
         help="Reasoning engine to benchmark.",
     )
     run_parser.add_argument(
@@ -140,8 +140,8 @@ def _add_common_args(
 def build_engine(args: argparse.Namespace) -> ReasoningEngine:
     """Build the engine selected for a single benchmark run."""
 
-    if args.engine == "prototype":
-        return RuleBasedReasoningPrototype()
+    if args.engine == "fake":
+        return DeterministicReasoningFake()
 
     if args.engine == "ollama":
         return OllamaReasoningEngine(

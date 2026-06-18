@@ -1,8 +1,8 @@
-"""Local reasoning interfaces and prototype implementations."""
+"""Public interfaces and implementations for local reasoning."""
 
 from voice_concierge.reasoning.engine import (
+    DeterministicReasoningFake,
     ReasoningEngine,
-    RuleBasedReasoningPrototype,
     TraceableReasoningEngine,
 )
 from voice_concierge.reasoning.models import (
@@ -38,12 +38,12 @@ from voice_concierge.reasoning.types import (
 
 __all__ = [
     "MemoryAction",
+    "DeterministicReasoningFake",
     "ReasoningConstraints",
     "ReasoningEngine",
     "ReasoningRequest",
     "ReasoningResponse",
     "ReasoningTrace",
-    "RuleBasedReasoningPrototype",
     "TraceableReasoningEngine",
     "ChatMessage",
     "DEFAULT_FALLBACK_MODEL",
