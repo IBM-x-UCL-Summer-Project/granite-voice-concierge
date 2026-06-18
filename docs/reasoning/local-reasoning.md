@@ -42,12 +42,15 @@ Install development tools:
 python -m pip install -r requirements-dev.txt
 ```
 
-## Run Prototype Benchmark
+## Run the Deterministic Fake
 
-The default benchmark uses the deterministic prototype engine. It does not require a model runner.
+The default benchmark uses a fixed deterministic fake. It verifies request,
+response, suite, and reporting plumbing without requiring a model runner. It does
+not detect intent, apply policy, enforce word limits, or provide evidence about
+response quality.
 
 ```bash
-.venv/bin/python benchmarks/reasoning/benchmark.py run --engine prototype
+.venv/bin/python benchmarks/reasoning/benchmark.py run --engine fake
 ```
 
 Write a report to a file:
@@ -55,13 +58,16 @@ Write a report to a file:
 ```bash
 .venv/bin/python benchmarks/reasoning/benchmark.py \
   run \
-  --engine prototype \
-  --output benchmarks/reasoning/results/prototype-report.json
+  --engine fake \
+  --output benchmarks/reasoning/results/fake-report.json
 ```
 
 ## Run With Ollama
 
-The Ollama backend is optional. It assumes Ollama is already installed, running locally, and has a local model available.
+Running an Ollama model is optional. The adapter uses Ollama's official Python
+client, and connects to the local runner at `http://localhost:11434` by
+default, requires no cloud account or credentials. Ollama itself must be
+installed, running locally, and have a local model available.
 
 The reasoning benchmark defaults to `granite4.1:8b` for Ollama runs. The
 model management helpers can list, inspect, and pull local Ollama models, but
@@ -100,16 +106,23 @@ same model generation:
 
 Evaluation modes are:
 
-- `raw`: parsed model output before deterministic policy guards and word limit
+- `raw`: parsed model output before deterministic policy guards and word-limit
   shaping;
-- `guarded`: final product facing output after policy and word limit shaping;
+- `guarded`: the engine's final product facing output; the Ollama adapter applies
+  policy and word limit shaping before returning it;
 - `both`: both evaluations from one inference, with guarded output retained in
   the legacy top level result fields.
 
-Raw and `both` modes require a trace-capable engine. The deterministic prototype
-only supports `guarded` mode.
+Raw and `both` modes require a trace-capable engine. The deterministic fake only
+supports `guarded` mode.
 
-The Ollama backend requests schema constrained JSON from the local model. The parsed model response is mapped into `ReasoningResponse`, including `needs_confirmation`, `proposed_memory_action`, `mode_suggestion`, and `confidence`. If the model returns invalid JSON or misses required fields, the backend returns a low confidence fallback and records the parse problem in response metadata.
+The Ollama backend requests schema constrained JSON from the local model. A
+single Pydantic boundary model generates the JSON schema sent to Ollama and
+validates the returned content. The validated result is mapped into `ReasoningResponse`,
+including `needs_confirmation`, `proposed_memory_action`, `mode_suggestion`, and
+`confidence`. If the model returns invalid JSON or misses required fields, the
+backend returns a low confidence fallback and records the parse problem in
+response metadata.
 
 The Ollama backend also applies deterministic policy guards after parsing model output. These guards do not store, retrieve, edit, or delete memory. They only correct the reasoning response when a simple local policy should not depend on model compliance, such as confirming accessibility preference changes or refusing to invent a shopping list when no list memory was supplied.
 
