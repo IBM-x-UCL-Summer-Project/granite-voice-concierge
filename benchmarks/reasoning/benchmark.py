@@ -21,7 +21,6 @@ from benchmarks.reasoning.comparison import (  # noqa: E402
     summarize_benchmark_report,
     write_comparison_summary,
 )
-
 from benchmarks.reasoning.suite import (  # noqa: E402
     EVALUATION_MODES,
     load_prompt_suite,
@@ -29,13 +28,16 @@ from benchmarks.reasoning.suite import (  # noqa: E402
     write_benchmark_report,
 )
 from voice_concierge.reasoning import (  # noqa: E402
-    DEFAULT_REASONING_MODEL,
+    DEFAULT_MODEL_SELECTION_PATH,
     DeterministicReasoningFake,
     OllamaConfig,
     OllamaReasoningEngine,
     OllamaReasoningError,
     ReasoningEngine,
+    load_model_selection,
 )
+
+DEFAULT_CONFIG_PATH = REPO_ROOT / DEFAULT_MODEL_SELECTION_PATH
 
 
 def parse_args() -> argparse.Namespace:
@@ -63,8 +65,11 @@ def parse_args() -> argparse.Namespace:
     )
     run_parser.add_argument(
         "--model",
-        default=DEFAULT_REASONING_MODEL,
-        help="Local model name used when --engine ollama is selected.",
+        default=None,
+        help=(
+            "Local model name for --engine ollama. Defaults to the persisted "
+            "model selection."
+        ),
     )
     run_parser.add_argument(
         "--output",
@@ -110,6 +115,12 @@ def _add_common_args(
     """Add options shared by single-run and comparison modes."""
 
     parser.add_argument(
+        "--config",
+        type=Path,
+        default=DEFAULT_CONFIG_PATH,
+        help="Path to the local model-selection config JSON.",
+    )
+    parser.add_argument(
         "--prompts",
         type=Path,
         default=REPO_ROOT / "benchmarks" / "reasoning" / "prompts" / "v0.json",
@@ -117,8 +128,8 @@ def _add_common_args(
     )
     parser.add_argument(
         "--host",
-        default="http://localhost:11434",
-        help="Ollama host URL.",
+        default=None,
+        help="Ollama host URL. Defaults to the persisted model selection.",
     )
     parser.add_argument(
         "--timeout-s",
@@ -147,10 +158,11 @@ def build_engine(args: argparse.Namespace) -> ReasoningEngine:
         return DeterministicReasoningFake()
 
     if args.engine == "ollama":
+        model, host = _resolve_ollama_run_settings(args)
         return OllamaReasoningEngine(
             OllamaConfig(
-                model=args.model,
-                host=args.host,
+                model=model,
+                host=host,
                 timeout_s=args.timeout_s,
             )
         )
@@ -200,6 +212,12 @@ def _run_single(args: argparse.Namespace) -> int:
 def _compare_models(args: argparse.Namespace) -> int:
     """Run multiple Ollama models and write detailed and summary reports."""
 
+    try:
+        host = _resolve_ollama_host(args)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
     suite = load_prompt_suite(args.prompts)
     output_dir = args.output_dir or _default_output_dir()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -211,7 +229,7 @@ def _compare_models(args: argparse.Namespace) -> int:
             engine = OllamaReasoningEngine(
                 OllamaConfig(
                     model=model,
-                    host=args.host,
+                    host=host,
                     timeout_s=args.timeout_s,
                 )
             )
@@ -237,6 +255,33 @@ def _compare_models(args: argparse.Namespace) -> int:
     summary = write_comparison_summary(rows, output_dir=output_dir)
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0 if any(row.error is None for row in rows) else 1
+
+
+def _resolve_ollama_run_settings(
+    args: argparse.Namespace,
+) -> tuple[str, str]:
+    if args.model is not None and args.host is not None:
+        return args.model, args.host
+
+    selection = load_model_selection(args.config)
+    if args.model is None:
+        if selection.backend != "ollama":
+            raise ValueError(
+                f"Selected model backend {selection.backend!r} is not supported "
+                "by the Ollama benchmark engine."
+            )
+        model = selection.model
+    else:
+        model = args.model
+
+    host = args.host or selection.host
+    return model, host
+
+
+def _resolve_ollama_host(args: argparse.Namespace) -> str:
+    if args.host is not None:
+        return args.host
+    return load_model_selection(args.config).host
 
 
 def _default_output_dir() -> Path:

@@ -8,6 +8,7 @@ from voice_concierge.reasoning.engine import (
 from voice_concierge.reasoning.models import (
     DEFAULT_FALLBACK_MODEL,
     DEFAULT_MODEL_BACKEND,
+    DEFAULT_MODEL_SELECTION_PATH,
     DEFAULT_OLLAMA_HOST,
     DEFAULT_REASONING_MODEL,
     LocalModelDetails,
@@ -50,6 +51,7 @@ __all__ = [
     "ChatMessage",
     "DEFAULT_FALLBACK_MODEL",
     "DEFAULT_MODEL_BACKEND",
+    "DEFAULT_MODEL_SELECTION_PATH",
     "DEFAULT_OLLAMA_HOST",
     "DEFAULT_REASONING_MODEL",
     "LocalModelDetails",

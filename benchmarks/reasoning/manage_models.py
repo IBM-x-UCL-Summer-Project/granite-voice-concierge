@@ -16,6 +16,7 @@ if str(SRC_DIR) not in sys.path:
 from voice_concierge.reasoning import (  # noqa: E402
     DEFAULT_FALLBACK_MODEL,
     DEFAULT_MODEL_BACKEND,
+    DEFAULT_MODEL_SELECTION_PATH,
     DEFAULT_OLLAMA_HOST,
     OllamaModelManagementError,
     OllamaModelManager,
@@ -25,7 +26,7 @@ from voice_concierge.reasoning import (  # noqa: E402
     save_model_selection,
 )
 
-DEFAULT_CONFIG_PATH = REPO_ROOT / ".local" / "reasoning-model-selection.json"
+DEFAULT_CONFIG_PATH = REPO_ROOT / DEFAULT_MODEL_SELECTION_PATH
 
 
 def parse_args() -> argparse.Namespace:

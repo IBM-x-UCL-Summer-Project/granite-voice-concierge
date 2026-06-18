@@ -69,20 +69,21 @@ client, and connects to the local runner at `http://localhost:11434` by
 default, requires no cloud account or credentials. Ollama itself must be
 installed, running locally, and have a local model available.
 
-The reasoning benchmark defaults to `granite4.1:8b` for Ollama runs. The
-model management helpers can list, inspect, and pull local Ollama models, but
-the benchmark runner will not silently download a missing model.
+For Ollama runs, the benchmark loads the active model and host from
+`.local/reasoning-model-selection.json`. If the file is absent, the selection
+defaults to `granite4.1:8b` at `http://localhost:11434`. The model-management
+helpers can list, inspect, pull, and select local Ollama models, but the benchmark
+runner will not silently download a missing model.
 
 Example:
 
 ```bash
 .venv/bin/python benchmarks/reasoning/benchmark.py \
   run \
-  --engine ollama \
-  --model <local-model-name>
+  --engine ollama
 ```
 
-If Ollama is listening somewhere other than `http://localhost:11434`, pass:
+Explicit model and host arguments override the persisted selection:
 
 ```bash
 .venv/bin/python benchmarks/reasoning/benchmark.py \
@@ -143,15 +144,17 @@ Show metadata for the default candidate:
 .venv/bin/python benchmarks/reasoning/manage_models.py show granite4.1:8b
 ```
 
-Persist the intended future application model selection locally:
+Persist the active benchmark model selection locally:
 
 ```bash
 .venv/bin/python benchmarks/reasoning/manage_models.py select granite4.1:8b \
   --fallback-model granite3.3:2b
 ```
 
-This writes `.local/reasoning-model-selection.json`. The benchmark runner
-and application do not consume this selection yet; (mainly for future devlopement)
+This writes `.local/reasoning-model-selection.json`. A subsequent
+`benchmark.py run --engine ollama` uses its primary model and host unless
+`--model` or `--host` overrides them. The fallback is recorded for later runtime
+use but is not silently benchmarked or activated.
 
 If a model is missing, pull it through Ollama:
 
@@ -181,6 +184,9 @@ Comparison mode requires at least two explicit model names:
 .venv/bin/python benchmarks/reasoning/benchmark.py compare \
   --models granite3.3:2b granite4.1:8b
 ```
+
+Comparison candidates remain explicit so a saved preference cannot silently
+change a comparison set. The persisted host is used unless `--host` overrides it.
 
 For active local reasoning work, prefer a small explicit shortlist instead of testing every installed model. I used:
 
@@ -222,9 +228,9 @@ The prompt builder instructs the model to follow these local reasoning rules:
 
 ## Recommended Model
 
-`granite4.1:8b` is the recommended quality-oriented default, with
-`granite3.3:2b` retained as the lower-resource fallback. See the
+`granite4.1:8b` is the recommended quality oriented default, with
+`granite3.3:2b` retained as the lower resource fallback. See the
 [Recommended Default Model](recommended-default-model.md) for the evidence and
-limits of that decision. Model selection remains configurable and should be wired
-into the future application entry point rather than hard-coded into pipeline
-components.
+limits of that decision. Benchmarking now consumes the configurable selection;
+the future application entry point should do the same rather than hard-coding a
+model.
