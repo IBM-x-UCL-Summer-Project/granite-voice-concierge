@@ -27,6 +27,7 @@ from voice_concierge.reasoning.ollama import (
     OllamaReasoningEngine,
     OllamaReasoningError,
 )
+from voice_concierge.reasoning.output import apply_spoken_word_limit
 from voice_concierge.reasoning.prompting import ChatMessage, build_granite_messages
 from voice_concierge.reasoning.types import (
     MemoryAction,
@@ -45,6 +46,7 @@ __all__ = [
     "ReasoningResponse",
     "ReasoningTrace",
     "TraceableReasoningEngine",
+    "apply_spoken_word_limit",
     "ChatMessage",
     "DEFAULT_FALLBACK_MODEL",
     "DEFAULT_MODEL_BACKEND",

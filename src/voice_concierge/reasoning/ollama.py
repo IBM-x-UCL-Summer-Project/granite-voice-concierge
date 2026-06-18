@@ -25,6 +25,7 @@ from voice_concierge.reasoning.models import (
     LocalModelInfo,
     ModelDownloadProgress,
 )
+from voice_concierge.reasoning.output import apply_spoken_word_limit
 from voice_concierge.reasoning.policy import apply_reasoning_policy_guards
 from voice_concierge.reasoning.prompting import build_granite_messages
 from voice_concierge.reasoning.types import (
@@ -146,7 +147,7 @@ class OllamaReasoningEngine:
         }
         raw_response = self._parse_response_content(content, metadata)
         guarded_response = apply_reasoning_policy_guards(request, raw_response)
-        guarded_response = _with_word_limit(
+        guarded_response = apply_spoken_word_limit(
             guarded_response,
             request.constraints.max_words,
         )
@@ -328,44 +329,6 @@ def _strip_json_fence(content: str) -> str:
     if lines and lines[-1].strip() == "```":
         lines = lines[:-1]
     return "\n".join(lines).strip()
-
-
-def _with_word_limit(
-    response: ReasoningResponse,
-    max_words: int,
-) -> ReasoningResponse:
-    limit = max(1, max_words)
-    words = response.spoken_response.split()
-    if len(words) <= limit:
-        return response
-
-    if response.needs_confirmation and response.proposed_memory_action:
-        return ReasoningResponse(
-            spoken_response=_confirmation_truncation_text(limit),
-            needs_confirmation=response.needs_confirmation,
-            proposed_memory_action=response.proposed_memory_action,
-            mode_suggestion=response.mode_suggestion,
-            confidence=response.confidence,
-            metadata={**response.metadata, "truncated": "true"},
-        )
-
-    shortened = " ".join(words[:limit]).rstrip(".,;:")
-    return ReasoningResponse(
-        spoken_response=f"{shortened}.",
-        needs_confirmation=response.needs_confirmation,
-        proposed_memory_action=response.proposed_memory_action,
-        mode_suggestion=response.mode_suggestion,
-        confidence=response.confidence,
-        metadata={**response.metadata, "truncated": "true"},
-    )
-
-
-def _confirmation_truncation_text(max_words: int) -> str:
-    if max_words == 1:
-        return "Confirm."
-
-    words = ("Please", "confirm", "this", "change")
-    return f"{' '.join(words[:max_words])}."
 
 
 def _model_info_from_response(value: ListResponse.Model) -> LocalModelInfo:
