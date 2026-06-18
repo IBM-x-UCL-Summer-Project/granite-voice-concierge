@@ -6,7 +6,7 @@ from sqlite_vec import serialize_float32
 
 
 class VectorStore:
-    def __init__(self, db_path, dimension=4):
+    def __init__(self, db_path, dimension=768):
         self.db_path = Path(db_path)
         self.dimension = dimension
 
