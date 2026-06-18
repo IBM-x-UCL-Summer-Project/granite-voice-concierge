@@ -8,12 +8,7 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-SRC_DIR = REPO_ROOT / "src"
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
-
-from voice_concierge.reasoning import (  # noqa: E402
+from voice_concierge.reasoning import (
     DEFAULT_FALLBACK_MODEL,
     DEFAULT_MODEL_BACKEND,
     DEFAULT_MODEL_SELECTION_PATH,
@@ -26,6 +21,7 @@ from voice_concierge.reasoning import (  # noqa: E402
     save_model_selection,
 )
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_PATH = REPO_ROOT / DEFAULT_MODEL_SELECTION_PATH
 
 

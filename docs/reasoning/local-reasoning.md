@@ -42,6 +42,10 @@ Install development tools:
 python -m pip install -r requirements-dev.txt
 ```
 
+Runtime dependencies are declared in `pyproject.toml`. The root requirements file
+installs `voice_concierge` in editable mode so repository tools can import the
+`src/` package without changing `sys.path`.
+
 ## Run the Deterministic Fake
 
 The default benchmark uses a fixed deterministic fake. It verifies request,
@@ -50,13 +54,13 @@ not detect intent, apply policy, enforce word limits, or provide evidence about
 response quality.
 
 ```bash
-.venv/bin/python benchmarks/reasoning/benchmark.py run --engine fake
+.venv/bin/python -m benchmarks.reasoning.benchmark run --engine fake
 ```
 
 Write a report to a file:
 
 ```bash
-.venv/bin/python benchmarks/reasoning/benchmark.py \
+.venv/bin/python -m benchmarks.reasoning.benchmark \
   run \
   --engine fake \
   --output benchmarks/reasoning/results/fake-report.json
@@ -78,7 +82,7 @@ runner will not silently download a missing model.
 Example:
 
 ```bash
-.venv/bin/python benchmarks/reasoning/benchmark.py \
+.venv/bin/python -m benchmarks.reasoning.benchmark \
   run \
   --engine ollama
 ```
@@ -86,20 +90,20 @@ Example:
 Explicit model and host arguments override the persisted selection:
 
 ```bash
-.venv/bin/python benchmarks/reasoning/benchmark.py \
+.venv/bin/python -m benchmarks.reasoning.benchmark \
   run \
   --engine ollama \
   --model <local-model-name> \
   --host http://localhost:11434
 ```
 
-The benchmark report includes per prompt latency, response word count,
+The benchmark report includes per-prompt latency, response word count,
 confirmation flags, proposed memory action type, confidence, and backend
 metadata. Ollama reports can also retain raw and guarded evaluations from the
 same model generation:
 
 ```bash
-.venv/bin/python benchmarks/reasoning/benchmark.py \
+.venv/bin/python -m benchmarks.reasoning.benchmark \
   run \
   --engine ollama \
   --evaluation-mode both
@@ -135,31 +139,32 @@ comparison.
 List installed models:
 
 ```bash
-.venv/bin/python benchmarks/reasoning/manage_models.py list
+.venv/bin/python -m benchmarks.reasoning.manage_models list
 ```
 
 Show metadata for the default candidate:
 
 ```bash
-.venv/bin/python benchmarks/reasoning/manage_models.py show granite4.1:8b
+.venv/bin/python -m benchmarks.reasoning.manage_models show granite4.1:8b
 ```
 
 Persist the active benchmark model selection locally:
 
 ```bash
-.venv/bin/python benchmarks/reasoning/manage_models.py select granite4.1:8b \
+.venv/bin/python -m benchmarks.reasoning.manage_models select granite4.1:8b \
   --fallback-model granite3.3:2b
 ```
 
-This writes `.local/reasoning-model-selection.json`. A subsequent
-`benchmark.py run --engine ollama` uses its primary model and host unless
+his writes `.local/reasoning-model-selection.json`. A subsequent
+`python -m benchmarks.reasoning.benchmark run --engine ollama` uses its primary
+model and host unless
 `--model` or `--host` overrides them. The fallback is recorded for later runtime
 use but is not silently benchmarked or activated.
 
 If a model is missing, pull it through Ollama:
 
 ```bash
-.venv/bin/python benchmarks/reasoning/manage_models.py pull granite4.1:8b --stream
+.venv/bin/python -m benchmarks.reasoning.manage_models pull granite4.1:8b --stream
 ```
 
 The current `--stream` implementation parses streamed Ollama updates but prints
@@ -179,7 +184,7 @@ checks are diagnostics and basic acceptance evidence; Final decisions to be made
 Comparison mode requires at least two explicit model names:
 
 ```bash
-.venv/bin/python benchmarks/reasoning/benchmark.py compare \
+.venv/bin/python -m benchmarks.reasoning.benchmark compare \
   --models granite3.3:2b granite4.1:8b
 ```
 
@@ -193,7 +198,7 @@ For active local reasoning work, prefer a small explicit shortlist instead of te
 - `granite4.1:3b`: smaller Granite 4.1 candidate if later benchmarking justifies it.
 
 ```bash
-.venv/bin/python benchmarks/reasoning/benchmark.py compare \
+.venv/bin/python -m benchmarks.reasoning.benchmark compare \
   --models granite3.3:2b granite4.1:3b granite4.1:8b gemma4:e2b
 ```
 
@@ -207,7 +212,7 @@ containing:
 You can choose a specific output directory:
 
 ```bash
-.venv/bin/python benchmarks/reasoning/benchmark.py compare \
+.venv/bin/python -m benchmarks.reasoning.benchmark compare \
   --models granite3.3:2b granite4.1:3b granite4.1:8b gemma4:e2b \
   --output-dir benchmarks/reasoning/results/model-comparison-local
 ```
