@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import re
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
+from voice_concierge.reasoning.policy import memory_delete_target
 from voice_concierge.reasoning.types import (
     MemoryAction,
     ReasoningRequest,
     ReasoningResponse,
+    ReasoningTrace,
 )
 
 
@@ -17,6 +19,14 @@ class ReasoningEngine(Protocol):
 
     def generate(self, request: ReasoningRequest) -> ReasoningResponse:
         """Generate a voice-ready response from a transcript and local context."""
+
+
+@runtime_checkable
+class TraceableReasoningEngine(ReasoningEngine, Protocol):
+    """Reasoning engine that exposes one generation before and after policy."""
+
+    def generate_trace(self, request: ReasoningRequest) -> ReasoningTrace:
+        """Generate raw and guarded responses without a second inference."""
 
 
 class RuleBasedReasoningPrototype:
@@ -75,10 +85,17 @@ class RuleBasedReasoningPrototype:
                 confidence="high",
             )
 
-        if self._requests_delete_memory(text):
+        if self._requests_step_repeat(text):
+            return self._repeat_step_response(request)
+
+        delete_target = memory_delete_target(transcript)
+        if delete_target:
+            if not request.constraints.allow_memory_writes:
+                return self._memory_changes_disabled_response()
+
             action = MemoryAction(
                 action="delete",
-                content=transcript,
+                content=delete_target,
                 rationale="User appears to be asking for local memory deletion.",
             )
             return ReasoningResponse(
@@ -90,12 +107,52 @@ class RuleBasedReasoningPrototype:
                 confidence="medium",
             )
 
+        if request.mode.lower() == "shopping" and self._requests_shopping_list_add(
+            text
+        ):
+            if not request.constraints.allow_memory_writes:
+                return self._memory_changes_disabled_response()
+
+            items = self._extract_shopping_items(transcript)
+            action = MemoryAction(
+                action="update",
+                content=f"shopping_list:add:{items}",
+                rationale="User appears to be asking to add shopping list items.",
+            )
+            return ReasoningResponse(
+                spoken_response=(
+                    f"I can add {items} to your shopping list. Please confirm "
+                    "before I save it."
+                ),
+                needs_confirmation=True,
+                proposed_memory_action=action,
+                confidence="medium",
+            )
+
+        accessibility_preference = self._accessibility_preference(text)
+        if accessibility_preference:
+            if not request.constraints.allow_memory_writes:
+                return self._memory_changes_disabled_response()
+
+            content, spoken_preference = accessibility_preference
+            action = MemoryAction(
+                action="update",
+                content=content,
+                rationale="User appears to be changing an accessibility preference.",
+            )
+            return ReasoningResponse(
+                spoken_response=(
+                    f"I can {spoken_preference}. Please confirm before I save "
+                    "that preference."
+                ),
+                needs_confirmation=True,
+                proposed_memory_action=action,
+                confidence="medium",
+            )
+
         if self._requests_memory_write(text):
             if not request.constraints.allow_memory_writes:
-                return ReasoningResponse(
-                    spoken_response="Memory changes are disabled right now.",
-                    confidence="high",
-                )
+                return self._memory_changes_disabled_response()
 
             content = self._extract_memory_candidate(transcript)
             action = MemoryAction(
@@ -116,6 +173,9 @@ class RuleBasedReasoningPrototype:
             return self._memory_response(request)
 
         mode = request.mode.lower()
+        if mode == "shopping" and self._requests_shopping_list_read(text):
+            return self._memory_response(request)
+
         if mode == "driving":
             return ReasoningResponse(
                 spoken_response="I will keep this short. Focus on driving.",
@@ -161,6 +221,22 @@ class RuleBasedReasoningPrototype:
             confidence="high",
         )
 
+    def _repeat_step_response(self, request: ReasoningRequest) -> ReasoningResponse:
+        if request.conversation_summary:
+            return ReasoningResponse(
+                spoken_response=(
+                    f"The previous step was: {request.conversation_summary}"
+                ),
+                confidence="medium",
+            )
+
+        return ReasoningResponse(
+            spoken_response=(
+                "I do not have a previous step to repeat. Which step should I repeat?"
+            ),
+            confidence="medium",
+        )
+
     def _effective_word_limit(self, request: ReasoningRequest) -> int:
         requested_limit = max(1, request.constraints.max_words)
         mode_limit = self._MODE_WORD_LIMITS.get(request.mode.lower(), requested_limit)
@@ -171,11 +247,22 @@ class RuleBasedReasoningPrototype:
         response: ReasoningResponse,
         max_words: int,
     ) -> ReasoningResponse:
+        limit = max(1, max_words)
         words = response.spoken_response.split()
-        if len(words) <= max_words:
+        if len(words) <= limit:
             return response
 
-        shortened = " ".join(words[:max_words]).rstrip(".,;:")
+        if response.needs_confirmation and response.proposed_memory_action:
+            return ReasoningResponse(
+                spoken_response=_confirmation_truncation_text(limit),
+                needs_confirmation=response.needs_confirmation,
+                proposed_memory_action=response.proposed_memory_action,
+                mode_suggestion=response.mode_suggestion,
+                confidence=response.confidence,
+                metadata={**response.metadata, "truncated": "true"},
+            )
+
+        shortened = " ".join(words[:limit]).rstrip(".,;:")
         return ReasoningResponse(
             spoken_response=f"{shortened}.",
             needs_confirmation=response.needs_confirmation,
@@ -183,6 +270,12 @@ class RuleBasedReasoningPrototype:
             mode_suggestion=response.mode_suggestion,
             confidence=response.confidence,
             metadata={**response.metadata, "truncated": "true"},
+        )
+
+    def _memory_changes_disabled_response(self) -> ReasoningResponse:
+        return ReasoningResponse(
+            spoken_response="Memory changes are disabled right now.",
+            confidence="high",
         )
 
     def _extract_memory_candidate(self, transcript: str) -> str:
@@ -194,11 +287,44 @@ class RuleBasedReasoningPrototype:
         )
         return cleaned.strip(" .")
 
+    def _extract_shopping_items(self, transcript: str) -> str:
+        cleaned = re.sub(
+            r"^\s*(please\s+)?add\s+",
+            "",
+            transcript,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
+            r"\s+to\s+my\s+shopping\s+list\.?\s*$",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        return cleaned.strip(" .")
+
+    def _requests_shopping_list_add(self, text: str) -> bool:
+        return "add " in text and "shopping list" in text
+
+    def _requests_shopping_list_read(self, text: str) -> bool:
+        return "what" in text and "shopping list" in text
+
+    def _requests_step_repeat(self, text: str) -> bool:
+        return "repeat" in text and "step" in text
+
+    def _accessibility_preference(self, text: str) -> tuple[str, str] | None:
+        if self._requests_memory_write(text):
+            return None
+
+        if "speak more slowly" in text or "answer more slowly" in text:
+            return ("accessibility.preferred_pace=slow", "speak more slowly")
+
+        if "keep answers short" in text or "short answers" in text:
+            return ("accessibility.verbosity=short", "keep answers short")
+
+        return None
+
     def _requests_memory_write(self, text: str) -> bool:
         return bool(re.search(r"\b(remember|save|note)\b", text))
-
-    def _requests_delete_memory(self, text: str) -> bool:
-        return bool(re.search(r"\b(forget|delete|remove)\b", text))
 
     def _asks_about_memory(self, text: str) -> bool:
         phrases = (
@@ -221,3 +347,11 @@ class RuleBasedReasoningPrototype:
             "medication dose",
         )
         return any(term in text for term in risk_terms)
+
+
+def _confirmation_truncation_text(max_words: int) -> str:
+    if max_words == 1:
+        return "Confirm."
+
+    words = ("Please", "confirm", "this", "change")
+    return f"{' '.join(words[:max_words])}."
