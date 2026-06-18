@@ -68,12 +68,14 @@ def listen_for_wake_word(callback: Callable[[], None]) -> None:
                 if confidence[-1] > CONFIDENCE_THRESHOLD:
                     t_detection: float = time.perf_counter() - t_start
                     current_ram, peak_ram = tracemalloc.get_traced_memory()
+                    ram_system: float = process.memory_info().rss / 1024 / 1024
                     cpu: float = process.cpu_percent()
 
                     print(f"Wake word detected: '{wake_word}' (confidence: {confidence[-1]:.2f})")
                     print(f"  Latency      : {t_detection * 1000:.1f} ms")
                     print(f"  RAM current  : {current_ram / 1024 / 1024:.1f} MB")
                     print(f"  RAM peak     : {peak_ram / 1024 / 1024:.1f} MB")
+                    print(f"  RAM (system) : {ram_system:.1f} MB")
                     print(f"  CPU          : {cpu:.1f}%")
 
                     oww_model.reset()  # reset buffers to avoid repeat triggers
