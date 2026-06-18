@@ -78,7 +78,7 @@ def parse_args() -> argparse.Namespace:
         default="guarded",
         help=(
             "Evaluate raw model output, guarded product output, or both. "
-            "Raw tracing is available for trace capable engines such as Ollama."
+            "Raw tracing is available for trace-capable engines such as Ollama."
         ),
     )
     return parser.parse_args()
