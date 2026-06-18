@@ -25,10 +25,10 @@
 
 ## Test 1 — Quiet room, live voice
 
-RAM (script) current: MB
-RAM (script) peak: MB
-RAM (system/RSS): MB
-CPU during listening: %
+- RAM (python) current: X MB (avg across detections)
+- RAM (python) peak: X MB (highest across all runs)
+- RAM (system/RSS): X MB (avg across detections)
+- CPU at detection: X% avg / X% peak
 
 | Attempt | Detected | Confidence | Latency (ms) |
 |---------|----------|------------|--------------|
@@ -49,10 +49,10 @@ Average latency (ms):
 
 ## Test 2 — Similar-sounding words (false positive check)
 
-RAM (script) current: MB
-RAM (script) peak: MB
-RAM (system/RSS): MB
-CPU during listening: %
+- RAM (python) current: X MB (avg across detections)
+- RAM (python) peak: X MB (highest across all runs)
+- RAM (system/RSS): X MB (avg across detections)
+- CPU at detection: X% avg / X% peak
 
 Word spoken - hey Harris
 
@@ -93,10 +93,10 @@ Overrall false positive rate:
 
 ## Test 3 — Background noise, live voice
 
-RAM (script) current: MB
-RAM (script) peak: MB
-RAM (system/RSS): MB
-CPU during listening: %
+- RAM (python) current: X MB (avg across detections)
+- RAM (python) peak: X MB (highest across all runs)
+- RAM (system/RSS): X MB (avg across detections)
+- CPU at detection: X% avg / X% peak
 
 | Attempt | Detected | Confidence | Latency (ms) |
 |---------|----------|------------|--------------|
@@ -117,11 +117,11 @@ Average latency (ms):
 
 ## Test 4 — Audio playback, quiet room (threshold: 0.3)
 
-Background noise source:
-RAM (script) current: MB
-RAM (script) peak: MB
-RAM (system/RSS): MB
-CPU during listening: %
+- Background noise source:
+- RAM (python) current: X MB (avg across detections)
+- RAM (python) peak: X MB (highest across all runs)
+- RAM (system/RSS): X MB (avg across detections)
+- CPU at detection: X% avg / X% peak
 
 | Attempt | Source          | Detected | Confidence | Latency (ms) |
 |---------|-----------------|----------|------------|--------------|
