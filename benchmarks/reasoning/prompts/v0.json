@@ -93,6 +93,17 @@
           "memory_action": "store"
         },
         "notes": "Reasoning may propose the memory write, but memory storage owns execution."
+      },
+      {
+        "id": "memory_delete_requires_confirmation",
+        "transcript": "Forget my old shopping list.",
+        "mode": "home",
+        "expected_behavior": "Ask for confirmation before deleting a local memory.",
+        "checks": {
+          "needs_confirmation": true,
+          "memory_action": "delete"
+        },
+        "notes": "Reasoning may propose the memory deletion, but memory storage owns confirmation and execution."
       }
     ],
     "supplied_memory_use": [
