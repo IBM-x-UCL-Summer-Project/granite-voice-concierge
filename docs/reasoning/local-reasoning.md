@@ -1,0 +1,217 @@
+# Local Reasoning Guide
+
+This document describes the current local reasoning workstream.
+
+## Contract
+
+The main input type is `ReasoningRequest`.
+
+It contains:
+
+- `transcript`: the text from STT;
+- `mode`: current behavior mode, such as `home`, `cooking`, `shopping`, or `driving`;
+- `memories`: local memories supplied by the memory component;
+- `conversation_summary`: optional recent context;
+- `constraints`: runtime limits such as max spoken words and whether memory writes are allowed.
+
+The main output type is `ReasoningResponse`.
+
+It contains:
+
+- `spoken_response`: the response intended for TTS;
+- `needs_confirmation`: whether the user must confirm before an action is taken;
+- `proposed_memory_action`: optional proposed store/update/delete operation;
+- `mode_suggestion`: optional future mode switch hint;
+- `confidence`: coarse confidence label;
+- `metadata`: backend-specific details.
+
+The reasoning layer should propose memory actions. It should not directly write to memory.
+
+## Install
+
+Create a local virtual environment:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+```
+
+Install development tools:
+
+```bash
+python -m pip install -r requirements-dev.txt
+```
+
+## Run Prototype Benchmark
+
+The default benchmark uses the deterministic prototype engine. It does not require a model runner.
+
+```bash
+.venv/bin/python benchmarks/reasoning/benchmark.py run --engine prototype
+```
+
+Write a report to a file:
+
+```bash
+.venv/bin/python benchmarks/reasoning/benchmark.py \
+  run \
+  --engine prototype \
+  --output benchmarks/reasoning/results/prototype-report.json
+```
+
+## Run With Ollama
+
+The Ollama backend is optional. It assumes Ollama is already installed, running locally, and has a local model available.
+
+The reasoning benchmark defaults to `granite4.1:8b` for Ollama runs. The
+model management helpers can list, inspect, and pull local Ollama models, but
+the benchmark runner will not silently download a missing model.
+
+Example:
+
+```bash
+.venv/bin/python benchmarks/reasoning/benchmark.py \
+  run \
+  --engine ollama \
+  --model <local-model-name>
+```
+
+If Ollama is listening somewhere other than `http://localhost:11434`, pass:
+
+```bash
+.venv/bin/python benchmarks/reasoning/benchmark.py \
+  run \
+  --engine ollama \
+  --model <local-model-name> \
+  --host http://localhost:11434
+```
+
+The benchmark report includes per prompt latency, response word count,
+confirmation flags, proposed memory action type, confidence, and backend
+metadata. Ollama reports can also retain raw and guarded evaluations from the
+same model generation:
+
+```bash
+.venv/bin/python benchmarks/reasoning/benchmark.py \
+  run \
+  --engine ollama \
+  --evaluation-mode both
+```
+
+Evaluation modes are:
+
+- `raw`: parsed model output before deterministic policy guards and word limit
+  shaping;
+- `guarded`: final product facing output after policy and word limit shaping;
+- `both`: both evaluations from one inference, with guarded output retained in
+  the legacy top level result fields.
+
+Raw and `both` modes require a trace-capable engine. The deterministic prototype
+only supports `guarded` mode.
+
+The Ollama backend requests schema constrained JSON from the local model. The parsed model response is mapped into `ReasoningResponse`, including `needs_confirmation`, `proposed_memory_action`, `mode_suggestion`, and `confidence`. If the model returns invalid JSON or misses required fields, the backend returns a low confidence fallback and records the parse problem in response metadata.
+
+The Ollama backend also applies deterministic policy guards after parsing model output. These guards do not store, retrieve, edit, or delete memory. They only correct the reasoning response when a simple local policy should not depend on model compliance, such as confirming accessibility preference changes or refusing to invent a shopping list when no list memory was supplied.
+
+## Manage Local Models
+
+Use the model management helper to inspect local Ollama state before running a
+comparison.
+
+List installed models:
+
+```bash
+.venv/bin/python benchmarks/reasoning/manage_models.py list
+```
+
+Show metadata for the default candidate:
+
+```bash
+.venv/bin/python benchmarks/reasoning/manage_models.py show granite4.1:8b
+```
+
+Persist the intended future application model selection locally:
+
+```bash
+.venv/bin/python benchmarks/reasoning/manage_models.py select granite4.1:8b \
+  --fallback-model granite3.3:2b
+```
+
+This writes `.local/reasoning-model-selection.json`. The benchmark runner
+and application do not consume this selection yet; (mainly for future devlopement)
+
+If a model is missing, pull it through Ollama:
+
+```bash
+.venv/bin/python benchmarks/reasoning/manage_models.py pull granite4.1:8b --stream
+```
+
+The current `--stream` implementation parses streamed Ollama updates but prints
+them together after the pull finishes. It does not provide live terminal progress.
+
+## Compare Candidate Models
+
+Use the benchmark runner's `compare` subcommand when evaluating local Ollama
+models against the same prompt suite.
+
+The comparison runner defaults to `--evaluation-mode both`. It ranks models by
+guarded pass rate and then latency because guarded output is what users receive,
+but the summary displays raw pass rate, guarded pass rate, guard intervention
+count, and failed case IDs separately. Raw scores should drive model and prompt
+diagnosis; guarded scores should drive product-level acceptance checks. The
+generated `best_model` field therefore ranks the guarded product pipeline rather
+than isolated model quality.
+
+Comparison mode requires at least two explicit model names:
+
+```bash
+.venv/bin/python benchmarks/reasoning/benchmark.py compare \
+  --models granite3.3:2b granite4.1:8b
+```
+
+For active local reasoning work, prefer a small explicit shortlist instead of testing every installed model. I used:
+
+- `granite4.1:8b`: current default IBM Granite candidate if the machine can run it comfortably.
+- `granite3.3:2b`: fast local baseline and lower resource fallback.
+- `granite4.1:3b`: smaller Granite 4.1 candidate if later benchmarking justifies it.
+
+```bash
+.venv/bin/python benchmarks/reasoning/benchmark.py compare \
+  --models granite3.3:2b granite4.1:3b granite4.1:8b gemma4:e2b
+```
+
+This creates a timestamped directory under `benchmarks/reasoning/results/`
+containing:
+
+- one detailed JSON benchmark report per model;
+- `comparison-summary.json`;
+- `comparison-summary.md`.
+
+You can choose a specific output directory:
+
+```bash
+.venv/bin/python benchmarks/reasoning/benchmark.py compare \
+  --models granite3.3:2b granite4.1:3b granite4.1:8b gemma4:e2b \
+  --output-dir benchmarks/reasoning/results/model-comparison-local
+```
+
+## Prompt Policy
+
+The prompt builder instructs the model to follow these local reasoning rules:
+
+- operate as if no internet or cloud service is available;
+- use only the transcript, supplied local memories, and supplied summary;
+- keep responses short and suitable for speech;
+- do not invent remembered facts;
+- ask for confirmation before saving, changing, or deleting personal data;
+- avoid medical diagnosis, medication dosing, and safety-critical decisions;
+- adapt response style using the supplied mode.
+
+## Recommended Model
+
+`granite4.1:8b` is the recommended quality-oriented default, with
+`granite3.3:2b` retained as the lower-resource fallback. See the
+[Recommended Default Model](recommended-default-model.md) for the evidence and
+limits of that decision. Model selection remains configurable and should be wired
+into the future application entry point rather than hard-coded into pipeline
+components.
