@@ -1,6 +1,7 @@
-import sqlite3
+import pysqlite3 as sqlite3
 import time
 from pathlib import Path
+import sqlite_vec
 
 
 class MemoryStore:
