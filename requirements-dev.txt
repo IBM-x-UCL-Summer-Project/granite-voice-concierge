@@ -1,3 +1,11 @@
+# Base Dependencies
+-r requirements.txt
+-r experiments/wake-word-detection/requirements.txt
+
+# Linting & Formatting
 black
 ruff
+
+# Testing
 pytest
+pytest-cov

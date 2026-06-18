@@ -1,0 +1,7 @@
+# Audio & Wake Word Detection
+pyaudio
+numpy
+openwakeword
+soundfile
+sounddevice
+psutil
