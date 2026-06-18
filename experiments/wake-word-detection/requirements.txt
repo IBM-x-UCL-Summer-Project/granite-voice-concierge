@@ -4,3 +4,4 @@ numpy
 openwakeword
 soundfile
 sounddevice
+psutil

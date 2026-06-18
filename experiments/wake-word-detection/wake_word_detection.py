@@ -4,6 +4,7 @@ import tracemalloc
 from typing import Callable, Deque
 
 # Third-party
+import psutil
 import pyaudio
 import numpy as np
 import openwakeword.utils
@@ -25,6 +26,8 @@ oww_model: Model = Model(
     inference_framework="onnx"
 )
 
+process: psutil.Process = psutil.Process()
+
 def listen_for_wake_word(callback: Callable[[], None]) -> None:
     """
     Continuously listens to the microphone.
@@ -42,6 +45,8 @@ def listen_for_wake_word(callback: Callable[[], None]) -> None:
 
     # Start RAM tracking
     tracemalloc.start()
+
+    process.cpu_percent()
 
     print("Listening for wake word...")
 
@@ -63,12 +68,13 @@ def listen_for_wake_word(callback: Callable[[], None]) -> None:
                 if confidence[-1] > CONFIDENCE_THRESHOLD:
                     t_detection: float = time.perf_counter() - t_start
                     current_ram, peak_ram = tracemalloc.get_traced_memory()
+                    cpu: float = process.cpu_percent()
 
                     print(f"Wake word detected: '{wake_word}' (confidence: {confidence[-1]:.2f})")
-                    print(f"  Predict time : {t_predict * 1000:.1f} ms")
-                    print(f"  Detection time : {t_detection * 1000:.1f} ms")
-                    print(f"  RAM current : {current_ram / 1024 / 1024:.1f} MB")
-                    print(f"  RAM peak : {peak_ram / 1024 / 1024:.1f} MB")
+                    print(f"  Latency      : {t_detection * 1000:.1f} ms")
+                    print(f"  RAM current  : {current_ram / 1024 / 1024:.1f} MB")
+                    print(f"  RAM peak     : {peak_ram / 1024 / 1024:.1f} MB")
+                    print(f"  CPU          : {cpu:.1f}%")
 
                     oww_model.reset()  # reset buffers to avoid repeat triggers
                     callback()
