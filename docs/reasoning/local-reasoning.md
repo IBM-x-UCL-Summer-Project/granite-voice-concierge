@@ -170,13 +170,11 @@ them together after the pull finishes. It does not provide live terminal progres
 Use the benchmark runner's `compare` subcommand when evaluating local Ollama
 models against the same prompt suite.
 
-The comparison runner defaults to `--evaluation-mode both`. It ranks models by
-guarded pass rate and then latency because guarded output is what users receive,
-but the summary displays raw pass rate, guarded pass rate, guard intervention
-count, and failed case IDs separately. Raw scores should drive model and prompt
-diagnosis; guarded scores should drive product-level acceptance checks. The
-generated `best_model` field therefore ranks the guarded product pipeline rather
-than isolated model quality.
+The comparison runner defaults to `--evaluation-mode both`. Its summary preserves
+the model order supplied on the command line and displays raw pass rate, guarded
+pass rate, guard intervention count, latency, issue counts, and failed case IDs.
+It does not rank candidates or generate a `best_model` field. These automated
+checks are diagnostics and basic acceptance evidence; Final decisions to be made based on human review at this stage as automated reviewing is too shallow/not worth to implement.
 
 Comparison mode requires at least two explicit model names:
 

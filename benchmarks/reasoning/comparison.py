@@ -174,41 +174,15 @@ def failed_model_row(model: str, error: str) -> ModelComparisonRow:
     )
 
 
-def rank_models(rows: list[ModelComparisonRow]) -> list[ModelComparisonRow]:
-    """Rank by guarded pass rate when available, then primary rate and latency."""
-
-    return sorted(
-        rows,
-        key=lambda row: (
-            row.error is not None,
-            -(
-                row.guarded_pass_rate
-                if row.guarded_pass_rate is not None
-                else row.pass_rate
-            ),
-            row.average_latency_ms,
-            row.model,
-        ),
-    )
-
-
 def write_comparison_summary(
     rows: list[ModelComparisonRow],
     *,
     output_dir: Path,
 ) -> dict[str, Any]:
-    """Write JSON and Markdown comparison summaries to an output directory."""
+    """Write unranked JSON and Markdown statistics to an output directory."""
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    ranked_rows = rank_models(rows)
-    summary = {
-        "models": [asdict(row) for row in ranked_rows],
-        "best_model": _best_model(ranked_rows),
-        "ranking_basis": (
-            "guarded_pass_rate_when_available_then_primary_pass_rate_then_"
-            "average_latency"
-        ),
-    }
+    summary = {"models": [asdict(row) for row in rows]}
 
     json_path = output_dir / "comparison-summary.json"
     markdown_path = output_dir / "comparison-summary.md"
@@ -216,15 +190,8 @@ def write_comparison_summary(
         json.dumps(summary, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    markdown_path.write_text(_markdown_summary(ranked_rows), encoding="utf-8")
+    markdown_path.write_text(_markdown_summary(rows), encoding="utf-8")
     return summary
-
-
-def _best_model(rows: list[ModelComparisonRow]) -> str | None:
-    for row in rows:
-        if row.error is None:
-            return row.model
-    return None
 
 
 def _markdown_summary(rows: list[ModelComparisonRow]) -> str:
@@ -233,12 +200,14 @@ def _markdown_summary(rows: list[ModelComparisonRow]) -> str:
         "",
         "Guarded scores represent product behavior. Raw scores represent the "
         "parsed model output before policy guards and word-limit shaping.",
+        "Automated checks are diagnostic only. Review the detailed responses "
+        "before selecting a model.",
         "",
-        "| Rank | Model | Guarded pass | Raw pass | Guards | Avg latency ms | "
+        "| Model | Guarded pass | Raw pass | Guards | Avg latency ms | "
         "Max latency ms | Error |",
-        "| ---: | --- | ---: | ---: | ---: | ---: | ---: | --- |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | --- |",
     ]
-    for index, row in enumerate(rows, start=1):
+    for row in rows:
         error = row.error or "-"
         guarded_score = _format_stage_score(
             row.guarded_pass_rate,
@@ -252,7 +221,6 @@ def _markdown_summary(rows: list[ModelComparisonRow]) -> str:
         )
         lines.append(
             "| "
-            f"{index} | "
             f"`{row.model}` | "
             f"{guarded_score} | "
             f"{raw_score} | "
@@ -273,8 +241,10 @@ def _markdown_summary(rows: list[ModelComparisonRow]) -> str:
             lines.append("")
             continue
 
+        lines.append("")
+        lines.append(f"- Detailed report: `{row.report_path}`")
+
         if row.raw_pass_rate is not None:
-            lines.append("")
             lines.append(
                 f"- Raw failed cases: {_format_failed_cases(row.raw_failed_case_ids)}"
             )
