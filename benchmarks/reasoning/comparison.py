@@ -1,4 +1,4 @@
-"""Utilities for comparing local reasoning benchmark reports."""
+"""Comparison helpers for local reasoning benchmark reports."""
 
 from __future__ import annotations
 

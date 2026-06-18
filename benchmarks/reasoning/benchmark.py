@@ -11,9 +11,23 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_DIR = REPO_ROOT / "src"
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+from benchmarks.reasoning.comparison import (  # noqa: E402
+    failed_model_row,
+    summarize_benchmark_report,
+    write_comparison_summary,
+)
+
+from benchmarks.reasoning.suite import (  # noqa: E402
+    EVALUATION_MODES,
+    load_prompt_suite,
+    run_reasoning_benchmark,
+    write_benchmark_report,
+)
 from voice_concierge.reasoning import (  # noqa: E402
     DEFAULT_REASONING_MODEL,
     DeterministicReasoningFake,
@@ -21,17 +35,6 @@ from voice_concierge.reasoning import (  # noqa: E402
     OllamaReasoningEngine,
     OllamaReasoningError,
     ReasoningEngine,
-)
-from voice_concierge.reasoning.benchmark import (  # noqa: E402
-    EVALUATION_MODES,
-    load_prompt_suite,
-    run_reasoning_benchmark,
-    write_benchmark_report,
-)
-from voice_concierge.reasoning.comparison import (  # noqa: E402
-    failed_model_row,
-    summarize_benchmark_report,
-    write_comparison_summary,
 )
 
 

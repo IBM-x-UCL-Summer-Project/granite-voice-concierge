@@ -1,4 +1,4 @@
-"""Benchmark helpers for local reasoning engines."""
+"""Prompt-suite execution helpers for local reasoning benchmarks."""
 
 from __future__ import annotations
 
