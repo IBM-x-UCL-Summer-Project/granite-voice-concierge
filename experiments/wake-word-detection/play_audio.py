@@ -27,6 +27,12 @@ DELAY_BETWEEN_PLAYS: int = 3
 
 def play_wav(path: Path) -> None:
     """Play a WAV file through the default speaker."""
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Test audio file not found: {path}. "
+            "See experiments/wake-word-detection/README.md for generation instructions."
+        )
+
     data: np.ndarray
     samplerate: int
     data, samplerate = sf.read(path, dtype="int16")
@@ -48,7 +54,7 @@ def run_test_4() -> None:
     source: str
     path: Path
     for attempt, (source, path) in enumerate(TEST_FILES, start=1):
-        print(f"Attempt {attempt}/8 — playing {source}...")
+        print(f"Attempt {attempt}/{len(TEST_FILES)} — playing {source}...")
         play_wav(path)
 
         if attempt < len(TEST_FILES):
