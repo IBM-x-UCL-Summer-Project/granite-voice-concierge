@@ -1,11 +1,11 @@
 # Standard library
-from pathlib import Path
 import time
+from pathlib import Path
 
 # Third-party
+import numpy as np
 import sounddevice as sd
 import soundfile as sf
-import numpy as np
 
 TEST_AUDIO_DIR: Path = Path("experiments/wake-word-detection/test_audio")
 
@@ -27,6 +27,12 @@ DELAY_BETWEEN_PLAYS: int = 3
 
 def play_wav(path: Path) -> None:
     """Play a WAV file through the default speaker."""
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"Test audio file not found: {path}. "
+            "See experiments/wake-word-detection/README.md for generation instructions."
+        )
+
     data: np.ndarray
     samplerate: int
     data, samplerate = sf.read(path, dtype="int16")
@@ -48,7 +54,7 @@ def run_test_4() -> None:
     source: str
     path: Path
     for attempt, (source, path) in enumerate(TEST_FILES, start=1):
-        print(f"Attempt {attempt}/8 — playing {source}...")
+        print(f"Attempt {attempt}/{len(TEST_FILES)} — playing {source}...")
         play_wav(path)
 
         if attempt < len(TEST_FILES):

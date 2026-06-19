@@ -14,7 +14,8 @@
 ## Notes on measurements
 
 - Latency is measured from the start of `oww_model.predict()` on the triggering
-  chunk to callback. Excludes audio buffering time but is consistent across runs.
+  chunk to the detection decision (threshold exceeded). Excludes audio buffering
+  time but is consistent across runs.
 - RAM (python) is measured via tracemalloc — Python-level allocations only,
   excludes native libraries such as ONNX Runtime and PyAudio.
 - RAM (system/RSS) is measured via psutil RSS (Resident Set Size) — total memory
