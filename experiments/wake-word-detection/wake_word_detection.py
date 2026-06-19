@@ -4,10 +4,10 @@ import tracemalloc
 from typing import Callable, Deque
 
 # Third-party
-import psutil
-import pyaudio
 import numpy as np
 import openwakeword.utils
+import psutil
+import pyaudio
 from openwakeword.model import Model
 
 # Audio config — these values are required by openWakeWord
@@ -59,7 +59,6 @@ def listen_for_wake_word(callback: Callable[[], None]) -> None:
             # Run wake word detection on this chunk
             t_start: float = time.perf_counter()
             oww_model.predict(audio_np)
-            t_predict: float = time.perf_counter() - t_start
 
             # Check if any wake word exceeded the confidence threshold
             wake_word: str
@@ -71,7 +70,8 @@ def listen_for_wake_word(callback: Callable[[], None]) -> None:
                     ram_system: float = process.memory_info().rss / 1024 / 1024
                     cpu: float = process.cpu_percent()
 
-                    print(f"Wake word detected: '{wake_word}' (confidence: {confidence[-1]:.2f})")
+                    print(f"Wake word detected: '{wake_word}'")
+                    print(f"  Confidence   : {confidence[-1]:.2f}")
                     print(f"  Latency      : {t_detection * 1000:.1f} ms")
                     print(f"  RAM current  : {current_ram / 1024 / 1024:.1f} MB")
                     print(f"  RAM peak     : {peak_ram / 1024 / 1024:.1f} MB")

@@ -1,11 +1,11 @@
 # Standard library
-from pathlib import Path
 import time
+from pathlib import Path
 
 # Third-party
+import numpy as np
 import sounddevice as sd
 import soundfile as sf
-import numpy as np
 
 TEST_AUDIO_DIR: Path = Path("experiments/wake-word-detection/test_audio")
 
