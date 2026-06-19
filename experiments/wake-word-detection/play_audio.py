@@ -27,7 +27,7 @@ DELAY_BETWEEN_PLAYS: int = 3
 
 def play_wav(path: Path) -> None:
     """Play a WAV file through the default speaker."""
-    if not path.exists():
+    if not path.is_file():
         raise FileNotFoundError(
             f"Test audio file not found: {path}. "
             "See experiments/wake-word-detection/README.md for generation instructions."
