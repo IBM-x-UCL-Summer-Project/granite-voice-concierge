@@ -1,7 +1,7 @@
 # Standard library
 import time
 import tracemalloc
-from typing import Callable
+from typing import Callable, Optional
 
 # Third-party
 import numpy as np
@@ -9,6 +9,7 @@ import psutil
 import pyaudio
 import torch
 from silero_vad import VADIterator, load_silero_vad
+from silero_vad.utils_vad import OnnxWrapper
 
 # Audio config — must match openWakeWord settings
 CHUNK: int = 512
@@ -17,13 +18,13 @@ CHANNELS: int = 1
 RATE: int = 16000
 
 # VAD config
-THRESHOLD: float = 0.5
+THRESHOLD: float = 0.5 # minimum VAD confidence to detect speech
 MIN_SILENCE_BEFORE_UTTERANCE_END_MS: int = 300 # time before VAD ends after speech ends
-SPEECH_PAD_MS: int = 100
+SPEECH_PAD_MS: int = 100 # ms of padding added to start and end of utterance
 MAX_SPEECH_START_WAIT_S: int = 5  # time before VAD times out if no speech detected
 
 # Load Silero VAD model
-vad_model = load_silero_vad()
+vad_model: OnnxWrapper = load_silero_vad()
 vad_iterator: VADIterator = VADIterator(
     vad_model,
     threshold=THRESHOLD,
@@ -71,7 +72,7 @@ def capture_utterance(on_utterance_captured: Callable[[np.ndarray], None]) -> No
     Listens to the microphone after wake word fires.
     Captures audio until silence is detected, then calls on_utterance_captured
     with the full utterance as a numpy array.
-    Times out after MAX_LISTEN_DURATION_S seconds if no speech is detected.
+    Times out after MAX_SPEECH_START_WAIT_S seconds if no speech is detected.
 
     Performance metrics (latency, RAM, CPU) are collected and printed to stdout.
     Uses tracemalloc for Python memory tracking and psutil for system metrics.
@@ -112,7 +113,9 @@ def capture_utterance(on_utterance_captured: Callable[[np.ndarray], None]) -> No
                 audio_np.astype(np.float32, copy=False) / 32768.0
             )
 
-            vad_result = vad_iterator(audio_float, return_seconds=False)
+            vad_result: Optional[dict[str, float]] = vad_iterator(
+                audio_float, return_seconds=False
+            )
 
             if vad_result is not None:
                 if "start" in vad_result and not speech_started:
