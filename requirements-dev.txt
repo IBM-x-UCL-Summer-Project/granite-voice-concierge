@@ -1,6 +1,7 @@
 # Base Dependencies
 -r requirements.txt
 #-r experiments/wake-word-detection/requirements.txt
+-r experiments/stt_tts_pipeline/requirements.txt
 
 # Linting & Formatting
 black
