@@ -13,7 +13,7 @@
 ## Configuration
 
 - THRESHOLD:
-- MIN_SILENCE_DURATION_MS:
+- MIN_SILENCE_BEFORE_UTTERANCE_END_MS:
 - SPEECH_PAD_MS:
 - CHUNK:
 
@@ -25,8 +25,8 @@
   excludes native libraries such as PyTorch and PyAudio.
 - RAM (system/RSS) is measured via psutil RSS (Resident Set Size) — total memory
   the OS has allocated to the process, including native libraries.
-- CPU is measured via psutil at the moment of utterance capture — a snapshot
-  rather than a sustained average during listening.
+- CPU is measured via psutil `cpu_percent()` — the value represents average CPU
+  usage of the process since the warm-up call at the start of `capture_utterance`.
 
 ---
 

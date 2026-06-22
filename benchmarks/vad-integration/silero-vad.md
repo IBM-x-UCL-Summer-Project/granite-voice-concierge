@@ -26,8 +26,8 @@
   excludes native libraries such as PyTorch and PyAudio.
 - RAM (system/RSS) is measured via psutil RSS (Resident Set Size) — total memory
   the OS has allocated to the process, including native libraries.
-- CPU is measured via psutil at the moment of utterance capture — a snapshot
-  rather than a sustained average during listening.
+- CPU is measured via psutil `cpu_percent()` — the value represents average CPU
+  usage of the process since the warm-up call at the start of `capture_utterance`.
 
 ## Test 1 — Short utterance, quiet room
 
@@ -126,7 +126,7 @@ Average samples: 24576
 - No silence timeout was implemented in the initial script. If the user stays
   silent after the wake word fires, the VAD loop hung indefinitely and required
   a KeyboardInterrupt to exit.
-- A MAX_WAIT_FOR_SPEECH_START_S timeout of 5 seconds was added to resolve
+- A MAX_SPEECH_START_WAIT_S timeout of 5 seconds was added to resolve
   this. The system now exits the VAD loop cleanly and prints a timeout message
   if no speech is detected within the window.
 
@@ -156,7 +156,7 @@ user group, accepting the slightly slower conversational pacing as a trade-off.
 Shopping and Driving modes can retain 300ms given commands in those contexts
 are expected to be short and direct.
 
-The silence timeout (MAX_WAIT_FOR_SPEECH_START_S of 5 seconds) resolves the
+The silence timeout (MAX_SPEECH_START_WAIT_S of 5 seconds) resolves the
 indefinite hang issue and should be retained in the integrated pipeline. A
 spoken prompt such as "Sorry, I didn't catch that" should be added when the
 timeout fires before returning to wake word listening.
