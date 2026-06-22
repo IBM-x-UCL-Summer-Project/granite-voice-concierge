@@ -18,8 +18,9 @@ RATE: int = 16000
 
 # VAD config
 THRESHOLD: float = 0.5
-MIN_SILENCE_DURATION_MS: int = 300
+MIN_SILENCE_BEFORE_UTTERANCE_END_MS: int = 300 # time before VAD ends after speech ends
 SPEECH_PAD_MS: int = 100
+MAX_SPEECH_START_WAIT_S: int = 5  # time before VAD times out if no speech detected
 
 # Load Silero VAD model
 vad_model = load_silero_vad()
@@ -27,7 +28,7 @@ vad_iterator: VADIterator = VADIterator(
     vad_model,
     threshold=THRESHOLD,
     sampling_rate=RATE,
-    min_silence_duration_ms=MIN_SILENCE_DURATION_MS,
+    min_silence_duration_ms=MIN_SILENCE_BEFORE_UTTERANCE_END_MS,
     speech_pad_ms=SPEECH_PAD_MS,
 )
 
@@ -70,6 +71,7 @@ def capture_utterance(on_utterance_captured: Callable[[np.ndarray], None]) -> No
     Listens to the microphone after wake word fires.
     Captures audio until silence is detected, then calls on_utterance_captured
     with the full utterance as a numpy array.
+    Times out after MAX_LISTEN_DURATION_S seconds if no speech is detected.
 
     Performance metrics (latency, RAM, CPU) are collected and printed to stdout.
     Uses tracemalloc for Python memory tracking and psutil for system metrics.
@@ -82,6 +84,7 @@ def capture_utterance(on_utterance_captured: Callable[[np.ndarray], None]) -> No
     audio_buffer: bytearray = bytearray()
     speech_started: bool = False
     t_speech_start: float = 0.0
+    t_listen_start: float = time.perf_counter()
 
     p: pyaudio.PyAudio = pyaudio.PyAudio()
     stream: pyaudio.Stream = p.open(
@@ -94,6 +97,13 @@ def capture_utterance(on_utterance_captured: Callable[[np.ndarray], None]) -> No
 
     try:
         while True:
+            # Check for timeout if speech has not started yet
+            if not speech_started:
+                elapsed: float = time.perf_counter() - t_listen_start
+                if elapsed > MAX_SPEECH_START_WAIT_S:
+                    print("VAD timed out — no speech detected")
+                    break
+
             audio_chunk: bytes = stream.read(CHUNK, exception_on_overflow=False)
             audio_np: np.ndarray = np.frombuffer(audio_chunk, dtype=np.int16)
 
