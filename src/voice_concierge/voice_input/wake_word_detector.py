@@ -108,7 +108,3 @@ class WakeWordDetector:
             stream.stop_stream()
             stream.close()
             p.terminate()
-
-if __name__ == "__main__":
-    detector = WakeWordDetector()
-    detector.listen(on_wake_word=lambda: print(">>> Wake word triggered"))
