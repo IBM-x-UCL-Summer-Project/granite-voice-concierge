@@ -1,0 +1,13 @@
+# --- Audio ---
+pyaudio
+
+# --- Wake Word Detection ---
+openwakeword
+
+# --- Voice Activity Detection ---
+silero-vad
+torch
+
+# --- Utilities ---
+numpy
+psutil

@@ -1,3 +1,6 @@
+# --- Package installation ---
+-e .
+
 # Base Dependencies
 -r requirements.txt
 
