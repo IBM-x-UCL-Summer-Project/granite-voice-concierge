@@ -22,13 +22,12 @@ def silent_audio_chunk() -> np.ndarray:
 
 
 @pytest.fixture
-def silent_audio_stream() -> Generator[np.ndarray, None, None]:
+def silent_audio_stream() -> list[np.ndarray]:
     """
-    Generate a stream of silent audio chunks for continuous listening tests.
-    Yields 100 chunks of 1280 samples each.
+    Generate a list of silent audio chunks for continuous listening tests.
+    Returns 100 chunks of 1280 samples each.
     """
-    for _ in range(100):
-        yield np.zeros(1280, dtype=np.int16)
+    return [np.zeros(1280, dtype=np.int16) for _ in range(100)]
 
 
 @pytest.fixture
