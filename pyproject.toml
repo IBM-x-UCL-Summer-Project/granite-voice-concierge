@@ -25,3 +25,6 @@ markers = [
     "unit: mark test as a unit test",
     "integration: mark test as an integration test",
 ]
+filterwarnings = [
+    "ignore:urllib3 v2 only supports OpenSSL:Warning",
+]
