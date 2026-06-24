@@ -28,3 +28,8 @@ markers = [
 filterwarnings = [
     "ignore:urllib3 v2 only supports OpenSSL:Warning",
 ]
+
+[tool.coverage.report]
+exclude_lines = [
+    "if __name__ == .__main__.:",
+]
