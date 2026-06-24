@@ -29,10 +29,9 @@ class TestWakeWordDetectorIntegration:
         """
         # Arrange
         chunks = [chunk.tobytes() for chunk in silent_audio_stream]
-        chunks.append(KeyboardInterrupt)
 
         mock_stream = MagicMock()
-        mock_stream.read.side_effect = chunks
+        mock_stream.read.side_effect = chunks + [KeyboardInterrupt]
         mock_pyaudio_instance = MagicMock()
         mock_pyaudio_instance.open.return_value = mock_stream
         mock_pyaudio.return_value = mock_pyaudio_instance
@@ -61,10 +60,9 @@ class TestWakeWordDetectorIntegration:
             hey_jarvis_audio[i:i + chunk_size].tobytes()
             for i in range(0, len(hey_jarvis_audio), chunk_size)
         ]
-        chunks.append(KeyboardInterrupt)
 
         mock_stream = MagicMock()
-        mock_stream.read.side_effect = chunks
+        mock_stream.read.side_effect = chunks + [KeyboardInterrupt]
         mock_pyaudio_instance = MagicMock()
         mock_pyaudio_instance.open.return_value = mock_stream
         mock_pyaudio.return_value = mock_pyaudio_instance
@@ -191,7 +189,7 @@ class TestWakeWordDetectorIntegration:
         """
         # Arrange
         mock_stream = MagicMock()
-        mock_stream.read.side_effect = KeyboardInterrupt
+        mock_stream.read.side_effect = [KeyboardInterrupt]
         mock_pyaudio_instance = MagicMock()
         mock_pyaudio_instance.open.return_value = mock_stream
         mock_pyaudio.return_value = mock_pyaudio_instance
