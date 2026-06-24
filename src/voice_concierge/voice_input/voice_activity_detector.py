@@ -130,7 +130,10 @@ class VoiceActivityDetector:
         Args:
             on_utterance_captured: callback to invoke with the captured utterance.
         """
-        if self._collect_metrics:
+        started_tracemalloc: bool = (
+            self._collect_metrics and not tracemalloc.is_tracing()
+        )
+        if started_tracemalloc:
             tracemalloc.start()
             self._process.cpu_percent()  # warm up CPU measurement
 
@@ -193,7 +196,7 @@ class VoiceActivityDetector:
                             )
                             self._print_metrics(metrics)
 
-                        if tracemalloc.is_tracing():
+                        if started_tracemalloc and tracemalloc.is_tracing():
                             tracemalloc.stop()
 
                         on_utterance_captured(utterance)
@@ -205,7 +208,7 @@ class VoiceActivityDetector:
         except KeyboardInterrupt:
             print("\nVAD stopped.")
         finally:
-            if tracemalloc.is_tracing():
+            if started_tracemalloc and tracemalloc.is_tracing():
                 tracemalloc.stop()
             stream.stop_stream()
             stream.close()
