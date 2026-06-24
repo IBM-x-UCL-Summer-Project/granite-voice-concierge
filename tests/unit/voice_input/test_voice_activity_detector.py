@@ -228,3 +228,60 @@ class TestVoiceActivityDetectorCaptureUtterance:
 
         # Assert
         vad._collect_perf_metrics.assert_not_called()
+
+    @pytest.mark.unit
+    @patch("voice_concierge.voice_input.voice_activity_detector.pyaudio.PyAudio")
+    @patch("voice_concierge.voice_input.voice_activity_detector.tracemalloc")
+    def test_capture_utterance_handles_tracemalloc_already_stopped(
+        self, mock_tracemalloc: MagicMock, mock_pyaudio: MagicMock
+    ) -> None:
+        """capture_utterance() handles case where tracemalloc is already stopped."""
+        # Arrange
+        mock_stream = MagicMock()
+        mock_stream.read.return_value = np.zeros(512, dtype=np.int16).tobytes()
+        mock_pyaudio_instance = MagicMock()
+        mock_pyaudio_instance.open.return_value = mock_stream
+        mock_pyaudio.return_value = mock_pyaudio_instance
+
+        # Simulate tracemalloc not tracing
+        mock_tracemalloc.is_tracing.return_value = False
+        mock_tracemalloc.get_traced_memory.return_value = (0, 0)
+
+        vad = VoiceActivityDetector(collect_metrics=True)
+        vad._vad_iterator = MagicMock()
+        vad._vad_iterator.side_effect = [
+            {"start": 0},
+            {"end": 512},
+        ]
+        callback = MagicMock()
+
+        # Act / Assert — should not raise even when tracemalloc is not tracing
+        vad.capture_utterance(on_utterance_captured=callback)
+        mock_tracemalloc.stop.assert_not_called()
+
+    @pytest.mark.unit
+    @patch("voice_concierge.voice_input.voice_activity_detector.pyaudio.PyAudio")
+    @patch("voice_concierge.voice_input.voice_activity_detector.tracemalloc")
+    def test_capture_utterance_stops_tracemalloc_on_keyboard_interrupt(
+        self, mock_tracemalloc: MagicMock, mock_pyaudio: MagicMock
+    ) -> None:
+        """capture_utterance() stops tracemalloc in finally block on KeyboardInterrupt."""
+        # Arrange
+        mock_stream = MagicMock()
+        mock_stream.read.side_effect = KeyboardInterrupt
+        mock_pyaudio_instance = MagicMock()
+        mock_pyaudio_instance.open.return_value = mock_stream
+        mock_pyaudio.return_value = mock_pyaudio_instance
+
+        # Simulate tracemalloc still tracing when finally block runs
+        mock_tracemalloc.is_tracing.return_value = True
+        mock_tracemalloc.get_traced_memory.return_value = (0, 0)
+
+        vad = VoiceActivityDetector(collect_metrics=True)
+        callback = MagicMock()
+
+        # Act
+        vad.capture_utterance(on_utterance_captured=callback)
+
+        # Assert — tracemalloc.stop() called in finally block
+        mock_tracemalloc.stop.assert_called_once()
