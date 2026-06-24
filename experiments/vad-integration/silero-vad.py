@@ -18,9 +18,9 @@ CHANNELS: int = 1
 RATE: int = 16000
 
 # VAD config
-THRESHOLD: float = 0.5 # minimum VAD confidence to detect speech
-MIN_SILENCE_BEFORE_UTTERANCE_END_MS: int = 300 # time before VAD ends after speech ends
-SPEECH_PAD_MS: int = 100 # ms of padding added to start and end of utterance
+THRESHOLD: float = 0.5  # minimum VAD confidence to detect speech
+MIN_SILENCE_BEFORE_UTTERANCE_END_MS: int = 300  # time before VAD ends after speech ends
+SPEECH_PAD_MS: int = 100  # ms of padding added to start and end of utterance
 MAX_SPEECH_START_WAIT_S: int = 5  # time before VAD times out if no speech detected
 
 # Load Silero VAD model
@@ -124,9 +124,7 @@ def capture_utterance(on_utterance_captured: Callable[[np.ndarray], None]) -> No
                     print("Speech started...")
 
                 if "end" in vad_result and speech_started:
-                    utterance: np.ndarray = np.frombuffer(
-                        audio_buffer, dtype=np.int16
-                    )
+                    utterance: np.ndarray = np.frombuffer(audio_buffer, dtype=np.int16)
                     metrics: dict[str, float] = _collect_performance_metrics(
                         t_speech_start, utterance
                     )

@@ -11,22 +11,22 @@ import pyaudio
 from openwakeword.model import Model
 
 # Audio config — these values are required by openWakeWord
-CHUNK: int = 1280          # ~80ms at 16kHz (openWakeWord's expected chunk size)
+CHUNK: int = 1280  # ~80ms at 16kHz (openWakeWord's expected chunk size)
 FORMAT: int = pyaudio.paInt16
 CHANNELS: int = 1
-RATE: int = 16000          # openWakeWord requires 16kHz mono audio
+RATE: int = 16000  # openWakeWord requires 16kHz mono audio
 
 # Wake word config
-CONFIDENCE_THRESHOLD: float = 0.3 # higher threshold -> less sensitive
+CONFIDENCE_THRESHOLD: float = 0.3  # higher threshold -> less sensitive
 
 # Load the model — downloads pre-trained models on first run
 openwakeword.utils.download_models()
 oww_model: Model = Model(
-    wakeword_models=["hey_jarvis_v0.1.onnx"],
-    inference_framework="onnx"
+    wakeword_models=["hey_jarvis_v0.1.onnx"], inference_framework="onnx"
 )
 
 process: psutil.Process = psutil.Process()
+
 
 def listen_for_wake_word(callback: Callable[[], None]) -> None:
     """
@@ -36,11 +36,7 @@ def listen_for_wake_word(callback: Callable[[], None]) -> None:
     """
     p: pyaudio.PyAudio = pyaudio.PyAudio()
     stream: pyaudio.Stream = p.open(
-        format=FORMAT,
-        channels=CHANNELS,
-        rate=RATE,
-        input=True,
-        frames_per_buffer=CHUNK
+        format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK
     )
 
     # Start RAM tracking
