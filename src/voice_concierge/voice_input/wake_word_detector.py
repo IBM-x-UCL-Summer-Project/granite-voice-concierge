@@ -8,9 +8,9 @@ import pyaudio
 from openwakeword.model import Model
 
 # Wake word detection constants
-DEFAULT_CHUNK: int = 1280        # ~80ms at 16kHz (openWakeWord's expected chunk size)
-DEFAULT_RATE: int = 16000                  # sample rate required by openWakeWord
-DEFAULT_CHANNELS: int = 1                  # mono audio
+DEFAULT_CHUNK: int = 1280  # ~80ms at 16kHz (openWakeWord's expected chunk size)
+DEFAULT_RATE: int = 16000  # sample rate required by openWakeWord
+DEFAULT_CHANNELS: int = 1  # mono audio
 DEFAULT_FORMAT: int = pyaudio.paInt16
 DEFAULT_CONFIDENCE_THRESHOLD: float = 0.3  # from spike benchmarks
 

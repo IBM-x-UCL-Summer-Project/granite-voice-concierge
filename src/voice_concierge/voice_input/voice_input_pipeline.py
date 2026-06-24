@@ -67,7 +67,9 @@ class VoiceInputPipeline:
         else:
             print(f">>> Utterance captured ({len(audio)} samples) — STT not connected")
 
-    def run(self, on_utterance_captured: Optional[Callable[[np.ndarray], None]]) -> None:
+    def run(
+        self, on_utterance_captured: Optional[Callable[[np.ndarray], None]]
+    ) -> None:
         """
         Start the voice input pipeline.
 
@@ -93,6 +95,7 @@ class VoiceInputPipeline:
 
 
 if __name__ == "__main__":
+
     def on_utterance_captured(audio: np.ndarray) -> None:
         """Placeholder — this is where STT will connect later."""
         print(f">>> Utterance captured ({len(audio)} samples) — ready for STT")

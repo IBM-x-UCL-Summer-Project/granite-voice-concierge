@@ -11,9 +11,9 @@ import torch
 from silero_vad import VADIterator, load_silero_vad
 
 # Audio constants
-DEFAULT_CHUNK: int = 512            # ~32ms at 16kHz (required by Silero VAD)
-DEFAULT_RATE: int = 16000           # sample rate required by Silero VAD
-DEFAULT_CHANNELS: int = 1           # mono audio
+DEFAULT_CHUNK: int = 512  # ~32ms at 16kHz (required by Silero VAD)
+DEFAULT_RATE: int = 16000  # sample rate required by Silero VAD
+DEFAULT_CHANNELS: int = 1  # mono audio
 DEFAULT_FORMAT: int = pyaudio.paInt16
 
 # VAD constants — values from spike benchmarks
