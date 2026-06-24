@@ -1,5 +1,4 @@
 # Standard library
-from typing import Generator
 
 # Third-party
 import numpy as np

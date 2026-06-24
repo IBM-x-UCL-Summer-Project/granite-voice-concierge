@@ -1,7 +1,6 @@
 # Standard library
-from typing import DefaultDict
-from unittest.mock import MagicMock, patch
 from collections import defaultdict, deque
+from unittest.mock import MagicMock, patch
 
 # Third-party
 import numpy as np
