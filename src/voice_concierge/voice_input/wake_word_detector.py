@@ -99,13 +99,23 @@ class WakeWordDetector:
                             f"(confidence: {confidence[-1]:.2f})"
                         )
                         self._model.reset()
+
+                        # Close stream before invoking callback to free microphone
+                        # for VAD to open on the same device
+                        stream.stop_stream()
+                        stream.close()
+                        p.terminate()
+
                         on_wake_word()
-                        break
+                        return
 
         except KeyboardInterrupt:
             print("\nWake word detector stopped.")
             raise
         finally:
-            stream.stop_stream()
-            stream.close()
-            p.terminate()
+            try:
+                stream.stop_stream()
+                stream.close()
+                p.terminate()
+            except Exception:
+                pass
