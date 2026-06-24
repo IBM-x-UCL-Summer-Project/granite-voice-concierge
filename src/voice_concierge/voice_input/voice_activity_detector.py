@@ -179,6 +179,9 @@ class VoiceActivityDetector:
                         t_speech_start = time.perf_counter()
                         print("Speech started...")
 
+                    if speech_started:
+                        audio_buffer.extend(audio_chunk)
+
                     if "end" in vad_result and speech_started:
                         utterance: np.ndarray = np.frombuffer(
                             audio_buffer, dtype=np.int16
@@ -196,7 +199,7 @@ class VoiceActivityDetector:
                         on_utterance_captured(utterance)
                         break
 
-                if speech_started:
+                elif speech_started:
                     audio_buffer.extend(audio_chunk)
 
         except KeyboardInterrupt:
