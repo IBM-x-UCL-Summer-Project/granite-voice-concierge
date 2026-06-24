@@ -104,6 +104,7 @@ class WakeWordDetector:
 
         except KeyboardInterrupt:
             print("\nWake word detector stopped.")
+            raise
         finally:
             stream.stop_stream()
             stream.close()

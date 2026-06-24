@@ -207,6 +207,7 @@ class VoiceActivityDetector:
 
         except KeyboardInterrupt:
             print("\nVAD stopped.")
+            raise
         finally:
             if started_tracemalloc and tracemalloc.is_tracing():
                 tracemalloc.stop()
