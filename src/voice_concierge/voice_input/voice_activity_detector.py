@@ -166,8 +166,8 @@ class VoiceActivityDetector:
 
                 # Normalize int16 [-32768, 32767] to float32 [-1.0, 1.0]
                 audio_float: torch.Tensor = torch.from_numpy(
-                    audio_np.astype(np.float32, copy=False) / 32768.0
-                )
+                    audio_np.astype(np.float32, copy=False)
+                ).div(32768.0)
 
                 vad_result: Optional[dict[str, float]] = self._vad_iterator(
                     audio_float, return_seconds=False
