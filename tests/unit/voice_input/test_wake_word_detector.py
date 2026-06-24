@@ -16,7 +16,7 @@ class TestWakeWordDetectorInit:
     @pytest.mark.unit
     def test_default_initialisation(self) -> None:
         """WakeWordDetector initialises with default values."""
-        detector = WakeWordDetector()
+        detector = WakeWordDetector(download_models=False)
         assert detector._confidence_threshold == 0.3
         assert detector._chunk == 1280
         assert detector._rate == 16000
@@ -25,25 +25,27 @@ class TestWakeWordDetectorInit:
     @pytest.mark.unit
     def test_custom_confidence_threshold(self) -> None:
         """WakeWordDetector accepts a custom confidence threshold."""
-        detector = WakeWordDetector(confidence_threshold=0.7)
+        detector = WakeWordDetector(confidence_threshold=0.7, download_models=False)
         assert detector._confidence_threshold == 0.7
 
     @pytest.mark.unit
     def test_custom_chunk_size(self) -> None:
         """WakeWordDetector accepts a custom chunk size."""
-        detector = WakeWordDetector(chunk=2560)
+        detector = WakeWordDetector(chunk=2560, download_models=False)
         assert detector._chunk == 2560
 
     @pytest.mark.unit
     def test_model_is_loaded_on_init(self) -> None:
         """WakeWordDetector loads the openWakeWord model on initialisation."""
-        detector = WakeWordDetector()
+        detector = WakeWordDetector(download_models=False)
         assert detector._model is not None
 
     @pytest.mark.unit
     def test_custom_model_name(self) -> None:
         """WakeWordDetector accepts a custom model name."""
-        detector = WakeWordDetector(model_name="hey_jarvis_v0.1.onnx")
+        detector = WakeWordDetector(
+            model_name="hey_jarvis_v0.1.onnx", download_models=False
+        )
         assert detector._model is not None
 
 
@@ -65,7 +67,7 @@ class TestWakeWordDetectorListen:
         mock_pyaudio_instance.open.return_value = mock_stream
         mock_pyaudio.return_value = mock_pyaudio_instance
 
-        detector = WakeWordDetector()
+        detector = WakeWordDetector(download_models=False)
         callback = MagicMock()
 
         # Act — KeyboardInterrupt stops the loop after stream is opened
@@ -94,7 +96,7 @@ class TestWakeWordDetectorListen:
         mock_pyaudio_instance.open.return_value = mock_stream
         mock_pyaudio.return_value = mock_pyaudio_instance
 
-        detector = WakeWordDetector()
+        detector = WakeWordDetector(download_models=False)
         callback = MagicMock()
 
         # Act
@@ -121,7 +123,7 @@ class TestWakeWordDetectorListen:
         mock_pyaudio_instance.open.return_value = mock_stream
         mock_pyaudio.return_value = mock_pyaudio_instance
 
-        detector = WakeWordDetector()
+        detector = WakeWordDetector(download_models=False)
         callback = MagicMock()
 
         # Act
@@ -144,7 +146,7 @@ class TestWakeWordDetectorListen:
         mock_pyaudio_instance.open.return_value = mock_stream
         mock_pyaudio.return_value = mock_pyaudio_instance
 
-        detector = WakeWordDetector()
+        detector = WakeWordDetector(download_models=False)
 
         # Mock predict() to avoid overwriting the injected buffer
         detector._model.predict = MagicMock()

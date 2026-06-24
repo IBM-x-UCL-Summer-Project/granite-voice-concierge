@@ -36,7 +36,7 @@ class TestWakeWordDetectorIntegration:
         mock_pyaudio_instance.open.return_value = mock_stream
         mock_pyaudio.return_value = mock_pyaudio_instance
 
-        detector = WakeWordDetector(confidence_threshold=0.3)
+        detector = WakeWordDetector(confidence_threshold=0.3, download_models=False)
         callback = MagicMock()
 
         # Act
@@ -67,7 +67,7 @@ class TestWakeWordDetectorIntegration:
         mock_pyaudio_instance.open.return_value = mock_stream
         mock_pyaudio.return_value = mock_pyaudio_instance
 
-        detector = WakeWordDetector(confidence_threshold=0.3)
+        detector = WakeWordDetector(confidence_threshold=0.3, download_models=False)
         callback = MagicMock()
 
         # Act
@@ -95,7 +95,7 @@ class TestWakeWordDetectorIntegration:
         mock_pyaudio_instance.open.return_value = mock_stream
         mock_pyaudio.return_value = mock_pyaudio_instance
 
-        detector = WakeWordDetector(confidence_threshold=0.3)
+        detector = WakeWordDetector(confidence_threshold=0.3, download_models=False)
 
         # Inject high confidence using real model buffer types
         detector._model.predict = MagicMock()
@@ -129,7 +129,7 @@ class TestWakeWordDetectorIntegration:
         mock_pyaudio_instance.open.return_value = mock_stream
         mock_pyaudio.return_value = mock_pyaudio_instance
 
-        detector = WakeWordDetector(confidence_threshold=0.5)
+        detector = WakeWordDetector(confidence_threshold=0.5, download_models=False)
 
         # Inject low confidence using real model buffer types
         detector._model.predict = MagicMock()
@@ -161,7 +161,7 @@ class TestWakeWordDetectorIntegration:
         mock_pyaudio_instance.open.return_value = mock_stream
         mock_pyaudio.return_value = mock_pyaudio_instance
 
-        detector = WakeWordDetector(confidence_threshold=0.3)
+        detector = WakeWordDetector(confidence_threshold=0.3, download_models=False)
         detector._model.predict = MagicMock()
         detector._model.prediction_buffer = defaultdict(
             deque, {"hey_jarvis_v0.1.onnx": deque([0.9])}
@@ -192,7 +192,7 @@ class TestWakeWordDetectorIntegration:
         mock_pyaudio_instance.open.return_value = mock_stream
         mock_pyaudio.return_value = mock_pyaudio_instance
 
-        detector = WakeWordDetector()
+        detector = WakeWordDetector(download_models=False)
 
         # Act
         detector.listen(on_wake_word=MagicMock())

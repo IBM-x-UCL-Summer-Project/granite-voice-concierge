@@ -36,6 +36,7 @@ class WakeWordDetector:
         rate: int = DEFAULT_RATE,
         channels: int = DEFAULT_CHANNELS,
         fmt: int = DEFAULT_FORMAT,
+        download_models: bool = True,
     ) -> None:
         """
         Initialise the wake word detector.
@@ -54,8 +55,8 @@ class WakeWordDetector:
         self._channels = channels
         self._fmt = fmt
 
-        # Download pre-trained models on first run
-        openwakeword.utils.download_models()
+        if download_models:
+            openwakeword.utils.download_models()
 
         self._model: Model = Model(
             wakeword_models=[model_name],
