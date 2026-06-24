@@ -132,9 +132,7 @@ class TestWakeWordDetectorListen:
 
     @pytest.mark.unit
     @patch("voice_concierge.voice_input.wake_word_detector.pyaudio.PyAudio")
-    def test_listen_resets_model_after_detection(
-        self, mock_pyaudio: MagicMock
-    ) -> None:
+    def test_listen_resets_model_after_detection(self, mock_pyaudio: MagicMock) -> None:
         """listen() resets the model buffer after wake word is detected."""
         # Arrange
         mock_stream = MagicMock()

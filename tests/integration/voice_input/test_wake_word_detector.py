@@ -57,7 +57,7 @@ class TestWakeWordDetectorIntegration:
         # Arrange
         chunk_size: int = 1280
         chunks = [
-            hey_jarvis_audio[i:i + chunk_size].tobytes()
+            hey_jarvis_audio[i : i + chunk_size].tobytes()
             for i in range(0, len(hey_jarvis_audio), chunk_size)
         ]
 
@@ -146,9 +146,7 @@ class TestWakeWordDetectorIntegration:
 
     @pytest.mark.integration
     @patch("voice_concierge.voice_input.wake_word_detector.pyaudio.PyAudio")
-    def test_detector_resets_after_detection(
-        self, mock_pyaudio: MagicMock
-    ) -> None:
+    def test_detector_resets_after_detection(self, mock_pyaudio: MagicMock) -> None:
         """
         WakeWordDetector resets the model buffer after each detection.
         Verifies the real model reset method is called to prevent repeat triggers.

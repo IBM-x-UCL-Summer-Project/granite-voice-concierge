@@ -1,14 +1,16 @@
 # Standard library
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock
 
 # Third-party
 import numpy as np
 import pytest
 
 # Local
-from voice_concierge.voice_input import VoiceInputPipeline
-from voice_concierge.voice_input import WakeWordDetector
-from voice_concierge.voice_input import VoiceActivityDetector
+from voice_concierge.voice_input import (
+    VoiceActivityDetector,
+    VoiceInputPipeline,
+    WakeWordDetector,
+)
 
 
 class TestVoiceInputPipelineInit:

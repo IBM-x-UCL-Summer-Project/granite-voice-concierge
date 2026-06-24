@@ -1,6 +1,5 @@
 # Standard library
-from unittest.mock import MagicMock, patch, call
-import time
+from unittest.mock import MagicMock, patch
 
 # Third-party
 import numpy as np
@@ -105,7 +104,9 @@ class TestVoiceActivityDetectorCaptureUtterance:
     def test_capture_utterance_cleans_up_on_keyboard_interrupt(
         self, mock_pyaudio: MagicMock
     ) -> None:
-        """capture_utterance() closes stream and terminates PyAudio on KeyboardInterrupt."""
+        """
+        capture_utterance() closes stream and terminates PyAudio on KeyboardInterrupt.
+        """
         # Arrange
         mock_stream = MagicMock()
         mock_stream.read.side_effect = KeyboardInterrupt
@@ -129,7 +130,9 @@ class TestVoiceActivityDetectorCaptureUtterance:
     def test_capture_utterance_times_out_when_no_speech(
         self, mock_pyaudio: MagicMock
     ) -> None:
-        """capture_utterance() exits cleanly when no speech is detected within timeout."""
+        """
+        capture_utterance() exits cleanly when no speech is detected within timeout.
+        """
         # Arrange
         mock_stream = MagicMock()
         mock_stream.read.return_value = np.zeros(512, dtype=np.int16).tobytes()
@@ -164,8 +167,8 @@ class TestVoiceActivityDetectorCaptureUtterance:
         # Mock VAD iterator to simulate speech start then end
         vad._vad_iterator = MagicMock()
         vad._vad_iterator.side_effect = [
-            {"start": 0},   # first chunk — speech starts
-            {"end": 512},   # second chunk — speech ends
+            {"start": 0},  # first chunk — speech starts
+            {"end": 512},  # second chunk — speech ends
         ]
 
         callback = MagicMock()
@@ -265,7 +268,9 @@ class TestVoiceActivityDetectorCaptureUtterance:
     def test_capture_utterance_stops_tracemalloc_on_keyboard_interrupt(
         self, mock_tracemalloc: MagicMock, mock_pyaudio: MagicMock
     ) -> None:
-        """capture_utterance() stops tracemalloc in finally block on KeyboardInterrupt."""
+        """
+        capture_utterance() stops tracemalloc in finally block on KeyboardInterrupt.
+        """
         # Arrange
         mock_stream = MagicMock()
         mock_stream.read.side_effect = KeyboardInterrupt

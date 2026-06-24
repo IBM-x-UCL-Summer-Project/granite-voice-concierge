@@ -139,9 +139,7 @@ class TestVoiceActivityDetectorIntegration:
 
     @pytest.mark.integration
     @patch("voice_concierge.voice_input.voice_activity_detector.pyaudio.PyAudio")
-    def test_timeout_exits_cleanly(
-        self, mock_pyaudio: MagicMock
-    ) -> None:
+    def test_timeout_exits_cleanly(self, mock_pyaudio: MagicMock) -> None:
         """
         VoiceActivityDetector exits cleanly after timeout with no speech.
         Verifies stream is closed and terminated correctly on timeout.
@@ -166,9 +164,7 @@ class TestVoiceActivityDetectorIntegration:
 
     @pytest.mark.integration
     @patch("voice_concierge.voice_input.voice_activity_detector.pyaudio.PyAudio")
-    def test_metrics_collected_when_enabled(
-        self, mock_pyaudio: MagicMock
-    ) -> None:
+    def test_metrics_collected_when_enabled(self, mock_pyaudio: MagicMock) -> None:
         """
         VoiceActivityDetector collects and prints metrics when collect_metrics=True.
         Verifies metrics collection integrates correctly with utterance capture.

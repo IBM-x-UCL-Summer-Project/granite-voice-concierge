@@ -43,7 +43,5 @@ def hey_jarvis_audio() -> np.ndarray:
     frequency: float = 440.0  # Hz — arbitrary tone to simulate speech energy
 
     t: np.ndarray = np.linspace(0, duration, int(sample_rate * duration))
-    sine_wave: np.ndarray = (np.sin(2 * np.pi * frequency * t) * 32767).astype(
-        np.int16
-    )
+    sine_wave: np.ndarray = (np.sin(2 * np.pi * frequency * t) * 32767).astype(np.int16)
     return sine_wave
