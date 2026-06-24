@@ -67,7 +67,7 @@ class VoiceInputPipeline:
         else:
             print(f">>> Utterance captured ({len(audio)} samples) — STT not connected")
 
-    def run(self, on_utterance_captured: Callable[[np.ndarray], None]) -> None:
+    def run(self, on_utterance_captured: Optional[Callable[[np.ndarray], None]]) -> None:
         """
         Start the voice input pipeline.
 
@@ -80,6 +80,7 @@ class VoiceInputPipeline:
 
         Args:
             on_utterance_captured: callback to invoke with each captured utterance.
+                Can be None if no callback is needed (e.g., for testing).
         """
         self._on_utterance_captured = on_utterance_captured
         print("Voice input pipeline started — say the wake word to begin.")
