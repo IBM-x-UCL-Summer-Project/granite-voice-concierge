@@ -223,3 +223,6 @@ __marimo__/
 # Audio files
 *.wav
 *.mp3
+
+# macOS
+.DS_Store
