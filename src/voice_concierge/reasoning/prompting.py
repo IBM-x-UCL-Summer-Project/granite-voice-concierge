@@ -1,31 +1,57 @@
-"""Prompt construction for local Granite reasoning backends."""
+"""Versioned prompt rendering for local Granite reasoning backends."""
 
 from __future__ import annotations
 
-import json
+import re
+import tomllib
+from collections.abc import Mapping
 from dataclasses import dataclass
+from functools import lru_cache
+from importlib import resources
+from importlib.resources.abc import Traversable
+from string import Template
+from types import MappingProxyType
 from typing import Literal
 
 from voice_concierge.reasoning.types import ReasoningRequest
 
 Role = Literal["system", "user", "assistant"]
 
+DEFAULT_PROMPT_VERSION = "v1"
+PROMPT_TEMPLATE_SCHEMA_VERSION = 1
+_RESOURCE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_SYSTEM_FIELDS = frozenset(
+    {
+        "allow_memory_writes",
+        "max_words",
+        "mode_policy",
+        "voice_first",
+    }
+)
+_USER_FIELDS = frozenset(
+    {
+        "conversation_summary",
+        "memories",
+        "mode",
+        "transcript",
+    }
+)
 
-MODE_POLICIES = {
-    "cooking": (
-        "Cooking mode: answer one step at a time, keep instructions concrete, "
-        "and make it easy for the user to ask for the next step or a repeat."
-    ),
-    "driving": (
-        "Driving mode: keep responses extremely short, avoid detailed "
-        "explanations, and prioritize safety over completeness."
-    ),
-    "home": ("Home mode: be calm, concise, and conversational while staying useful."),
-    "shopping": (
-        "Shopping mode: help with list recall and list changes. Confirm before "
-        "saving additions, removals, or edits."
-    ),
-}
+
+class PromptTemplateError(ValueError):
+    """Raised when a bundled prompt template is missing or invalid."""
+
+
+@dataclass(frozen=True)
+class PromptTemplate:
+    """Validated prompt metadata and template text for one version."""
+
+    prompt_id: str
+    version: str
+    default_mode: str
+    mode_policies: Mapping[str, str]
+    system_template: str
+    user_template: str
 
 
 @dataclass(frozen=True)
@@ -41,132 +67,183 @@ class ChatMessage:
         return {"role": self.role, "content": self.content}
 
 
-def build_granite_messages(request: ReasoningRequest) -> tuple[ChatMessage, ...]:
-    """Build local Granite chat messages from a reasoning request."""
+@lru_cache(maxsize=None)
+def load_prompt_template(version: str = DEFAULT_PROMPT_VERSION) -> PromptTemplate:
+    """Load and validate one bundled prompt-template version."""
 
-    return (
-        ChatMessage(role="system", content=_build_system_prompt(request)),
-        ChatMessage(role="user", content=_build_user_prompt(request)),
+    _validate_resource_name(version, label="Prompt version")
+    directory = resources.files("voice_concierge.reasoning").joinpath(
+        "prompts",
+        version,
+    )
+    manifest = _load_manifest(directory, version)
+
+    schema_version = manifest.get("schema_version")
+    if (
+        not isinstance(schema_version, int)
+        or isinstance(schema_version, bool)
+        or schema_version != PROMPT_TEMPLATE_SCHEMA_VERSION
+    ):
+        raise PromptTemplateError(
+            f"Unsupported prompt template schema version: {schema_version!r}"
+        )
+
+    prompt_id = _required_string(manifest, "prompt_id")
+    manifest_version = _required_string(manifest, "version")
+    if manifest_version != version:
+        raise PromptTemplateError(
+            f"Prompt manifest version {manifest_version!r} does not match "
+            f"directory {version!r}."
+        )
+
+    default_mode = _required_string(manifest, "default_mode").lower()
+    mode_policies = _load_mode_policies(manifest)
+    if default_mode not in mode_policies:
+        raise PromptTemplateError(
+            f"Default prompt mode {default_mode!r} has no policy entry."
+        )
+
+    system_filename = _required_string(manifest, "system_template")
+    user_filename = _required_string(manifest, "user_template")
+    system_template = _load_template_file(directory, system_filename)
+    user_template = _load_template_file(directory, user_filename)
+    _validate_template_fields(system_template, _SYSTEM_FIELDS, label="System")
+    _validate_template_fields(user_template, _USER_FIELDS, label="User")
+
+    return PromptTemplate(
+        prompt_id=prompt_id,
+        version=manifest_version,
+        default_mode=default_mode,
+        mode_policies=MappingProxyType(mode_policies),
+        system_template=system_template,
+        user_template=user_template,
     )
 
 
-def _build_system_prompt(request: ReasoningRequest) -> str:
+def build_granite_messages(
+    request: ReasoningRequest,
+    *,
+    prompt_version: str = DEFAULT_PROMPT_VERSION,
+) -> tuple[ChatMessage, ...]:
+    """Render one versioned system/user message pair for a reasoning request."""
+
+    prompt = load_prompt_template(prompt_version)
     mode = request.mode.lower()
-    mode_policy = MODE_POLICIES.get(mode, MODE_POLICIES["home"])
-    constraints = request.constraints
-
-    return "\n".join(
-        [
-            "You are the local reasoning component for an offline voice-first "
-            "assistant for independent living.",
-            "Core rules:",
-            "- Operate as if no internet or cloud service is available.",
-            "- Use only the user transcript, supplied local memories, and supplied "
-            "conversation summary.",
-            "- Do not claim to browse, search online, sync, upload, or call remote "
-            "services.",
-            "- Keep the spoken response short, concrete, and easy to say aloud.",
-            "- Do not invent remembered facts. If a memory was not supplied, say so.",
-            "- Ask for explicit confirmation before saving, changing, or deleting "
-            "personal data.",
-            "- Do not provide medical diagnosis, medication dosing, or "
-            "safety-critical decisions.",
-            "- If a situation may be urgent, tell the user to contact emergency "
-            "services.",
-            f"- Maximum spoken response length: {constraints.max_words} words.",
-            f"- Voice-first interaction required: {constraints.voice_first}.",
-            f"- Memory writes allowed: {constraints.allow_memory_writes}.",
-            mode_policy,
-            "Structured output examples:",
-            _structured_output_examples(),
-        ]
+    mode_policy = prompt.mode_policies.get(
+        mode,
+        prompt.mode_policies[prompt.default_mode],
+    )
+    system_content = Template(prompt.system_template).substitute(
+        allow_memory_writes=request.constraints.allow_memory_writes,
+        max_words=request.constraints.max_words,
+        mode_policy=mode_policy,
+        voice_first=request.constraints.voice_first,
+    )
+    user_content = Template(prompt.user_template).substitute(
+        conversation_summary=_format_conversation_summary(request),
+        memories=_format_memories(request.memories),
+        mode=request.mode,
+        transcript=request.transcript,
+    )
+    return (
+        ChatMessage(role="system", content=system_content),
+        ChatMessage(role="user", content=user_content),
     )
 
 
-def _build_user_prompt(request: ReasoningRequest) -> str:
-    sections = [
-        f"Active mode: {request.mode}",
-        _format_conversation_summary(request),
-        _format_memories(request.memories),
-        "User transcript:",
-        request.transcript,
-        "Return only a JSON object matching the configured schema. The "
-        "spoken_response field must be concise and suitable for text-to-speech.",
-    ]
-    return "\n\n".join(sections)
+def _load_manifest(directory: Traversable, version: str) -> dict[str, object]:
+    manifest_path = directory.joinpath("manifest.toml")
+    try:
+        content = manifest_path.read_text(encoding="utf-8")
+    except (FileNotFoundError, NotADirectoryError) as exc:
+        raise PromptTemplateError(
+            f"Prompt template version {version!r} is not available."
+        ) from exc
+
+    try:
+        manifest = tomllib.loads(content)
+    except tomllib.TOMLDecodeError as exc:
+        raise PromptTemplateError(
+            f"Prompt template manifest for {version!r} is invalid TOML."
+        ) from exc
+    return manifest
+
+
+def _load_mode_policies(manifest: dict[str, object]) -> dict[str, str]:
+    raw_modes = manifest.get("modes")
+    if not isinstance(raw_modes, dict) or not raw_modes:
+        raise PromptTemplateError("Prompt manifest must define mode policies.")
+
+    modes: dict[str, str] = {}
+    for raw_mode, raw_policy in raw_modes.items():
+        if not isinstance(raw_mode, str) or not raw_mode.strip():
+            raise PromptTemplateError("Prompt mode names must be non-empty strings.")
+        if not isinstance(raw_policy, str) or not raw_policy.strip():
+            raise PromptTemplateError(
+                f"Prompt policy for mode {raw_mode!r} must be a non-empty string."
+            )
+        modes[raw_mode.strip().lower()] = raw_policy.strip()
+    return modes
+
+
+def _load_template_file(directory: Traversable, filename: str) -> str:
+    _validate_resource_name(filename, label="Prompt template filename")
+    try:
+        content = directory.joinpath(filename).read_text(encoding="utf-8").strip()
+    except (FileNotFoundError, NotADirectoryError) as exc:
+        raise PromptTemplateError(
+            f"Prompt template file {filename!r} is not available."
+        ) from exc
+    if not content:
+        raise PromptTemplateError(f"Prompt template file {filename!r} is empty.")
+    return content
+
+
+def _validate_template_fields(
+    template_text: str,
+    expected_fields: frozenset[str],
+    *,
+    label: str,
+) -> None:
+    template = Template(template_text)
+    if not template.is_valid():
+        raise PromptTemplateError(f"{label} prompt template syntax is invalid.")
+
+    actual_fields = set(template.get_identifiers())
+    missing_fields = sorted(expected_fields - actual_fields)
+    unknown_fields = sorted(actual_fields - expected_fields)
+    if missing_fields or unknown_fields:
+        details = []
+        if missing_fields:
+            details.append(f"missing {', '.join(missing_fields)}")
+        if unknown_fields:
+            details.append(f"unknown {', '.join(unknown_fields)}")
+        raise PromptTemplateError(
+            f"{label} prompt template fields are invalid: {'; '.join(details)}."
+        )
+
+
+def _required_string(data: dict[str, object], key: str) -> str:
+    value = data.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise PromptTemplateError(
+            f"Prompt manifest field {key!r} must be a non-empty string."
+        )
+    return value.strip()
+
+
+def _validate_resource_name(value: str, *, label: str) -> None:
+    if not isinstance(value, str) or not _RESOURCE_NAME_PATTERN.fullmatch(value):
+        raise PromptTemplateError(f"{label} {value!r} is invalid.")
 
 
 def _format_conversation_summary(request: ReasoningRequest) -> str:
     if request.conversation_summary:
-        return f"Conversation summary:\n{request.conversation_summary}"
-
-    return "Conversation summary:\nNo summary supplied."
+        return request.conversation_summary
+    return "No summary supplied."
 
 
 def _format_memories(memories: tuple[str, ...]) -> str:
     if not memories:
-        return "Local memories:\nNo local memories supplied."
-
-    lines = ["Local memories:"]
-    lines.extend(f"- {memory}" for memory in memories)
-    return "\n".join(lines)
-
-
-def _structured_output_examples() -> str:
-    return "\n".join(
-        [
-            "If the user says: Remember that I prefer short answers.",
-            f"Return: {_example_json(_memory_store_example())}",
-            "If the user says: Speak more slowly.",
-            f"Return: {_example_json(_accessibility_update_example())}",
-            "If the user asks what is on a shopping list and no local list "
-            "memory is supplied, do not invent list items.",
-            f"Return: {_example_json(_missing_shopping_list_example())}",
-        ]
-    )
-
-
-def _example_json(payload: dict[str, object]) -> str:
-    return json.dumps(payload, separators=(",", ":"))
-
-
-def _memory_store_example() -> dict[str, object]:
-    return {
-        "spoken_response": "I can remember that. Please confirm before I save it.",
-        "needs_confirmation": True,
-        "proposed_memory_action": {
-            "action": "store",
-            "content": "User prefers short answers.",
-            "rationale": "The user explicitly asked to remember this preference.",
-            "requires_confirmation": True,
-        },
-        "mode_suggestion": None,
-        "confidence": "high",
-    }
-
-
-def _accessibility_update_example() -> dict[str, object]:
-    return {
-        "spoken_response": (
-            "I can speak more slowly. Please confirm before I save that preference."
-        ),
-        "needs_confirmation": True,
-        "proposed_memory_action": {
-            "action": "update",
-            "content": "accessibility.preferred_pace=slow",
-            "rationale": "The user asked to change speech pacing.",
-            "requires_confirmation": True,
-        },
-        "mode_suggestion": None,
-        "confidence": "high",
-    }
-
-
-def _missing_shopping_list_example() -> dict[str, object]:
-    return {
-        "spoken_response": "I do not have a saved shopping list yet.",
-        "needs_confirmation": False,
-        "proposed_memory_action": None,
-        "mode_suggestion": None,
-        "confidence": "high",
-    }
+        return "No local memories supplied."
+    return "\n".join(f"- {memory}" for memory in memories)

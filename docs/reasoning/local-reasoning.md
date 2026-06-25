@@ -97,6 +97,19 @@ Explicit model and host arguments override the persisted selection:
   --host http://localhost:11434
 ```
 
+Ollama runs use the bundled `v1` runtime prompt by default. Select another
+bundled version explicitly when testing a prompt revision:
+
+```bash
+.venv/bin/python -m benchmarks.reasoning.benchmark \
+  run \
+  --engine ollama \
+  --prompt-version v2
+```
+
+The selected prompt ID and version are recorded in each Ollama response's
+benchmark metadata.
+
 The benchmark report includes per-prompt latency, response word count,
 confirmation flags, proposed memory action type, confidence, and backend
 metadata. Ollama reports can also retain raw and guarded evaluations from the
@@ -218,6 +231,19 @@ You can choose a specific output directory:
 ```
 
 ## Prompt Policy
+
+Runtime model instructions are bundled under
+`src/voice_concierge/reasoning/prompts/<version>/`. Each version contains:
+
+- `manifest.toml`: schema version, prompt identity, template filenames, default
+  mode, and mode-specific policies;
+- `system.txt`: product rules and structured-output examples;
+- `user.txt`: placeholders for mode, supplied context, memories, and transcript.
+
+`prompting.py` validates the manifest, required placeholders, and resource names,
+then renders the selected templates with `string.Template`. Once a prompt
+version has produced benchmark evidence, leave it unchanged and create a new
+version directory so old results remain reproducible.
 
 The prompt builder instructs the model to follow these local reasoning rules:
 

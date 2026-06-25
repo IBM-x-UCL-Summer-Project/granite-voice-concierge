@@ -27,7 +27,11 @@ from voice_concierge.reasoning.models import (
 )
 from voice_concierge.reasoning.output import apply_spoken_word_limit
 from voice_concierge.reasoning.policy import apply_reasoning_policy_guards
-from voice_concierge.reasoning.prompting import build_granite_messages
+from voice_concierge.reasoning.prompting import (
+    DEFAULT_PROMPT_VERSION,
+    build_granite_messages,
+    load_prompt_template,
+)
 from voice_concierge.reasoning.types import (
     MemoryAction,
     ReasoningRequest,
@@ -99,6 +103,7 @@ class OllamaConfig:
     timeout_s: float = 120.0
     temperature: float = 0.2
     top_p: float = 0.9
+    prompt_version: str = DEFAULT_PROMPT_VERSION
 
 
 class OllamaReasoningEngine:
@@ -106,6 +111,7 @@ class OllamaReasoningEngine:
 
     def __init__(self, config: OllamaConfig, client: Client | None = None) -> None:
         self.config = config
+        self._prompt_template = load_prompt_template(config.prompt_version)
         self._client = (
             client
             if client is not None
@@ -118,7 +124,13 @@ class OllamaReasoningEngine:
     def generate_trace(self, request: ReasoningRequest) -> ReasoningTrace:
         """Return parsed and policy-guarded responses from one Ollama request."""
 
-        messages = [message.as_dict() for message in build_granite_messages(request)]
+        messages = [
+            message.as_dict()
+            for message in build_granite_messages(
+                request,
+                prompt_version=self.config.prompt_version,
+            )
+        ]
         try:
             response = cast(
                 ChatResponse,
@@ -143,6 +155,8 @@ class OllamaReasoningEngine:
             "backend": "ollama",
             "model": self.config.model,
             "output_format": "structured_json",
+            "prompt_id": self._prompt_template.prompt_id,
+            "prompt_version": self._prompt_template.version,
             **self._extract_metrics(response),
         }
         raw_response = self._parse_response_content(content, metadata)

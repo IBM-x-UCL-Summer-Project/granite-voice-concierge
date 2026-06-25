@@ -22,12 +22,14 @@ from benchmarks.reasoning.suite import (
 )
 from voice_concierge.reasoning import (
     DEFAULT_MODEL_SELECTION_PATH,
+    DEFAULT_PROMPT_VERSION,
     DeterministicReasoningFake,
     OllamaConfig,
     OllamaReasoningEngine,
     OllamaReasoningError,
     ReasoningEngine,
     load_model_selection,
+    load_prompt_template,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -138,6 +140,11 @@ def _add_common_args(
         help="Maximum words allowed in a spoken response.",
     )
     parser.add_argument(
+        "--prompt-version",
+        default=DEFAULT_PROMPT_VERSION,
+        help="Bundled runtime prompt-template version used by Ollama engines.",
+    )
+    parser.add_argument(
         "--evaluation-mode",
         choices=EVALUATION_MODES,
         default=evaluation_mode,
@@ -158,6 +165,7 @@ def build_engine(args: argparse.Namespace) -> ReasoningEngine:
                 model=model,
                 host=host,
                 timeout_s=args.timeout_s,
+                prompt_version=args.prompt_version,
             )
         )
 
@@ -208,6 +216,7 @@ def _compare_models(args: argparse.Namespace) -> int:
 
     try:
         host = _resolve_ollama_host(args)
+        load_prompt_template(args.prompt_version)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -225,6 +234,7 @@ def _compare_models(args: argparse.Namespace) -> int:
                     model=model,
                     host=host,
                     timeout_s=args.timeout_s,
+                    prompt_version=args.prompt_version,
                 )
             )
             report = run_reasoning_benchmark(
