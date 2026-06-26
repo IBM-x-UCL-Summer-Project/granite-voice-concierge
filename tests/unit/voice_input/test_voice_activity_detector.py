@@ -88,7 +88,8 @@ class TestVoiceActivityDetectorCaptureUtterance:
         callback = MagicMock()
 
         # Act
-        vad.capture_utterance(on_utterance_captured=callback)
+        with pytest.raises(KeyboardInterrupt):
+            vad.capture_utterance(on_utterance_captured=callback)
 
         # Assert
         mock_pyaudio_instance.open.assert_called_once_with(
@@ -118,7 +119,8 @@ class TestVoiceActivityDetectorCaptureUtterance:
         callback = MagicMock()
 
         # Act
-        vad.capture_utterance(on_utterance_captured=callback)
+        with pytest.raises(KeyboardInterrupt):
+            vad.capture_utterance(on_utterance_captured=callback)
 
         # Assert
         mock_stream.stop_stream.assert_called_once()
@@ -227,7 +229,8 @@ class TestVoiceActivityDetectorCaptureUtterance:
         callback = MagicMock()
 
         # Act
-        vad.capture_utterance(on_utterance_captured=callback)
+        with pytest.raises(KeyboardInterrupt):
+            vad.capture_utterance(on_utterance_captured=callback)
 
         # Assert
         vad._collect_perf_metrics.assert_not_called()
@@ -279,14 +282,15 @@ class TestVoiceActivityDetectorCaptureUtterance:
         mock_pyaudio.return_value = mock_pyaudio_instance
 
         # Simulate tracemalloc still tracing when finally block runs
-        mock_tracemalloc.is_tracing.return_value = True
+        mock_tracemalloc.is_tracing.side_effect = [False, True]
         mock_tracemalloc.get_traced_memory.return_value = (0, 0)
 
         vad = VoiceActivityDetector(collect_metrics=True)
         callback = MagicMock()
 
         # Act
-        vad.capture_utterance(on_utterance_captured=callback)
+        with pytest.raises(KeyboardInterrupt):
+            vad.capture_utterance(on_utterance_captured=callback)
 
         # Assert — tracemalloc.stop() called in finally block
         mock_tracemalloc.stop.assert_called_once()

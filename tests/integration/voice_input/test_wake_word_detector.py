@@ -40,7 +40,8 @@ class TestWakeWordDetectorIntegration:
         callback = MagicMock()
 
         # Act
-        detector.listen(on_wake_word=callback)
+        with pytest.raises(KeyboardInterrupt):
+            detector.listen(on_wake_word=callback)
 
         # Assert
         callback.assert_not_called()
@@ -71,7 +72,8 @@ class TestWakeWordDetectorIntegration:
         callback = MagicMock()
 
         # Act
-        detector.listen(on_wake_word=callback)
+        with pytest.raises(KeyboardInterrupt):
+            detector.listen(on_wake_word=callback)
 
         # Assert
         callback.assert_not_called()
@@ -139,7 +141,8 @@ class TestWakeWordDetectorIntegration:
         callback = MagicMock()
 
         # Act
-        detector.listen(on_wake_word=callback)
+        with pytest.raises(KeyboardInterrupt):
+            detector.listen(on_wake_word=callback)
 
         # Assert
         callback.assert_not_called()
@@ -195,7 +198,8 @@ class TestWakeWordDetectorIntegration:
         detector = WakeWordDetector(download_models=False)
 
         # Act
-        detector.listen(on_wake_word=MagicMock())
+        with pytest.raises(KeyboardInterrupt):
+            detector.listen(on_wake_word=MagicMock())
 
         # Assert
         mock_pyaudio_instance.open.assert_called_once_with(

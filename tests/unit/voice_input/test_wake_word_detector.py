@@ -100,7 +100,8 @@ class TestWakeWordDetectorListen:
         callback = MagicMock()
 
         # Act
-        detector.listen(on_wake_word=callback)
+        with pytest.raises(KeyboardInterrupt):
+            detector.listen(on_wake_word=callback)
 
         # Assert
         mock_stream.stop_stream.assert_called_once()
@@ -127,7 +128,8 @@ class TestWakeWordDetectorListen:
         callback = MagicMock()
 
         # Act
-        detector.listen(on_wake_word=callback)
+        with pytest.raises(KeyboardInterrupt):
+            detector.listen(on_wake_word=callback)
 
         # Assert
         callback.assert_not_called()
@@ -138,10 +140,7 @@ class TestWakeWordDetectorListen:
         """listen() resets the model buffer after wake word is detected."""
         # Arrange
         mock_stream = MagicMock()
-        mock_stream.read.side_effect = [
-            np.zeros(1280, dtype=np.int16).tobytes(),
-            KeyboardInterrupt,
-        ]
+        mock_stream.read.return_value = np.zeros(1280, dtype=np.int16).tobytes()
         mock_pyaudio_instance = MagicMock()
         mock_pyaudio_instance.open.return_value = mock_stream
         mock_pyaudio.return_value = mock_pyaudio_instance
