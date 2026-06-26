@@ -55,14 +55,12 @@ class TestWakeWordDetectorListen:
     @pytest.mark.unit
     @patch("voice_concierge.voice_input.wake_word_detector.pyaudio.PyAudio")
     def test_listen_opens_audio_stream(
-        self, mock_pyaudio: MagicMock, silent_audio_stream: np.ndarray
+        self, mock_pyaudio: MagicMock
     ) -> None:
         """listen() opens a PyAudio stream with correct parameters."""
-        # Arrange
+        # Arrange — use KeyboardInterrupt to stop the loop immediately
         mock_stream = MagicMock()
-        mock_stream.read.side_effect = [
-            chunk.tobytes() for chunk in silent_audio_stream
-        ]
+        mock_stream.read.side_effect = KeyboardInterrupt
         mock_pyaudio_instance = MagicMock()
         mock_pyaudio_instance.open.return_value = mock_stream
         mock_pyaudio.return_value = mock_pyaudio_instance
@@ -70,8 +68,8 @@ class TestWakeWordDetectorListen:
         detector = WakeWordDetector(download_models=False)
         callback = MagicMock()
 
-        # Act — KeyboardInterrupt stops the loop after stream is opened
-        with pytest.raises(SystemExit) if False else pytest.raises(Exception):
+        # Act
+        with pytest.raises(KeyboardInterrupt):
             detector.listen(on_wake_word=callback)
 
         # Assert
