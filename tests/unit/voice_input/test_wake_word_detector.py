@@ -109,15 +109,14 @@ class TestWakeWordDetectorListen:
     @pytest.mark.unit
     @patch("voice_concierge.voice_input.wake_word_detector.pyaudio.PyAudio")
     def test_listen_callback_not_called_on_silence(
-        self, mock_pyaudio: MagicMock, silent_audio_stream: np.ndarray
+        self, mock_pyaudio: MagicMock, silent_audio_stream: list[np.ndarray]
     ) -> None:
         """listen() does not fire callback when audio is silent."""
         # Arrange
         chunks = [chunk.tobytes() for chunk in silent_audio_stream]
-        chunks.append(KeyboardInterrupt)
 
         mock_stream = MagicMock()
-        mock_stream.read.side_effect = chunks
+        mock_stream.read.side_effect = chunks + [KeyboardInterrupt]
         mock_pyaudio_instance = MagicMock()
         mock_pyaudio_instance.open.return_value = mock_stream
         mock_pyaudio.return_value = mock_pyaudio_instance
