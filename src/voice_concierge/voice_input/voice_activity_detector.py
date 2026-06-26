@@ -17,13 +17,6 @@ DEFAULT_CHANNELS: int = 1  # mono audio
 DEFAULT_FORMAT: int = pyaudio.paInt16
 
 # VAD constants — values from spike benchmarks
-DEFAULT_SPEECH_CONFIDENCE_THRESHOLD: float = 0.5
-DEFAULT_MIN_SILENCE_BEFORE_UTTERANCE_END_MS: int = 300
-DEFAULT_UTTERANCE_BOUNDARY_PADDING_MS: int = 100
-DEFAULT_MAX_SPEECH_START_WAIT_S: int = 5
-
-
-# VAD constants — values from spike benchmarks
 DEFAULT_CONFIDENCE_THRESHOLD: float = 0.5
 DEFAULT_MIN_SILENCE_MS: int = 500
 DEFAULT_PADDING_MS: int = 100
