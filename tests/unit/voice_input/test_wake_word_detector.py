@@ -157,3 +157,27 @@ class TestWakeWordDetectorListen:
 
         # Assert
         detector._model.reset.assert_called_once()
+
+    @pytest.mark.unit
+    @patch("voice_concierge.voice_input.wake_word_detector.pyaudio.PyAudio")
+    def test_listen_handles_stream_close_error_gracefully(
+        self, mock_pyaudio: MagicMock
+    ) -> None:
+        """listen() handles errors when closing already-closed stream gracefully."""
+        # Arrange
+        mock_stream = MagicMock()
+        mock_stream.read.return_value = np.zeros(1280, dtype=np.int16).tobytes()
+        mock_stream.stop_stream.side_effect = [None, Exception("Stream already closed")]
+        mock_pyaudio_instance = MagicMock()
+        mock_pyaudio_instance.open.return_value = mock_stream
+        mock_pyaudio.return_value = mock_pyaudio_instance
+
+        detector = WakeWordDetector(download_models=False)
+        detector._model.predict = MagicMock()
+        detector._model.prediction_buffer = defaultdict(
+            deque, {"hey_jarvis_v0.1.onnx": deque([0.9])}
+        )
+        callback = MagicMock()
+
+        # Act / Assert — should not raise even when finally block stream close fails
+        detector.listen(on_wake_word=callback)

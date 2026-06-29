@@ -294,3 +294,66 @@ class TestVoiceActivityDetectorCaptureUtterance:
 
         # Assert — tracemalloc.stop() called in finally block
         mock_tracemalloc.stop.assert_called_once()
+
+    @pytest.mark.unit
+    @patch("voice_concierge.voice_input.voice_activity_detector.pyaudio.PyAudio")
+    def test_capture_utterance_buffers_audio_when_vad_returns_none(
+        self, mock_pyaudio: MagicMock
+    ) -> None:
+        """capture_utterance() buffers audio chunks when VAD returns None mid-speech."""
+        # Arrange
+        mock_stream = MagicMock()
+        mock_stream.read.return_value = np.zeros(512, dtype=np.int16).tobytes()
+        mock_pyaudio_instance = MagicMock()
+        mock_pyaudio_instance.open.return_value = mock_stream
+        mock_pyaudio.return_value = mock_pyaudio_instance
+
+        vad = VoiceActivityDetector()
+
+        # Simulate: speech starts, VAD returns None for a chunk, then speech ends
+        vad._vad_iterator = MagicMock()
+        vad._vad_iterator.side_effect = [
+            {"start": 0},  # speech starts
+            None,          # VAD returns None
+            {"end": 512},  # speech ends
+        ]
+
+        callback = MagicMock()
+
+        # Act
+        vad.capture_utterance(on_utterance_captured=callback)
+
+        # Assert — callback still called despite None VAD result mid-speech
+        callback.assert_called_once()
+
+    @pytest.mark.unit
+    @patch("voice_concierge.voice_input.voice_activity_detector.pyaudio.PyAudio")
+    def test_capture_utterance_does_not_buffer_before_speech_starts(
+        self, mock_pyaudio: MagicMock
+    ) -> None:
+        """
+        capture_utterance() does not buffer audio when VAD returns a result
+        but speech has not yet started.
+        """
+        # Arrange
+        mock_stream = MagicMock()
+        mock_stream.read.return_value = np.zeros(512, dtype=np.int16).tobytes()
+        mock_pyaudio_instance = MagicMock()
+        mock_pyaudio_instance.open.return_value = mock_stream
+        mock_pyaudio.return_value = mock_pyaudio_instance
+
+        vad = VoiceActivityDetector()
+        vad._vad_iterator = MagicMock()
+        vad._vad_iterator.side_effect = [
+            {"end": 512},   # end event before speech started — should not buffer
+            {"start": 0},   # speech starts
+            {"end": 512},   # speech ends
+        ]
+
+        callback = MagicMock()
+
+        # Act
+        vad.capture_utterance(on_utterance_captured=callback)
+
+        # Assert — callback still called correctly
+        callback.assert_called_once()
