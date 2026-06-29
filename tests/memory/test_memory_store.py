@@ -1,10 +1,6 @@
-import sqlite3
 import time
 import pytest
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent / "src/voice_concierge/memory"))
-from memory_store import MemoryStore
+from voice_concierge.memory.memory_store import MemoryStore
 
 
 @pytest.fixture
@@ -142,4 +138,4 @@ def test_update_memory(store):
 
 def test_update_nothing(store):
     mid = store.create_memory("x", "raw")
-    assert store.update_memory(mid) is False 
+    assert store.update_memory(mid) is False

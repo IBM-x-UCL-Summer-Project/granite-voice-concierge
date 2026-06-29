@@ -43,9 +43,15 @@ class VectorStore:
                 f"got {len(embedding)}."
             )
 
+        # Delete existing vector if it exists (sqlite_vec doesn't support REPLACE)
+        self.con.execute(
+            "DELETE FROM memory_vectors WHERE memory_id = ?",
+            (memory_id,),
+        )
+
         self.con.execute(
             """
-            INSERT OR REPLACE INTO memory_vectors
+            INSERT INTO memory_vectors
             (memory_id, embedding)
             VALUES (?, ?)
             """,
