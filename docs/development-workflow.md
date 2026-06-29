@@ -76,19 +76,9 @@ The `main` branch is protected and should contain stable shared work.
 
 New work should be done on a separate branch. Once the work is complete, it is merged back into `main` through a pull request.
 
-2 Options for naming convention:
+Naming convention:
 
-Option A: Area-based branches
-`<area>/<short-description>`
-
-Examples:
-
-- granite/local-inference-spike
-- voice/stt-vad-prototype
-
-This option groups branches by project component because the work is naturally split across major system areas.
-
-Option B: Work-type-based branches
+Work-type-based branches
 `<type>/<short-description>`
 
 Examples:
