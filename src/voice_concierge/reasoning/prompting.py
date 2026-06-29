@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import lru_cache
@@ -12,6 +11,8 @@ from importlib.resources.abc import Traversable
 from string import Template
 from types import MappingProxyType
 from typing import Literal
+
+import tomllib
 
 from voice_concierge.reasoning.types import ReasoningRequest
 
