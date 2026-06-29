@@ -11,3 +11,6 @@ torch
 # --- Utilities ---
 numpy
 psutil
+
+# --- Package installation ---
+-e .

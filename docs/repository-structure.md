@@ -15,6 +15,17 @@ granite-voice-concierge/
 └── .github/
 ```
 
+## Dependency Files
+
+`pyproject.toml` is the canonical source for package metadata and runtime
+dependencies. It configures setuptools to discover `voice_concierge` under the
+`src/` layout.
+
+`requirements.txt` installs the project in editable mode, including the runtime
+dependencies declared in `pyproject.toml`. Editable installation lets repository
+tools import `voice_concierge` without modifying `sys.path` while keeping source
+changes immediately available.
+
 ## `docs/`
 
 The `docs/` folder is for project documentation that supports planning, design, reporting and any other additional information.
