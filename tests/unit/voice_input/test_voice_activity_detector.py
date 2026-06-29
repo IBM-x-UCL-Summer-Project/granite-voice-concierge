@@ -314,7 +314,7 @@ class TestVoiceActivityDetectorCaptureUtterance:
         vad._vad_iterator = MagicMock()
         vad._vad_iterator.side_effect = [
             {"start": 0},  # speech starts
-            None,          # VAD returns None
+            None,  # VAD returns None
             {"end": 512},  # speech ends
         ]
 
@@ -345,9 +345,9 @@ class TestVoiceActivityDetectorCaptureUtterance:
         vad = VoiceActivityDetector()
         vad._vad_iterator = MagicMock()
         vad._vad_iterator.side_effect = [
-            {"end": 512},   # end event before speech started — should not buffer
-            {"start": 0},   # speech starts
-            {"end": 512},   # speech ends
+            {"end": 512},  # end event before speech started — should not buffer
+            {"start": 0},  # speech starts
+            {"end": 512},  # speech ends
         ]
 
         callback = MagicMock()

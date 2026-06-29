@@ -54,9 +54,7 @@ class TestWakeWordDetectorListen:
 
     @pytest.mark.unit
     @patch("voice_concierge.voice_input.wake_word_detector.pyaudio.PyAudio")
-    def test_listen_opens_audio_stream(
-        self, mock_pyaudio: MagicMock
-    ) -> None:
+    def test_listen_opens_audio_stream(self, mock_pyaudio: MagicMock) -> None:
         """listen() opens a PyAudio stream with correct parameters."""
         # Arrange — use KeyboardInterrupt to stop the loop immediately
         mock_stream = MagicMock()
