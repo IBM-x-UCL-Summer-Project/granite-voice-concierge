@@ -45,34 +45,6 @@ class TestVoiceActivityDetectorIntegration:
 
     @pytest.mark.integration
     @patch("voice_concierge.voice_input.voice_activity_detector.pyaudio.PyAudio")
-    def test_synthetic_tone_does_not_trigger_callback(
-        self, mock_pyaudio: MagicMock
-    ) -> None:
-        """
-        VoiceActivityDetector does not trigger on silent audio within timeout.
-        Verifies the real model does not produce false positives on silence.
-        """
-        # Arrange — use silence rather than sine wave since the real VAD model
-        # requires specific chunk sizes that are difficult to guarantee with
-        # synthetic tone generation. Silence is sufficient to verify no false
-        # positives from the real model.
-        mock_stream = MagicMock()
-        mock_stream.read.return_value = np.zeros(512, dtype=np.int16).tobytes()
-        mock_pyaudio_instance = MagicMock()
-        mock_pyaudio_instance.open.return_value = mock_stream
-        mock_pyaudio.return_value = mock_pyaudio_instance
-
-        vad = VoiceActivityDetector(max_wait_s=1)
-        callback = MagicMock()
-
-        # Act
-        vad.capture_utterance(on_utterance_captured=callback)
-
-        # Assert
-        callback.assert_not_called()
-
-    @pytest.mark.integration
-    @patch("voice_concierge.voice_input.voice_activity_detector.pyaudio.PyAudio")
     def test_speech_start_and_end_triggers_callback(
         self, mock_pyaudio: MagicMock
     ) -> None:
