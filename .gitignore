@@ -220,3 +220,7 @@ __marimo__/
 # Audio files
 *.wav
 *.mp3
+
+# Ignore downloaded TTS models
+*.onnx
+*.onnx.json
