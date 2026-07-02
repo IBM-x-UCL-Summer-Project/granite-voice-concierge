@@ -1,6 +1,7 @@
 """Tests for LLM-based metadata extraction in memory validator."""
 
 import pytest
+
 from voice_concierge.memory.memory_validator import MemoryValidator
 
 

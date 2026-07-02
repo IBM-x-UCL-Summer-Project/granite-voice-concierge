@@ -37,13 +37,13 @@
 #         print(f"Error: Cannot find test audio file '{audio_file}'. Please place an audio file here first.")
 
 
+import logging
 import os
 import time
-import logging
+
 from faster_whisper import WhisperModel
 
-
-logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 
 class OfflineSTT:
@@ -52,19 +52,28 @@ class OfflineSTT:
     Designed for low-latency edge deployment.
     """
 
-    def __init__(self, model_size: str = "base.en", device: str = "cpu", compute_type: str = "int8"):
+    def __init__(
+        self,
+        model_size: str = "base.en",
+        device: str = "cpu",
+        compute_type: str = "int8",
+    ):
         """
         Initializes the STT model and loads it into memory.
         """
         logging.info(f"Loading STT model '{model_size}' into memory...")
         try:
-            self.model = WhisperModel(model_size, device=device, compute_type=compute_type)
+            self.model = WhisperModel(
+                model_size, device=device, compute_type=compute_type
+            )
             logging.info("STT model loaded successfully.")
         except Exception as e:
             logging.error(f"Failed to load STT model: {e}")
             raise
 
-    def transcribe(self, audio_path: str, beam_size: int = 5, vad_filter: bool = True) -> str:
+    def transcribe(
+        self, audio_path: str, beam_size: int = 5, vad_filter: bool = True
+    ) -> str:
         """
         Transcribes the given audio file to text.
 
@@ -84,8 +93,12 @@ class OfflineSTT:
         logging.info("Starting transcription...")
 
         try:
-            segments, info = self.model.transcribe(audio_path, beam_size=beam_size, vad_filter=vad_filter)
-            logging.info(f"Detected language: {info.language} (Confidence: {info.language_probability:.2f})")
+            segments, info = self.model.transcribe(
+                audio_path, beam_size=beam_size, vad_filter=vad_filter
+            )
+            logging.info(
+                f"Detected language: {info.language} (Confidence: {info.language_probability:.2f})"
+            )
 
             full_text = " ".join([segment.text for segment in segments])
 

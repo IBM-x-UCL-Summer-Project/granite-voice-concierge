@@ -1,8 +1,8 @@
+import logging
 import os
 import urllib.request
-import logging
 
-logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 
 def download_file(url: str, dest_path: str):

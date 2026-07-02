@@ -39,8 +39,7 @@ class VectorStore:
     def save_vector(self, memory_id, embedding):
         if len(embedding) != self.dimension:
             raise ValueError(
-                f"Expected embedding dimension {self.dimension}, "
-                f"got {len(embedding)}."
+                f"Expected embedding dimension {self.dimension}, got {len(embedding)}."
             )
 
         # Delete existing vector if it exists (sqlite_vec doesn't support REPLACE)

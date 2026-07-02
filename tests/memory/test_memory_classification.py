@@ -1,12 +1,13 @@
 """Tests for memory type classification."""
 
-import pytest
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from voice_concierge.memory.memory_validator import MemoryValidator, MemoryType
+from voice_concierge.memory.memory_validator import MemoryType, MemoryValidator
 
 
 class TestMemoryClassification:
@@ -65,9 +66,7 @@ class TestMemoryClassification:
     @pytest.mark.skip(reason="Requires Ollama running")
     def test_validation_report_with_classification(self, validator):
         """Validation report should include memory type."""
-        report = validator.get_validation_report(
-            "User went to the gym yesterday"
-        )
+        report = validator.get_validation_report("User went to the gym yesterday")
         assert "memory_type" in report
         assert "classification" in report
 
