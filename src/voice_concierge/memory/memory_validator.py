@@ -51,7 +51,7 @@ Categories:
 - emotional: Emotions/feelings/moods (e.g., "felt nervous about interview")
 - reflective: Thoughts/reflections/analysis (e.g., "realized I should exercise more")
 
-Respond with ONLY the category name (episodic/semantic/procedural/emotional/reflective)."""
+Respond with ONLY the category name (episodic/semantic/procedural/emotional/reflective).""" # noqa: E501
 
     EXTRACTION_PROMPT = """Extract structured metadata from this memory content.
 
