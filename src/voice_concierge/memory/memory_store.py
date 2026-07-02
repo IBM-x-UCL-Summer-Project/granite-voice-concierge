@@ -1,7 +1,7 @@
-import pysqlite3 as sqlite3
 import time
 from pathlib import Path
-import sqlite_vec
+
+import pysqlite3 as sqlite3
 
 
 class MemoryStore:
@@ -18,16 +18,33 @@ class MemoryStore:
         self.cur.executescript(sql)
         self.con.commit()
 
-    def create_memory(self, content, layer, event_time=None, strength=1,
-                      person=None, source_type=None, topic=None):
+    def create_memory(
+        self,
+        content,
+        layer,
+        event_time=None,
+        strength=1,
+        person=None,
+        source_type=None,
+        topic=None,
+    ):
         created_at = int(time.time())
         self.cur.execute(
             """
             INSERT INTO memories
-            (content, layer, created_at, event_time, strength, person, source_type, topic)
+            (content, layer, created_at, event_time, strength, person, source_type, topic) 
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (content, layer, created_at, event_time, strength, person, source_type, topic),
+            """,# noqa: E501
+            (
+                content,
+                layer,
+                created_at,
+                event_time,
+                strength,
+                person,
+                source_type,
+                topic,
+            ),
         )
         self.con.commit()
         return self.cur.lastrowid
@@ -58,8 +75,17 @@ class MemoryStore:
         self.con.commit()
         return self.cur.rowcount > 0
 
-    def update_memory(self,memory_id, content=None, layer=None, event_time=None, strength=None,
-                      person=None, source_type=None, topic=None):
+    def update_memory(
+        self,
+        memory_id,
+        content=None,
+        layer=None,
+        event_time=None,
+        strength=None,
+        person=None,
+        source_type=None,
+        topic=None,
+    ):
         updates = []
         params = []
 

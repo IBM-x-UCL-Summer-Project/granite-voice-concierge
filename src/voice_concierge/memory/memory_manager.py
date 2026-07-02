@@ -1,12 +1,13 @@
 """High-level memory management orchestrating storage, validation, and retrieval."""
 
 from typing import Optional, Tuple
-from voice_concierge.memory.memory_store import MemoryStore
-from voice_concierge.memory.vector_store import VectorStore
+
 from voice_concierge.memory.embedding_service import EmbeddingService
-from voice_concierge.memory.memory_validator import MemoryValidator, MemoryType
 from voice_concierge.memory.memory_retriever import MemoryRetriever
-from voice_concierge.reasoning.types import MemoryAction, MemoryActionKind
+from voice_concierge.memory.memory_store import MemoryStore
+from voice_concierge.memory.memory_validator import MemoryValidator
+from voice_concierge.memory.vector_store import VectorStore
+from voice_concierge.reasoning.types import MemoryAction
 
 
 class MemoryManager:

@@ -1,7 +1,8 @@
 import ollama
 
+
 class EmbeddingService:
-    def __init__(self, model_name='granite-embedding:278m'):
+    def __init__(self, model_name="granite-embedding:278m"):
         self.model_name = model_name
 
     def get_embedding(self, content):

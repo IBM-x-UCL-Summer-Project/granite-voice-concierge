@@ -1,13 +1,15 @@
 """Validates whether content should be stored as a memory using LLM judgment."""
 
 import json
-from typing import Tuple, Optional, Dict, Any
 from enum import Enum
+from typing import Any, Dict, Optional, Tuple
+
 from ollama import Client
 
 
 class ValidationReason(Enum):
     """Reasons why a memory should or should not be stored."""
+
     VALID = "should_store"
     INVALID = "should_not_store"
     ERROR = "validation_error"
@@ -15,11 +17,12 @@ class ValidationReason(Enum):
 
 class MemoryType(Enum):
     """Memory classification based on psychology research."""
-    EPISODIC = "episodic"      # Specific events and time points
-    SEMANTIC = "semantic"       # Facts and knowledge
-    PROCEDURAL = "procedural"   # Skills and methods
-    EMOTIONAL = "emotional"     # Emotions and feelings
-    REFLECTIVE = "reflective"   # Thoughts and reflections
+
+    EPISODIC = "episodic"  # Specific events and time points
+    SEMANTIC = "semantic"  # Facts and knowledge
+    PROCEDURAL = "procedural"  # Skills and methods
+    EMOTIONAL = "emotional"  # Emotions and feelings
+    REFLECTIVE = "reflective"  # Thoughts and reflections
 
 
 class MemoryValidator:
@@ -48,7 +51,7 @@ Categories:
 - emotional: Emotions/feelings/moods (e.g., "felt nervous about interview")
 - reflective: Thoughts/reflections/analysis (e.g., "realized I should exercise more")
 
-Respond with ONLY the category name (episodic/semantic/procedural/emotional/reflective)."""
+Respond with ONLY the category name (episodic/semantic/procedural/emotional/reflective).""" # noqa: E501
 
     EXTRACTION_PROMPT = """Extract structured metadata from this memory content.
 
