@@ -60,6 +60,13 @@ python -m ruff check .
 python -m pytest
 ```
 
+The development requirements install the project in editable mode. Repository
+tools should use module execution rather than modifying `sys.path`, for example:
+
+```bash
+python -m benchmarks.reasoning.benchmark run --engine fake
+```
+
 ## Editor settings
 
 The repo does not currently include an `.editorconfig` file.

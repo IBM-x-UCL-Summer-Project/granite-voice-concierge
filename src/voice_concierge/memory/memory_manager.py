@@ -1,0 +1,282 @@
+"""High-level memory management orchestrating storage, validation, and retrieval."""
+
+from typing import Optional, Tuple
+from voice_concierge.memory.memory_store import MemoryStore
+from voice_concierge.memory.vector_store import VectorStore
+from voice_concierge.memory.embedding_service import EmbeddingService
+from voice_concierge.memory.memory_validator import MemoryValidator, MemoryType
+from voice_concierge.memory.memory_retriever import MemoryRetriever
+from voice_concierge.reasoning.types import MemoryAction, MemoryActionKind
+
+
+class MemoryManager:
+    """Orchestrates memory operations: validation, storage, retrieval, and updates."""
+
+    def __init__(
+        self,
+        memory_store: MemoryStore,
+        vector_store: VectorStore,
+        embedding_service: EmbeddingService,
+        validator: Optional[MemoryValidator] = None,
+    ):
+        """
+        Initialize the memory manager with required components.
+
+        Args:
+            memory_store: Storage layer for memory content
+            vector_store: Vector search layer
+            embedding_service: Embedding generation service
+            validator: Memory validator (optional, uses default if not provided)
+        """
+        self.memory_store = memory_store
+        self.vector_store = vector_store
+        self.embedding_service = embedding_service
+        self.validator = validator or MemoryValidator()
+        self.retriever = MemoryRetriever(memory_store, vector_store, embedding_service)
+
+    def store_memory(
+        self,
+        content: str,
+        layer: str,
+        person: Optional[str] = None,
+        topic: Optional[str] = None,
+        source_type: Optional[str] = None,
+        event_time: Optional[int] = None,
+        strength: Optional[int] = None,
+        validate: bool = True,
+        auto_classify: bool = True,
+        auto_extract: bool = True,
+    ) -> Tuple[bool, str, Optional[int]]:
+        """
+        Store a memory after validation and optional auto-classification.
+
+        Args:
+            content: Memory content
+            layer: Memory layer (profile, raw, feedback, etc.)
+            person: Associated person (optional, auto-extracted if None)
+            topic: Associated topic (optional)
+            source_type: Source type (optional, auto-extracted if None)
+            event_time: Event time timestamp (optional, auto-extracted if None)
+            strength: Memory strength 1-10 (optional, auto-extracted if None)
+            validate: Whether to validate with LLM first
+            auto_classify: Whether to auto-classify memory type (episodic/semantic/etc.)
+            auto_extract: Whether to auto-extract metadata (person, source_type, etc.)
+
+        Returns:
+            Tuple of (success: bool, reason: str, memory_id: Optional[int])
+        """
+        # Validate if enabled
+        if validate:
+            should_store, reason = self.validator.should_store(content)
+            if not should_store:
+                return False, f"validation_failed: {reason}", None
+
+        # Auto-extract metadata if enabled
+        if auto_extract:
+            extracted = self.validator.extract_metadata(content)
+            person = person or extracted.get("person")
+            source_type = source_type or extracted.get("source_type")
+            event_time = event_time or extracted.get("event_time")
+            strength = strength or extracted.get("strength", 1)
+
+        # Set default strength if still None
+        if strength is None:
+            strength = 5
+
+        # Auto-classify memory type if enabled and topic not provided
+        classified_topic = topic
+        if auto_classify and not topic:
+            memory_type, _ = self.validator.classify_memory_type(content)
+            if memory_type:
+                classified_topic = memory_type.value
+
+        try:
+            # Store in memory_store
+            memory_id = self.memory_store.create_memory(
+                content=content,
+                layer=layer,
+                person=person,
+                source_type=source_type,
+                topic=classified_topic,
+                event_time=event_time,
+                strength=strength,
+            )
+
+            # Generate and store embedding
+            embedding = self.embedding_service.get_embedding(content)
+            self.vector_store.save_vector(memory_id, embedding)
+
+            return True, "stored_successfully", memory_id
+
+        except Exception as e:
+            return False, f"storage_error: {str(e)}", None
+
+    def retrieve_similar(
+        self,
+        query: str,
+        top_k: int = 5,
+        person: Optional[str] = None,
+        topic: Optional[str] = None,
+        layer: Optional[str] = None,
+    ) -> list[dict]:
+        """
+        Retrieve semantically similar memories.
+
+        Args:
+            query: Query text
+            top_k: Number of results
+            person: Filter by person
+            topic: Filter by topic
+            layer: Filter by layer
+
+        Returns:
+            List of similar memories with distance scores
+        """
+        return self.retriever.retrieve_similar(
+            query=query,
+            top_k=top_k,
+            person=person,
+            topic=topic,
+            layer=layer,
+        )
+
+    def update_memory(
+        self,
+        memory_id: int,
+        content: Optional[str] = None,
+        layer: Optional[str] = None,
+        person: Optional[str] = None,
+        topic: Optional[str] = None,
+        source_type: Optional[str] = None,
+        event_time: Optional[int] = None,
+        strength: Optional[int] = None,
+    ) -> Tuple[bool, str]:
+        """
+        Update a memory and regenerate its embedding if content changed.
+
+        Args:
+            memory_id: ID of memory to update
+            content: New content (optional)
+            layer: New layer (optional)
+            person: New person (optional)
+            topic: New topic (optional)
+            source_type: New source type (optional)
+            event_time: New event time (optional)
+            strength: New strength value (optional)
+
+        Returns:
+            Tuple of (success: bool, reason: str)
+        """
+        try:
+            success = self.memory_store.update_memory(
+                memory_id=memory_id,
+                content=content,
+                layer=layer,
+                person=person,
+                topic=topic,
+                source_type=source_type,
+                event_time=event_time,
+                strength=strength,
+            )
+
+            if not success:
+                return False, "no_changes"
+
+            # Regenerate embedding if content changed
+            if content:
+                embedding = self.embedding_service.get_embedding(content)
+                self.vector_store.save_vector(memory_id, embedding)
+
+            return True, "updated_successfully"
+
+        except Exception as e:
+            return False, f"update_error: {str(e)}"
+
+    def delete_memory(self, memory_id: int) -> Tuple[bool, str]:
+        """
+        Delete a memory and its vector.
+
+        Args:
+            memory_id: ID of memory to delete
+
+        Returns:
+            Tuple of (success: bool, reason: str)
+        """
+        try:
+            success = self.memory_store.delete_memory(memory_id)
+            if not success:
+                return False, "memory_not_found"
+            return True, "deleted_successfully"
+
+        except Exception as e:
+            return False, f"delete_error: {str(e)}"
+
+    def process_memory_action(self, action: MemoryAction) -> Tuple[bool, str]:
+        """
+        Process a proposed memory action from the reasoning engine.
+
+        Args:
+            action: MemoryAction from ReasoningResponse
+
+        Returns:
+            Tuple of (success: bool, reason: str)
+        """
+        action_type = action.action
+
+        if action_type == "store":
+            success, reason, _ = self.store_memory(
+                content=action.content,
+                layer="feedback",
+                validate=False,
+            )
+            return success, reason
+
+        elif action_type == "update":
+            # Parse memory_id from content if available
+            # For now, find the most similar memory and update it
+            similar = self.retrieve_similar(action.content, top_k=1)
+            if similar:
+                memory_id = similar[0]["id"]
+                return self.update_memory(memory_id, content=action.content)
+            return False, "no_similar_memory_found"
+
+        elif action_type == "delete":
+            # Find the most similar memory and delete it
+            similar = self.retrieve_similar(action.content, top_k=1)
+            if similar:
+                memory_id = similar[0]["id"]
+                return self.delete_memory(memory_id)
+            return False, "no_similar_memory_found"
+
+        else:
+            return False, f"unknown_action: {action_type}"
+
+    def get_context_memories(
+        self,
+        query: str,
+        context_size: int = 3,
+    ) -> list[str]:
+        """
+        Get relevant memory snippets for context (for reasoning engine).
+
+        Args:
+            query: Current conversation query
+            context_size: Number of memories to retrieve
+
+        Returns:
+            List of memory content strings suitable for context
+        """
+        try:
+            memories = self.retrieve_similar(query, top_k=context_size)
+            return [m["content"] for m in memories]
+        except Exception:
+            return []
+
+    def get_all_memories(self) -> list[dict]:
+        """Get all stored memories."""
+        return self.retriever.retrieve_all()
+
+    def close(self):
+        """Close all storage connections."""
+        self.memory_store.close()
+        self.vector_store.close()

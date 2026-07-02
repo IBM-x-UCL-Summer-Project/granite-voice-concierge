@@ -1,3 +1,6 @@
+# Generated benchmark comparison runs
+benchmarks/reasoning/results/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -221,6 +224,11 @@ __marimo__/
 *.wav
 *.mp3
 
+
 # Ignore downloaded TTS models
 *.onnx
 *.onnx.json
+
+# macOS
+.DS_Store
+
