@@ -27,7 +27,11 @@ from voice_concierge.reasoning import (
     OllamaConfig,
     OllamaReasoningEngine,
     OllamaReasoningError,
+    ReasoningBackendUnavailableError,
+    ReasoningConfigurationError,
     ReasoningEngine,
+    ReasoningModelUnavailableError,
+    build_reasoning_engine,
     load_model_selection,
     load_prompt_template,
 )
@@ -55,9 +59,12 @@ def parse_args() -> argparse.Namespace:
     )
     run_parser.add_argument(
         "--engine",
-        choices=("fake", "ollama"),
+        choices=("fake", "ollama", "selected"),
         default="fake",
-        help="Reasoning engine to benchmark.",
+        help=(
+            "Reasoning engine to benchmark. Use 'selected' to exercise the "
+            "app-facing configured runtime through build_reasoning_engine()."
+        ),
     )
     run_parser.add_argument(
         "--model",
@@ -99,6 +106,12 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.command == "compare" and len(args.models) < 2:
         parser.error("compare requires at least two models")
+    if (
+        args.command == "run"
+        and args.engine == "selected"
+        and (args.model is not None or args.host is not None)
+    ):
+        parser.error("--engine selected uses --config; do not pass --model or --host")
     return args
 
 
@@ -158,6 +171,13 @@ def build_engine(args: argparse.Namespace) -> ReasoningEngine:
     if args.engine == "fake":
         return DeterministicReasoningFake()
 
+    if args.engine == "selected":
+        return build_reasoning_engine(
+            args.config,
+            prompt_version=args.prompt_version,
+            timeout_s=args.timeout_s,
+        )
+
     if args.engine == "ollama":
         model, host = _resolve_ollama_run_settings(args)
         return OllamaReasoningEngine(
@@ -188,6 +208,15 @@ def _run_single(args: argparse.Namespace) -> int:
 
     try:
         engine = build_engine(args)
+    except ReasoningConfigurationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    except (
+        ReasoningBackendUnavailableError,
+        ReasoningModelUnavailableError,
+    ) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2

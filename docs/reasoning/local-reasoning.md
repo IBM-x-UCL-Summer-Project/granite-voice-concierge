@@ -110,6 +110,25 @@ Write a report to a file:
   --output benchmarks/reasoning/results/fake-report.json
 ```
 
+## Run the Selected Runtime
+
+Use `--engine selected` to benchmark the configured app-facing reasoning runtime
+through `build_reasoning_engine(...)`:
+
+```bash
+.venv/bin/python -m benchmarks.reasoning.benchmark \
+  run \
+  --engine selected \
+  --evaluation-mode both \
+  --output benchmarks/reasoning/results/selected-runtime-smoke.json
+```
+
+This mode loads the selected primary model and host from
+`.local/reasoning-model-selection.json`, validates the configured local runtime,
+and then runs the prompt suite. It intentionally rejects direct `--model` and
+`--host` overrides. Use this mode when checking whether the application-facing
+runtime wiring works.
+
 ## Run With Ollama
 
 Running an Ollama model is optional. The adapter uses Ollama's official Python
@@ -117,7 +136,7 @@ client, and connects to the local runner at `http://localhost:11434` by
 default, requires no cloud account or credentials. Ollama itself must be
 installed, running locally, and have a local model available.
 
-For Ollama runs, the benchmark loads the active model and host from
+For direct Ollama runs, the benchmark loads the active model and host from
 `.local/reasoning-model-selection.json`. If the file is absent, the selection
 defaults to `granite4.1:8b` at `http://localhost:11434`. The model-management
 helpers can list, inspect, pull, and select local Ollama models, but the benchmark
@@ -140,6 +159,10 @@ Explicit model and host arguments override the persisted selection:
   --model <local-model-name> \
   --host http://localhost:11434
 ```
+
+Use direct `--engine ollama` runs for model experiments and explicit local-model
+checks. Use `--engine selected` for the configured application runtime smoke
+path.
 
 Ollama runs use the bundled `v1` runtime prompt by default. Select another
 bundled version explicitly when testing a prompt revision:
