@@ -20,6 +20,7 @@ from ollama import (
 )
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from voice_concierge.reasoning.errors import ReasoningConfigurationError
 from voice_concierge.reasoning.models import (
     LocalModelDetails,
     LocalModelInfo,
@@ -38,6 +39,7 @@ from voice_concierge.reasoning.types import (
     ReasoningResponse,
     ReasoningTrace,
 )
+from voice_concierge.reasoning.validation import validate_reasoning_request
 
 _OLLAMA_CLIENT_ERRORS = (
     ConnectionError,
@@ -105,6 +107,14 @@ class OllamaConfig:
     top_p: float = 0.9
     prompt_version: str = DEFAULT_PROMPT_VERSION
 
+    def __post_init__(self) -> None:
+        _validate_config_string(self.model, "model")
+        _validate_config_string(self.host, "host")
+        _validate_config_string(self.prompt_version, "prompt_version")
+        _validate_positive_number(self.timeout_s, "timeout_s")
+        _validate_temperature(self.temperature)
+        _validate_top_p(self.top_p)
+
 
 class OllamaReasoningEngine:
     """Reasoning engine that calls a local Ollama runner."""
@@ -124,6 +134,7 @@ class OllamaReasoningEngine:
     def generate_trace(self, request: ReasoningRequest) -> ReasoningTrace:
         """Return parsed and policy-guarded responses from one Ollama request."""
 
+        validate_reasoning_request(request)
         messages = [
             message.as_dict()
             for message in build_granite_messages(
@@ -302,6 +313,38 @@ def _client_error_message(exc: Exception, host: str) -> str:
     ):
         return f"Ollama request or response was invalid: {exc}"
     return f"Could not reach local Ollama runner at {host}: {exc}"
+
+
+def _validate_config_string(value: object, field_name: str) -> None:
+    if not isinstance(value, str) or not value.strip():
+        raise ReasoningConfigurationError(
+            f"Ollama config {field_name} must be a non-empty string."
+        )
+
+
+def _validate_positive_number(value: object, field_name: str) -> None:
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
+        raise ReasoningConfigurationError(
+            f"Ollama config {field_name} must be greater than 0."
+        )
+
+
+def _validate_temperature(value: object) -> None:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise ReasoningConfigurationError("Ollama config temperature must be a number.")
+    if value < 0 or value > 2:
+        raise ReasoningConfigurationError(
+            "Ollama config temperature must be between 0 and 2."
+        )
+
+
+def _validate_top_p(value: object) -> None:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise ReasoningConfigurationError("Ollama config top_p must be a number.")
+    if value <= 0 or value > 1:
+        raise ReasoningConfigurationError(
+            "Ollama config top_p must be greater than 0 and at most 1."
+        )
 
 
 def _response_from_structured_payload(

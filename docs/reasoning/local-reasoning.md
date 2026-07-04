@@ -27,6 +27,50 @@ It contains:
 
 The reasoning layer should propose memory actions. It should not directly write to memory.
 
+`validate_reasoning_request()` owns public request validation. Engines call it
+before prompt construction or backend calls. It rejects empty transcripts or
+modes, non-tuple memories, invalid memory snippets, empty supplied conversation
+summaries, missing or malformed constraints, non-positive `max_words`, and
+non-boolean constraint flags.
+
+`output.py` owns backend-neutral spoken-response shaping. The Ollama adapter calls
+its shared word-limit function after deterministic policy guards, while the
+deterministic fake returns its configured response unchanged after validating the
+request.
+
+## Build the Runtime Engine
+
+Application code should construct the selected local reasoning engine with
+`build_reasoning_engine(...)`:
+
+```python
+from voice_concierge.reasoning import build_reasoning_engine
+
+engine = build_reasoning_engine()
+```
+
+The factory loads `.local/reasoning-model-selection.json` when present and falls
+back to the default local selection when it is absent. The only supported runtime
+backend is currently `ollama`.
+
+Startup validation is deliberate. The factory validates the prompt version,
+checks the selected primary model with Ollama model metadata, and returns an
+`OllamaReasoningEngine` only when the local runtime setup is usable. It does not
+pull or download models, activate `fallback_model`, benchmark candidates, contact
+cloud services, or import unfinished voice, context, memory, STT, or TTS modules.
+
+Project-owned factory errors are:
+
+- `ReasoningConfigurationError`: invalid model selection, unsupported backend,
+  invalid prompt version, or invalid Ollama config;
+- `ReasoningBackendUnavailableError`: the selected local backend cannot be
+  reached or verified;
+- `ReasoningModelUnavailableError`: the selected primary model is not available
+  locally.
+
+Lower-level `OllamaReasoningError` and `OllamaModelManagementError` remain
+available for adapter-specific callers and compatibility.
+
 ## Install
 
 Create a local virtual environment:

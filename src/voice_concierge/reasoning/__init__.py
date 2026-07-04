@@ -5,6 +5,14 @@ from voice_concierge.reasoning.engine import (
     ReasoningEngine,
     TraceableReasoningEngine,
 )
+from voice_concierge.reasoning.errors import (
+    ReasoningBackendUnavailableError,
+    ReasoningConfigurationError,
+    ReasoningError,
+    ReasoningModelUnavailableError,
+    ReasoningRequestError,
+)
+from voice_concierge.reasoning.factory import build_reasoning_engine
 from voice_concierge.reasoning.models import (
     DEFAULT_FALLBACK_MODEL,
     DEFAULT_MODEL_BACKEND,
@@ -44,6 +52,7 @@ from voice_concierge.reasoning.types import (
     ReasoningResponse,
     ReasoningTrace,
 )
+from voice_concierge.reasoning.validation import validate_reasoning_request
 
 __all__ = [
     "ChatMessage",
@@ -67,17 +76,24 @@ __all__ = [
     "OllamaReasoningError",
     "PromptTemplate",
     "PromptTemplateError",
+    "ReasoningBackendUnavailableError",
     "ReasoningConstraints",
+    "ReasoningConfigurationError",
     "ReasoningEngine",
+    "ReasoningError",
+    "ReasoningModelUnavailableError",
     "ReasoningModelSelection",
     "ReasoningRequest",
+    "ReasoningRequestError",
     "ReasoningResponse",
     "ReasoningTrace",
     "TraceableReasoningEngine",
     "apply_spoken_word_limit",
     "build_granite_messages",
+    "build_reasoning_engine",
     "default_model_selection",
     "load_model_selection",
     "load_prompt_template",
     "save_model_selection",
+    "validate_reasoning_request",
 ]
