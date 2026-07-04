@@ -11,7 +11,6 @@ detection rate and false positive rate.
 
 ## Related Issues
 
-- [spike] Set up openWakeWord on macOS
 - [spike] Implement wake word detection with pre-trained model
 - [spike] Benchmark wake word confidence threshold in realistic conditions
 

@@ -1,6 +1,16 @@
+# --- Package installation ---
+-e .
+
 # Base Dependencies
 -r requirements.txt
--r experiments/wake-word-detection/requirements.txt
+
+# Additional Dependencies
+#-r experiments/wake-word-detection/requirements.txt
+
+-r src/voice_concierge/voice_output/requirements.txt
+
+#-r experiments/vad-integration/requirements.txt
+
 
 # Linting & Formatting
 black

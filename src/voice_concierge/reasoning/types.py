@@ -107,3 +107,13 @@ class ReasoningResponse:
     confidence: Confidence = "medium"
     #: Backend-specific diagnostics that should not affect core behavior.
     metadata: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ReasoningTrace:
+    """Raw model output and final response produced from one generation."""
+
+    #: Parsed model response before deterministic policy and output shaping.
+    raw_response: ReasoningResponse
+    #: User-visible response after policy guards and output shaping.
+    guarded_response: ReasoningResponse
