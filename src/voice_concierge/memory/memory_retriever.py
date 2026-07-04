@@ -53,7 +53,9 @@ class MemoryRetriever:
             query_embedding = self.embedding_service.get_embedding(query)
 
             # Search for similar vectors
-            vector_results = self.vector_store.search_similar(query_embedding, top_k=top_k * 2)
+            vector_results = self.vector_store.search_similar(
+                query_embedding, top_k=top_k * 2
+            )
 
             # Get full memory details and apply filters
             memories = []
@@ -101,7 +103,9 @@ class MemoryRetriever:
         Returns:
             List of matching memory dicts
         """
-        return self.memory_store.get_memories(person=person, topic=topic, source_type=layer)
+        return self.memory_store.get_memories(
+            person=person, topic=topic, source_type=layer
+        )
 
     def retrieve_by_person(self, person: str, top_k: int = 10) -> list[dict]:
         """Get all memories for a specific person."""

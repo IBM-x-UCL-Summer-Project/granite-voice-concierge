@@ -14,6 +14,7 @@ def store(tmp_path):
 
 # ---- Basic create / retrieve ----
 
+
 def test_create_returns_id(store):
     mem_id = store.create_memory("hello", "raw")
     assert isinstance(mem_id, int)
@@ -50,6 +51,7 @@ def test_defaults(store):
 
 # ---- Metadata filtering ----
 
+
 def test_filter_by_person(store):
     store.create_memory("a", "raw")
     store.create_memory("b", "raw", person="Kenny")
@@ -83,6 +85,7 @@ def test_filter_no_match(store):
 
 # ---- Edge cases ----
 
+
 def test_empty_db(store):
     assert store.get_memories() == []
 
@@ -106,6 +109,7 @@ def test_ordering_newest_first(store):
 
 # ---- Persistence (core test, maps to Charter §3.3.3) ----
 
+
 def test_persistence_across_reconnect(tmp_path):
     """Save -> close connection -> reopen -> data still present."""
     db = str(tmp_path / "persist.db")
@@ -114,20 +118,23 @@ def test_persistence_across_reconnect(tmp_path):
     store1.create_memory("I prefer short answers.", "raw", topic="profile")
     store1.close()
 
-    store2 = MemoryStore(db)   # simulate a restart
+    store2 = MemoryStore(db)  # simulate a restart
     rows = store2.get_memories()
     store2.close()
 
     assert len(rows) == 1
     assert rows[0]["content"] == "I prefer short answers."
 
+
 def test_delete_memory(store):
     mid = store.create_memory("to delete", "raw")
     assert store.delete_memory(mid) is True
     assert store.get_memories() == []
 
+
 def test_delete_nonexistent(store):
     assert store.delete_memory(999) is False
+
 
 def test_update_memory(store):
     mid = store.create_memory("old content", "raw", topic="shopping")
@@ -135,6 +142,7 @@ def test_update_memory(store):
     row = store.get_memories()[0]
     assert row["content"] == "new content"
     assert row["topic"] == "shopping"
+
 
 def test_update_nothing(store):
     mid = store.create_memory("x", "raw")

@@ -65,9 +65,7 @@ class TestMemoryClassification:
     @pytest.mark.skip(reason="Requires Ollama running")
     def test_validation_report_with_classification(self, validator):
         """Validation report should include memory type."""
-        report = validator.get_validation_report(
-            "User went to the gym yesterday"
-        )
+        report = validator.get_validation_report("User went to the gym yesterday")
         assert "memory_type" in report
         assert "classification" in report
 

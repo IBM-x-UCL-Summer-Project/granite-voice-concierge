@@ -179,7 +179,11 @@ class TestMemoryRetrieval:
             "Kenny likes pizza", "profile", person="Kenny", topic="food", validate=False
         )
         memory_manager.store_memory(
-            "Kenny is a developer", "profile", person="Kenny", topic="job", validate=False
+            "Kenny is a developer",
+            "profile",
+            person="Kenny",
+            topic="job",
+            validate=False,
         )
 
         results = memory_manager.retriever.retrieve_by_metadata(
