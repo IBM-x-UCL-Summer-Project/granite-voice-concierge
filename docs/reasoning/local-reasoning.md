@@ -71,6 +71,23 @@ Project-owned factory errors are:
 Lower-level `OllamaReasoningError` and `OllamaModelManagementError` remain
 available for adapter-specific callers and compatibility.
 
+## Bounded Ollama Inference
+
+`OllamaConfig` bounds local generation with:
+
+- `num_ctx`: Ollama context-window size, default `4096`;
+- `max_predict_tokens`: hard cap for generated tokens, default `512`;
+- `keep_alive`: local runner keep-alive setting, default `"5m"`;
+- `timeout_s`: official-client timeout, default `120.0`;
+- `temperature` and `top_p`: sampling controls.
+
+For each request, the Ollama adapter derives `num_predict` from
+`ReasoningRequest.constraints.max_words`. The estimate is intentionally based on
+the requested spoken response length, not transcript size, and is capped by
+`max_predict_tokens`. Each response metadata payload records the effective
+generation settings so benchmark reports can trace the runtime bounds used for a
+case.
+
 ## Install
 
 Create a local virtual environment:

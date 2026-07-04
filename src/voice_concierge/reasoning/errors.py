@@ -19,3 +19,11 @@ class ReasoningBackendUnavailableError(ReasoningError):
 
 class ReasoningModelUnavailableError(ReasoningError):
     """Raised when the selected local reasoning model is unavailable."""
+
+
+class ReasoningTimeoutError(ReasoningError):
+    """Raised when local reasoning generation exceeds its runtime timeout."""
+
+
+class ReasoningGenerationError(ReasoningError):
+    """Raised when local reasoning generation fails for another runtime reason."""

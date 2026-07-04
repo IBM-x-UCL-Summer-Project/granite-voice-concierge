@@ -9,8 +9,10 @@ from voice_concierge.reasoning.errors import (
     ReasoningBackendUnavailableError,
     ReasoningConfigurationError,
     ReasoningError,
+    ReasoningGenerationError,
     ReasoningModelUnavailableError,
     ReasoningRequestError,
+    ReasoningTimeoutError,
 )
 from voice_concierge.reasoning.factory import build_reasoning_engine
 from voice_concierge.reasoning.models import (
@@ -29,12 +31,16 @@ from voice_concierge.reasoning.models import (
     save_model_selection,
 )
 from voice_concierge.reasoning.ollama import (
+    OllamaBackendUnavailableError,
     OllamaConfig,
+    OllamaGenerationError,
     OllamaModelManagementError,
     OllamaModelManager,
     OllamaModelManagerConfig,
+    OllamaModelUnavailableError,
     OllamaReasoningEngine,
     OllamaReasoningError,
+    OllamaTimeoutError,
 )
 from voice_concierge.reasoning.output import apply_spoken_word_limit
 from voice_concierge.reasoning.prompting import (
@@ -68,12 +74,16 @@ __all__ = [
     "MemoryAction",
     "ModelDownloadProgress",
     "ModelManager",
+    "OllamaBackendUnavailableError",
     "OllamaConfig",
+    "OllamaGenerationError",
+    "OllamaModelUnavailableError",
     "OllamaModelManagementError",
     "OllamaModelManager",
     "OllamaModelManagerConfig",
     "OllamaReasoningEngine",
     "OllamaReasoningError",
+    "OllamaTimeoutError",
     "PromptTemplate",
     "PromptTemplateError",
     "ReasoningBackendUnavailableError",
@@ -81,12 +91,14 @@ __all__ = [
     "ReasoningConfigurationError",
     "ReasoningEngine",
     "ReasoningError",
+    "ReasoningGenerationError",
     "ReasoningModelUnavailableError",
     "ReasoningModelSelection",
     "ReasoningRequest",
     "ReasoningRequestError",
     "ReasoningResponse",
     "ReasoningTrace",
+    "ReasoningTimeoutError",
     "TraceableReasoningEngine",
     "apply_spoken_word_limit",
     "build_granite_messages",
