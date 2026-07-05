@@ -27,7 +27,7 @@ class TestMetadataExtraction:
 
     def test_extract_metadata_with_all_fields(self, validator):
         """Test extracting all metadata fields."""
-        content = "Ran into Sarah at the coffee shop last Tuesday. She mentioned starting a new job at Google." # noqa: E501
+        content = "Ran into Sarah at the coffee shop last Tuesday. She mentioned starting a new job at Google."  # noqa: E501
         metadata = validator.extract_metadata(content)
 
         assert metadata["strength"] >= 1 and metadata["strength"] <= 10
