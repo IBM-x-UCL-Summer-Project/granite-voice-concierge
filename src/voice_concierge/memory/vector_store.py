@@ -25,13 +25,14 @@ class VectorStore:
         self.con.enable_load_extension(False)
 
     def _create_vector_table(self):
-        self.con.execute(f"""
+        create_table_sql = f"""
             CREATE VIRTUAL TABLE IF NOT EXISTS memory_vectors
             USING vec0(
                 memory_id INTEGER PRIMARY KEY,
                 embedding float[{self.dimension}]
             )
-            """)
+            """
+        self.con.execute(create_table_sql)
         self.con.commit()
 
     def save_vector(self, memory_id, embedding):
