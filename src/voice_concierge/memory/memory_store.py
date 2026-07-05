@@ -32,9 +32,18 @@ class MemoryStore:
         self.cur.execute(
             """
             INSERT INTO memories
-            (content, layer, created_at, event_time, strength, person, source_type, topic) 
+            (
+                content,
+                layer,
+                created_at,
+                event_time,
+                strength,
+                person,
+                source_type,
+                topic
+            )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,# noqa: E501
+            """,
             (
                 content,
                 layer,

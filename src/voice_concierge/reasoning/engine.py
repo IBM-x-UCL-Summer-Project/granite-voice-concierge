@@ -9,6 +9,7 @@ from voice_concierge.reasoning.types import (
     ReasoningResponse,
     ReasoningTrace,
 )
+from voice_concierge.reasoning.validation import validate_reasoning_request
 
 
 class ReasoningEngine(Protocol):
@@ -44,5 +45,6 @@ class DeterministicReasoningFake:
     def generate(self, request: ReasoningRequest) -> ReasoningResponse:
         """Record the request and return the configured response unchanged."""
 
+        validate_reasoning_request(request)
         self.requests.append(request)
         return self.response

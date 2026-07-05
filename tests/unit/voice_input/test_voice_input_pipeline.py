@@ -12,6 +12,8 @@ from voice_concierge.voice_input import (
     WakeWordDetector,
 )
 
+pytestmark = pytest.mark.usefixtures("mock_openwakeword_model")
+
 
 class TestVoiceInputPipelineInit:
     """Unit tests for VoiceInputPipeline initialisation."""

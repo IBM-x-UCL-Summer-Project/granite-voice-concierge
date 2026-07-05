@@ -27,6 +27,67 @@ It contains:
 
 The reasoning layer should propose memory actions. It should not directly write to memory.
 
+`validate_reasoning_request()` owns public request validation. Engines call it
+before prompt construction or backend calls. It rejects empty transcripts or
+modes, non-tuple memories, invalid memory snippets, empty supplied conversation
+summaries, missing or malformed constraints, non-positive `max_words`, and
+non-boolean constraint flags.
+
+`output.py` owns backend-neutral spoken-response shaping. The Ollama adapter calls
+its shared word-limit function after deterministic policy guards, while the
+deterministic fake returns its configured response unchanged after validating the
+request.
+
+## Build the Runtime Engine
+
+Application code should construct the selected local reasoning engine with
+`build_reasoning_engine(...)`:
+
+```python
+from voice_concierge.reasoning import build_reasoning_engine
+
+engine = build_reasoning_engine()
+```
+
+The factory loads `.local/reasoning-model-selection.json` when present and falls
+back to the default local selection when it is absent. The only supported runtime
+backend is currently `ollama`.
+
+Startup validation is deliberate. The factory validates the prompt version,
+checks the selected primary model with Ollama model metadata, and returns an
+`OllamaReasoningEngine` only when the local runtime setup is usable. It does not
+pull or download models, activate `fallback_model`, benchmark candidates, contact
+cloud services, or import unfinished voice, context, memory, STT, or TTS modules.
+
+Project-owned factory errors are:
+
+- `ReasoningConfigurationError`: invalid model selection, unsupported backend,
+  invalid prompt version, or invalid Ollama config;
+- `ReasoningBackendUnavailableError`: the selected local backend cannot be
+  reached or verified;
+- `ReasoningModelUnavailableError`: the selected primary model is not available
+  locally.
+
+Lower-level `OllamaReasoningError` and `OllamaModelManagementError` remain
+available for adapter-specific callers and compatibility.
+
+## Bounded Ollama Inference
+
+`OllamaConfig` bounds local generation with:
+
+- `num_ctx`: Ollama context-window size, default `4096`;
+- `max_predict_tokens`: hard cap for generated tokens, default `512`;
+- `keep_alive`: local runner keep-alive setting, default `"5m"`;
+- `timeout_s`: official-client timeout, default `120.0`;
+- `temperature` and `top_p`: sampling controls.
+
+For each request, the Ollama adapter derives `num_predict` from
+`ReasoningRequest.constraints.max_words`. The estimate is intentionally based on
+the requested spoken response length, not transcript size, and is capped by
+`max_predict_tokens`. Each response metadata payload records the effective
+generation settings so benchmark reports can trace the runtime bounds used for a
+case.
+
 ## Install
 
 Create a local virtual environment:
@@ -66,6 +127,25 @@ Write a report to a file:
   --output benchmarks/reasoning/results/fake-report.json
 ```
 
+## Run the Selected Runtime
+
+Use `--engine selected` to benchmark the configured app-facing reasoning runtime
+through `build_reasoning_engine(...)`:
+
+```bash
+.venv/bin/python -m benchmarks.reasoning.benchmark \
+  run \
+  --engine selected \
+  --evaluation-mode both \
+  --output benchmarks/reasoning/results/selected-runtime-smoke.json
+```
+
+This mode loads the selected primary model and host from
+`.local/reasoning-model-selection.json`, validates the configured local runtime,
+and then runs the prompt suite. It intentionally rejects direct `--model` and
+`--host` overrides. Use this mode when checking whether the application-facing
+runtime wiring works.
+
 ## Run With Ollama
 
 Running an Ollama model is optional. The adapter uses Ollama's official Python
@@ -73,7 +153,7 @@ client, and connects to the local runner at `http://localhost:11434` by
 default, requires no cloud account or credentials. Ollama itself must be
 installed, running locally, and have a local model available.
 
-For Ollama runs, the benchmark loads the active model and host from
+For direct Ollama runs, the benchmark loads the active model and host from
 `.local/reasoning-model-selection.json`. If the file is absent, the selection
 defaults to `granite4.1:8b` at `http://localhost:11434`. The model-management
 helpers can list, inspect, pull, and select local Ollama models, but the benchmark
@@ -96,6 +176,10 @@ Explicit model and host arguments override the persisted selection:
   --model <local-model-name> \
   --host http://localhost:11434
 ```
+
+Use direct `--engine ollama` runs for model experiments and explicit local-model
+checks. Use `--engine selected` for the configured application runtime smoke
+path.
 
 Ollama runs use the bundled `v1` runtime prompt by default. Select another
 bundled version explicitly when testing a prompt revision:
