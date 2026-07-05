@@ -6,7 +6,7 @@ import argparse
 import json
 import re
 import sys
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from benchmarks.reasoning.comparison import (
@@ -320,7 +320,7 @@ def _resolve_ollama_host(args: argparse.Namespace) -> str:
 def _default_output_dir() -> Path:
     """Return a timestamped output directory for a model comparison."""
 
-    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     return (
         REPO_ROOT / "benchmarks" / "reasoning" / "results" / f"model-comparison-{stamp}"
     )

@@ -1,13 +1,31 @@
 # Standard library
 from collections import defaultdict, deque
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 # Third-party
 import numpy as np
+import openwakeword
 import pytest
 
 # Local
 from voice_concierge.voice_input import WakeWordDetector
+
+
+def _has_default_openwakeword_model() -> bool:
+    model_path = (
+        Path(openwakeword.__file__).resolve().parent
+        / "resources"
+        / "models"
+        / "hey_jarvis_v0.1.onnx"
+    )
+    return model_path.is_file()
+
+
+pytestmark = pytest.mark.skipif(
+    not _has_default_openwakeword_model(),
+    reason="Requires downloaded openWakeWord model resources.",
+)
 
 
 class TestWakeWordDetectorIntegration:

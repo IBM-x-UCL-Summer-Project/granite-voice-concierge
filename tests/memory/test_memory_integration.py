@@ -8,7 +8,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from voice_concierge.memory import (
-    EmbeddingService,
     MemoryManager,
     MemoryStore,
     MemoryValidator,
@@ -18,20 +17,19 @@ from voice_concierge.reasoning.types import MemoryAction
 
 
 @pytest.fixture
-def memory_manager(tmp_path):
+def memory_manager(tmp_path, fake_embedding_service):
     """Create a complete memory manager for testing."""
     db_path = str(tmp_path / "test_memory.db")
     vector_db_path = str(tmp_path / "test_vector.db")
 
     memory_store = MemoryStore(db_path)
     vector_store = VectorStore(vector_db_path)
-    embedding_service = EmbeddingService()
     validator = MemoryValidator()
 
     manager = MemoryManager(
         memory_store=memory_store,
         vector_store=vector_store,
-        embedding_service=embedding_service,
+        embedding_service=fake_embedding_service,
         validator=validator,
     )
 

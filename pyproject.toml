@@ -7,11 +7,13 @@ name = "granite-voice-concierge"
 version = "0.1.0"
 description = "Offline voice-first assistant prototype for independent living"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.12"
 dependencies = [
     "httpx>=0.27,<1",
     "ollama>=0.6.2,<0.7",
     "pydantic>=2.9,<3",
+    "pysqlite3>=0.6,<1",
+    "sqlite-vec>=0.1,<0.2",
 ]
 
 [tool.setuptools.packages.find]
@@ -22,7 +24,7 @@ where = ["src"]
 
 [tool.black]
 line-length = 88
-target-version = ["py311"]
+target-version = ["py312"]
 
 [tool.ruff]
 line-length = 88
@@ -33,6 +35,7 @@ select = ["E", "F", "I"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+pythonpath = ["src"]
 markers = [
     "unit: mark test as a unit test",
     "integration: mark test as an integration test",
@@ -46,5 +49,3 @@ exclude_lines = [
     "pragma: no cover",
     "if __name__ == ['\"]__main__['\"]:",
 ]
-
-pythonpath = ["src"]

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Literal
 
@@ -119,7 +119,7 @@ def run_reasoning_benchmark(
     if evaluation_mode not in EVALUATION_MODES:
         raise ValueError(f"Unsupported evaluation mode: {evaluation_mode}")
 
-    started_at = datetime.now(UTC)
+    started_at = datetime.now(timezone.utc)
     suite_name = suite.get("name", "unnamed_reasoning_suite")
     suite_purpose = suite.get("purpose", "")
 

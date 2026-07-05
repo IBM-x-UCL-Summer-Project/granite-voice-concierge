@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 
-from voice_concierge.memory.embedding_service import EmbeddingService
 from voice_concierge.memory.memory_manager import MemoryManager
 from voice_concierge.memory.memory_store import MemoryStore
 from voice_concierge.memory.memory_validator import MemoryValidator
@@ -16,7 +15,7 @@ class TestMemoryStorageWithExtraction:
     """Test memory storage with auto-extraction of metadata."""
 
     @pytest.fixture
-    def manager(self):
+    def manager(self, fake_embedding_service):
         """Create a memory manager with temporary databases."""
         with tempfile.TemporaryDirectory() as tmpdir:
             memory_db = Path(tmpdir) / "memory.db"
@@ -24,13 +23,12 @@ class TestMemoryStorageWithExtraction:
 
             memory_store = MemoryStore(str(memory_db))
             vector_store = VectorStore(str(vector_db))
-            embedding_service = EmbeddingService()
             validator = MemoryValidator()
 
             manager = MemoryManager(
                 memory_store=memory_store,
                 vector_store=vector_store,
-                embedding_service=embedding_service,
+                embedding_service=fake_embedding_service,
                 validator=validator,
             )
             yield manager
