@@ -1,0 +1,399 @@
+"""Tests for the Ollama reasoning backend."""
+
+from __future__ import annotations
+
+import json
+from unittest.mock import Mock
+
+import pytest
+from httpx import ReadTimeout
+from ollama import ChatResponse, ResponseError
+
+from voice_concierge.reasoning import (
+    OllamaBackendUnavailableError,
+    OllamaConfig,
+    OllamaGenerationError,
+    OllamaModelUnavailableError,
+    OllamaReasoningEngine,
+    OllamaReasoningError,
+    OllamaTimeoutError,
+    ReasoningConfigurationError,
+    ReasoningConstraints,
+    ReasoningRequest,
+    ReasoningRequestError,
+)
+
+
+def _chat_response(content: str, **metrics: int) -> ChatResponse:
+    return ChatResponse(
+        message={"role": "assistant", "content": content},
+        **metrics,
+    )
+
+
+def _structured_content(
+    spoken_response: str,
+    *,
+    needs_confirmation: bool = False,
+    proposed_memory_action: dict[str, object] | None = None,
+    mode_suggestion: str | None = None,
+    confidence: str = "medium",
+) -> str:
+    return json.dumps(
+        {
+            "spoken_response": spoken_response,
+            "needs_confirmation": needs_confirmation,
+            "proposed_memory_action": proposed_memory_action,
+            "mode_suggestion": mode_suggestion,
+            "confidence": confidence,
+        }
+    )
+
+
+def _engine_with_response(
+    content: str,
+    **metrics: int,
+) -> tuple[OllamaReasoningEngine, Mock]:
+    client = Mock()
+    client.chat.return_value = _chat_response(content, **metrics)
+    engine = OllamaReasoningEngine(
+        OllamaConfig(model="granite-local-test"),
+        client=client,
+    )
+    return engine, client
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    (
+        ("model", "", "model"),
+        ("host", "   ", "host"),
+        ("prompt_version", "", "prompt_version"),
+        ("timeout_s", 0, "timeout_s"),
+        ("timeout_s", True, "timeout_s"),
+        ("temperature", -0.1, "temperature"),
+        ("temperature", 2.1, "temperature"),
+        ("temperature", "cold", "temperature"),
+        ("top_p", 0, "top_p"),
+        ("top_p", 1.1, "top_p"),
+        ("top_p", False, "top_p"),
+        ("num_ctx", 0, "num_ctx"),
+        ("num_ctx", True, "num_ctx"),
+        ("num_ctx", "4096", "num_ctx"),
+        ("max_predict_tokens", 0, "max_predict_tokens"),
+        ("max_predict_tokens", False, "max_predict_tokens"),
+        ("max_predict_tokens", "512", "max_predict_tokens"),
+        ("keep_alive", "", "keep_alive"),
+        ("keep_alive", 0, "keep_alive"),
+        ("keep_alive", True, "keep_alive"),
+    ),
+)
+def test_ollama_config_rejects_invalid_values(
+    field: str,
+    value: object,
+    message: str,
+) -> None:
+    kwargs = {
+        "model": "granite-local-test",
+        "host": "http://localhost:11434",
+        "prompt_version": "v1",
+        "timeout_s": 120.0,
+        "temperature": 0.2,
+        "top_p": 0.9,
+        "num_ctx": 4096,
+        "max_predict_tokens": 512,
+        "keep_alive": "5m",
+        field: value,
+    }
+
+    with pytest.raises(ReasoningConfigurationError, match=message):
+        OllamaConfig(**kwargs)
+
+
+def test_ollama_engine_configures_official_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+    client = Mock()
+
+    def fake_client(*, host: str, timeout: float) -> Mock:
+        captured.update(host=host, timeout=timeout)
+        return client
+
+    monkeypatch.setattr("voice_concierge.reasoning.ollama.Client", fake_client)
+
+    engine = OllamaReasoningEngine(
+        OllamaConfig(
+            model="granite-local-test",
+            host="http://localhost:11434",
+            timeout_s=3.0,
+        )
+    )
+
+    assert engine.config.model == "granite-local-test"
+    assert captured == {"host": "http://localhost:11434", "timeout": 3.0}
+
+
+def test_ollama_engine_sends_chat_messages_and_generated_schema() -> None:
+    engine, client = _engine_with_response(
+        _structured_content("Local model response."),
+        total_duration=1000,
+        eval_count=5,
+    )
+
+    response = engine.generate(
+        ReasoningRequest(
+            transcript="How do I like you to answer?",
+            memories=("User prefers short answers.",),
+        )
+    )
+
+    call = client.chat.call_args.kwargs
+    assert call["model"] == "granite-local-test"
+    assert call["stream"] is False
+    assert call["format"]["type"] == "object"
+    assert call["format"]["additionalProperties"] is False
+    assert call["keep_alive"] == "5m"
+    assert call["options"] == {
+        "temperature": 0.2,
+        "top_p": 0.9,
+        "num_ctx": 4096,
+        "num_predict": 304,
+    }
+    assert call["messages"][0]["role"] == "system"
+    assert call["messages"][1]["role"] == "user"
+    assert "User prefers short answers." in call["messages"][1]["content"]
+    assert response.spoken_response == "Local model response."
+    assert response.needs_confirmation is False
+    assert response.proposed_memory_action is None
+    assert response.metadata["backend"] == "ollama"
+    assert response.metadata["model"] == "granite-local-test"
+    assert response.metadata["output_format"] == "structured_json"
+    assert response.metadata["prompt_id"] == "local-reasoning"
+    assert response.metadata["prompt_version"] == "v1"
+    assert response.metadata["temperature"] == "0.2"
+    assert response.metadata["top_p"] == "0.9"
+    assert response.metadata["num_ctx"] == "4096"
+    assert response.metadata["num_predict"] == "304"
+    assert response.metadata["max_predict_tokens"] == "512"
+    assert response.metadata["keep_alive"] == "5m"
+    assert response.metadata["total_duration"] == "1000"
+    assert response.metadata["eval_count"] == "5"
+
+
+def test_ollama_engine_derives_generation_limit_from_request_word_limit() -> None:
+    engine, client = _engine_with_response(_structured_content("Short response."))
+
+    response = engine.generate(
+        ReasoningRequest(
+            transcript="Hello",
+            constraints=ReasoningConstraints(max_words=25),
+        )
+    )
+
+    call = client.chat.call_args.kwargs
+    assert call["options"]["num_predict"] == 164
+    assert response.metadata["num_predict"] == "164"
+
+
+def test_ollama_engine_caps_generation_limit_at_configured_maximum() -> None:
+    client = Mock()
+    client.chat.return_value = _chat_response(_structured_content("Short response."))
+    engine = OllamaReasoningEngine(
+        OllamaConfig(model="granite-local-test", max_predict_tokens=120),
+        client=client,
+    )
+
+    response = engine.generate(
+        ReasoningRequest(
+            transcript="Hello",
+            constraints=ReasoningConstraints(max_words=100),
+        )
+    )
+
+    call = client.chat.call_args.kwargs
+    assert call["options"]["num_predict"] == 120
+    assert response.metadata["max_predict_tokens"] == "120"
+    assert response.metadata["num_predict"] == "120"
+
+
+def test_ollama_engine_validates_request_before_client_call() -> None:
+    engine, client = _engine_with_response(_structured_content("Unused."))
+
+    with pytest.raises(ReasoningRequestError, match="transcript"):
+        engine.generate(ReasoningRequest(transcript="   "))
+
+    client.chat.assert_not_called()
+
+
+def test_ollama_engine_parses_memory_action() -> None:
+    engine, _ = _engine_with_response(
+        _structured_content(
+            "I can remember that.",
+            proposed_memory_action={
+                "action": "store",
+                "content": "User prefers short answers.",
+                "rationale": "User explicitly asked to remember it.",
+                "requires_confirmation": True,
+            },
+            confidence="high",
+        )
+    )
+
+    response = engine.generate(
+        ReasoningRequest(transcript="Remember that I prefer short answers.")
+    )
+
+    assert response.needs_confirmation is True
+    assert response.proposed_memory_action is not None
+    assert response.proposed_memory_action.action == "store"
+    assert response.proposed_memory_action.content == "I prefer short answers"
+    assert "confirm" in response.spoken_response.lower()
+    assert response.confidence == "high"
+    assert response.metadata["policy_guard"] == "memory_store_confirmation"
+
+
+def test_ollama_engine_maps_connection_errors() -> None:
+    client = Mock()
+    client.chat.side_effect = ConnectionError("connection refused")
+    engine = OllamaReasoningEngine(
+        OllamaConfig(model="granite-local-test"),
+        client=client,
+    )
+
+    with pytest.raises(OllamaBackendUnavailableError, match="Could not reach"):
+        engine.generate(ReasoningRequest(transcript="Hello"))
+
+
+def test_ollama_engine_maps_client_timeouts() -> None:
+    client = Mock()
+    client.chat.side_effect = ReadTimeout("request timed out")
+    engine = OllamaReasoningEngine(
+        OllamaConfig(model="granite-local-test"),
+        client=client,
+    )
+
+    with pytest.raises(OllamaTimeoutError, match="Could not complete local Ollama"):
+        engine.generate(ReasoningRequest(transcript="Hello"))
+
+
+def test_ollama_engine_maps_missing_model_during_generation() -> None:
+    client = Mock()
+    client.chat.side_effect = ResponseError("model not found", status_code=404)
+    engine = OllamaReasoningEngine(
+        OllamaConfig(model="missing-model"),
+        client=client,
+    )
+
+    with pytest.raises(OllamaModelUnavailableError, match="Ollama request failed"):
+        engine.generate(ReasoningRequest(transcript="Hello"))
+
+
+def test_ollama_engine_maps_general_generation_failures() -> None:
+    client = Mock()
+    client.chat.side_effect = ResponseError("runner failed", status_code=500)
+    engine = OllamaReasoningEngine(
+        OllamaConfig(model="granite-local-test"),
+        client=client,
+    )
+
+    with pytest.raises(OllamaGenerationError, match="Ollama request failed"):
+        engine.generate(ReasoningRequest(transcript="Hello"))
+
+
+def test_ollama_specific_errors_preserve_reasoning_error_compatibility() -> None:
+    assert issubclass(OllamaBackendUnavailableError, OllamaReasoningError)
+    assert issubclass(OllamaModelUnavailableError, OllamaReasoningError)
+    assert issubclass(OllamaTimeoutError, OllamaReasoningError)
+    assert issubclass(OllamaGenerationError, OllamaReasoningError)
+
+
+def test_ollama_engine_rejects_empty_message() -> None:
+    engine, _ = _engine_with_response("   ")
+
+    with pytest.raises(OllamaGenerationError, match="message was empty"):
+        engine.generate(ReasoningRequest(transcript="Hello"))
+
+
+def test_ollama_engine_falls_back_on_invalid_json() -> None:
+    engine, _ = _engine_with_response("Plain text response.")
+
+    response = engine.generate(ReasoningRequest(transcript="Hello"))
+
+    assert response.spoken_response == "Plain text response."
+    assert response.confidence == "low"
+    assert response.metadata["structured_parse_error"] == "invalid_json"
+
+
+def test_ollama_engine_falls_back_on_invalid_schema() -> None:
+    engine, _ = _engine_with_response(
+        _structured_content(
+            "",
+            needs_confirmation=False,
+            confidence="unknown",
+        )
+    )
+
+    response = engine.generate(ReasoningRequest(transcript="Hello"))
+
+    assert (
+        response.spoken_response == "I could not produce a valid structured response."
+    )
+    assert response.confidence == "low"
+    assert response.metadata["structured_parse_error"] == "schema_validation_failed"
+
+
+def test_ollama_engine_enforces_request_word_limit() -> None:
+    engine, _ = _engine_with_response(_structured_content("one two three four five"))
+
+    response = engine.generate(
+        ReasoningRequest(
+            transcript="Hello",
+            constraints=ReasoningConstraints(max_words=3),
+        )
+    )
+
+    assert response.spoken_response == "one two three."
+    assert response.metadata["truncated"] == "true"
+
+
+def test_ollama_engine_applies_policy_guards() -> None:
+    engine, _ = _engine_with_response(_structured_content("Okay, short answers."))
+
+    response = engine.generate(ReasoningRequest(transcript="Keep answers short."))
+
+    assert response.needs_confirmation is True
+    assert response.proposed_memory_action is not None
+    assert response.proposed_memory_action.action == "update"
+    assert response.proposed_memory_action.content == "accessibility.verbosity=short"
+    assert response.metadata["policy_guard"] == "accessibility_preference_confirmation"
+
+
+def test_ollama_engine_trace_preserves_raw_and_guarded_response() -> None:
+    engine, client = _engine_with_response(_structured_content("Okay, short answers."))
+
+    trace = engine.generate_trace(ReasoningRequest(transcript="Keep answers short."))
+
+    client.chat.assert_called_once()
+    assert trace.raw_response.spoken_response == "Okay, short answers."
+    assert trace.raw_response.needs_confirmation is False
+    assert trace.raw_response.proposed_memory_action is None
+    assert trace.guarded_response.needs_confirmation is True
+    assert trace.guarded_response.proposed_memory_action is not None
+    assert trace.guarded_response.metadata["policy_guard"] == (
+        "accessibility_preference_confirmation"
+    )
+
+
+def test_ollama_engine_applies_delete_confirmation_guard() -> None:
+    engine, _ = _engine_with_response(_structured_content("Okay, forgotten."))
+
+    response = engine.generate(
+        ReasoningRequest(transcript="Forget my old shopping list.")
+    )
+
+    assert response.needs_confirmation is True
+    assert response.proposed_memory_action is not None
+    assert response.proposed_memory_action.action == "delete"
+    assert response.proposed_memory_action.content == "my old shopping list"
+    assert response.metadata["policy_guard"] == "memory_delete_confirmation"
