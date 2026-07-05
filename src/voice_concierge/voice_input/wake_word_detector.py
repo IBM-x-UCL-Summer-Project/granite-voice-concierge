@@ -1,8 +1,10 @@
 # Standard library
+from pathlib import Path
 from typing import Callable
 
 # Third-party
 import numpy as np
+import openwakeword
 import openwakeword.utils
 import pyaudio
 from openwakeword.model import Model
@@ -13,6 +15,24 @@ DEFAULT_RATE: int = 16000  # sample rate required by openWakeWord
 DEFAULT_CHANNELS: int = 1  # mono audio
 DEFAULT_FORMAT: int = pyaudio.paInt16
 DEFAULT_CONFIDENCE_THRESHOLD: float = 0.3  # from spike benchmarks
+
+
+def _resolve_model_reference(model_name: str) -> str:
+    """Return a model path when bundled resources are present, else the name."""
+    model_path = Path(model_name)
+    if model_path.is_file():
+        return str(model_path)
+
+    bundled_model_path = (
+        Path(openwakeword.__file__).resolve().parent
+        / "resources"
+        / "models"
+        / model_name
+    )
+    if bundled_model_path.is_file():
+        return str(bundled_model_path)
+
+    return model_name
 
 
 class WakeWordDetector:
@@ -55,13 +75,19 @@ class WakeWordDetector:
         self._channels = channels
         self._fmt = fmt
 
-        if download_models:
+        if download_models and hasattr(openwakeword.utils, "download_models"):
             openwakeword.utils.download_models()
 
-        self._model: Model = Model(
-            wakeword_models=[model_name],
-            inference_framework="onnx",
-        )
+        model_reference = _resolve_model_reference(model_name)
+        try:
+            self._model: Model = Model(
+                wakeword_models=[model_reference],
+                inference_framework="onnx",
+            )
+        except TypeError as exc:
+            if "wakeword_models" not in str(exc):
+                raise
+            self._model = Model(wakeword_model_paths=[model_reference])
 
     def listen(self, on_wake_word: Callable[[], None]) -> None:
         """
