@@ -47,6 +47,7 @@ def mock_openwakeword_model(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     monkeypatch.setattr(
         "voice_concierge.voice_input.wake_word_detector.openwakeword.utils.download_models",
         MagicMock(),
+        raising=False,
     )
     return model
 

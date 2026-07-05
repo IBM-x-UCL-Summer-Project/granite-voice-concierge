@@ -2,7 +2,7 @@
 pyaudio
 
 # --- Wake Word Detection ---
-openwakeword
+openwakeword==0.6.0
 
 # --- Voice Activity Detection ---
 silero-vad
