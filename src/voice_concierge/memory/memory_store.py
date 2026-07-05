@@ -1,7 +1,7 @@
-import pysqlite3 as sqlite3
 import time
 from pathlib import Path
-import sqlite_vec
+
+import pysqlite3 as sqlite3
 
 
 class MemoryStore:
@@ -32,7 +32,16 @@ class MemoryStore:
         self.cur.execute(
             """
             INSERT INTO memories
-            (content, layer, created_at, event_time, strength, person, source_type, topic)
+            (
+                content,
+                layer,
+                created_at,
+                event_time,
+                strength,
+                person,
+                source_type,
+                topic
+            )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (

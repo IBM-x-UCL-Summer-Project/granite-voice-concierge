@@ -1,12 +1,13 @@
 """Tests for memory type classification."""
 
-import pytest
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from voice_concierge.memory.memory_validator import MemoryValidator, MemoryType
+from voice_concierge.memory.memory_validator import MemoryType, MemoryValidator
 
 
 class TestMemoryClassification:

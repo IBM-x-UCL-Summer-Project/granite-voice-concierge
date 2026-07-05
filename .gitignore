@@ -224,5 +224,10 @@ __marimo__/
 *.wav
 *.mp3
 
+
+# Ignore downloaded TTS models
+*.onnx
+*.onnx.json
+
 # macOS
 .DS_Store

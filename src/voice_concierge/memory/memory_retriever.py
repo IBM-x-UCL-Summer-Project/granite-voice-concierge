@@ -1,9 +1,10 @@
 """Retrieves memories using semantic similarity and metadata filters."""
 
 from typing import Optional
+
+from voice_concierge.memory.embedding_service import EmbeddingService
 from voice_concierge.memory.memory_store import MemoryStore
 from voice_concierge.memory.vector_store import VectorStore
-from voice_concierge.memory.embedding_service import EmbeddingService
 
 
 class MemoryRetriever:

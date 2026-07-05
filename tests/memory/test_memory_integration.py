@@ -1,17 +1,18 @@
 """Integration tests for complete memory system."""
 
-import pytest
 import sys
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from voice_concierge.memory import (
-    MemoryStore,
-    VectorStore,
     EmbeddingService,
-    MemoryValidator,
     MemoryManager,
+    MemoryStore,
+    MemoryValidator,
+    VectorStore,
 )
 from voice_concierge.reasoning.types import MemoryAction
 

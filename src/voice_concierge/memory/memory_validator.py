@@ -1,8 +1,9 @@
 """Validates whether content should be stored as a memory using LLM judgment."""
 
 import json
-from typing import Tuple, Optional, Dict, Any
 from enum import Enum
+from typing import Any, Dict, Optional, Tuple
+
 from ollama import Client
 
 
@@ -50,7 +51,7 @@ Categories:
 - emotional: Emotions/feelings/moods (e.g., "felt nervous about interview")
 - reflective: Thoughts/reflections/analysis (e.g., "realized I should exercise more")
 
-Respond with ONLY the category name (episodic/semantic/procedural/emotional/reflective)."""
+Respond with ONLY the category name (episodic/semantic/procedural/emotional/reflective).""" # noqa: E501
 
     EXTRACTION_PROMPT = """Extract structured metadata from this memory content.
 
