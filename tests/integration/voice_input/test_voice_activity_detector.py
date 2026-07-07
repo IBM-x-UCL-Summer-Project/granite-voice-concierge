@@ -1,40 +1,36 @@
 # Standard library
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 # Third-party
 import numpy as np
 import pytest
 
 # Local
+from voice_concierge.audio import CapturedAudio, FakeAudioSource
 from voice_concierge.voice_input import VoiceActivityDetector
+
+_CHUNK = np.zeros(512, dtype=np.int16).tobytes()
 
 
 class TestVoiceActivityDetectorIntegration:
     """
     Integration tests for VoiceActivityDetector.
 
-    These tests use the real Silero VAD model but mock PyAudio to avoid
-    requiring a physical microphone. Audio is simulated using numpy arrays.
+    These tests use the real Silero VAD model but feed audio through a
+    FakeAudioSource to avoid requiring a physical microphone. Audio is
+    simulated using numpy arrays.
     """
 
     @pytest.mark.integration
-    @patch("voice_concierge.voice_input.voice_activity_detector.pyaudio.PyAudio")
-    def test_silent_audio_does_not_trigger_callback(
-        self, mock_pyaudio: MagicMock
-    ) -> None:
+    def test_silent_audio_does_not_trigger_callback(self) -> None:
         """
         VoiceActivityDetector does not trigger callback on silent audio.
         Verifies the real Silero VAD model does not produce false positives
         on silence within the timeout window.
         """
         # Arrange
-        mock_stream = MagicMock()
-        mock_stream.read.return_value = np.zeros(512, dtype=np.int16).tobytes()
-        mock_pyaudio_instance = MagicMock()
-        mock_pyaudio_instance.open.return_value = mock_stream
-        mock_pyaudio.return_value = mock_pyaudio_instance
-
-        vad = VoiceActivityDetector(max_wait_s=1)
+        source = FakeAudioSource(fill=_CHUNK)
+        vad = VoiceActivityDetector(max_wait_s=1, audio_source=source)
         callback = MagicMock()
 
         # Act
@@ -44,30 +40,15 @@ class TestVoiceActivityDetectorIntegration:
         callback.assert_not_called()
 
     @pytest.mark.integration
-    @patch("voice_concierge.voice_input.voice_activity_detector.pyaudio.PyAudio")
-    def test_speech_start_and_end_triggers_callback(
-        self, mock_pyaudio: MagicMock
-    ) -> None:
+    def test_speech_start_and_end_triggers_callback(self) -> None:
         """
         VoiceActivityDetector triggers callback when real VAD detects speech
         start and end events.
         """
         # Arrange
-        mock_stream = MagicMock()
-        mock_stream.read.return_value = np.zeros(512, dtype=np.int16).tobytes()
-        mock_pyaudio_instance = MagicMock()
-        mock_pyaudio_instance.open.return_value = mock_stream
-        mock_pyaudio.return_value = mock_pyaudio_instance
-
-        vad = VoiceActivityDetector()
-
-        # Use real VADIterator but inject controlled speech events
-        vad._vad_iterator = MagicMock()
-        vad._vad_iterator.side_effect = [
-            {"start": 0},
-            {"end": 512},
-        ]
-
+        source = FakeAudioSource(fill=_CHUNK)
+        vad = VoiceActivityDetector(audio_source=source)
+        vad._vad_iterator = MagicMock(side_effect=[{"start": 0}, {"end": 512}])
         callback = MagicMock()
 
         # Act
@@ -77,83 +58,51 @@ class TestVoiceActivityDetectorIntegration:
         callback.assert_called_once()
 
     @pytest.mark.integration
-    @patch("voice_concierge.voice_input.voice_activity_detector.pyaudio.PyAudio")
-    def test_callback_receives_correct_audio_format(
-        self, mock_pyaudio: MagicMock
-    ) -> None:
+    def test_callback_receives_captured_audio(self) -> None:
         """
-        VoiceActivityDetector passes int16 numpy array to callback.
+        VoiceActivityDetector passes a CapturedAudio to the callback.
         Verifies audio format is correct for downstream STT processing.
         """
         # Arrange
-        mock_stream = MagicMock()
-        mock_stream.read.return_value = np.zeros(512, dtype=np.int16).tobytes()
-        mock_pyaudio_instance = MagicMock()
-        mock_pyaudio_instance.open.return_value = mock_stream
-        mock_pyaudio.return_value = mock_pyaudio_instance
-
-        vad = VoiceActivityDetector()
-        vad._vad_iterator = MagicMock()
-        vad._vad_iterator.side_effect = [
-            {"start": 0},
-            {"end": 512},
-        ]
-
+        source = FakeAudioSource(fill=_CHUNK)
+        vad = VoiceActivityDetector(audio_source=source)
+        vad._vad_iterator = MagicMock(side_effect=[{"start": 0}, {"end": 512}])
         callback = MagicMock()
 
         # Act
         vad.capture_utterance(on_utterance_captured=callback)
 
         # Assert
-        args, _ = callback.call_args
-        assert isinstance(args[0], np.ndarray)
-        assert args[0].dtype == np.int16
+        (audio,), _ = callback.call_args
+        assert isinstance(audio, CapturedAudio)
+        assert audio.samples.dtype == np.int16
 
     @pytest.mark.integration
-    @patch("voice_concierge.voice_input.voice_activity_detector.pyaudio.PyAudio")
-    def test_timeout_exits_cleanly(self, mock_pyaudio: MagicMock) -> None:
+    def test_timeout_closes_source(self) -> None:
         """
-        VoiceActivityDetector exits cleanly after timeout with no speech.
-        Verifies stream is closed and terminated correctly on timeout.
+        VoiceActivityDetector closes the audio source cleanly on timeout.
         """
         # Arrange
-        mock_stream = MagicMock()
-        mock_stream.read.return_value = np.zeros(512, dtype=np.int16).tobytes()
-        mock_pyaudio_instance = MagicMock()
-        mock_pyaudio_instance.open.return_value = mock_stream
-        mock_pyaudio.return_value = mock_pyaudio_instance
-
-        vad = VoiceActivityDetector(max_wait_s=1)
+        source = FakeAudioSource(fill=_CHUNK)
+        vad = VoiceActivityDetector(max_wait_s=1, audio_source=source)
         callback = MagicMock()
 
         # Act
         vad.capture_utterance(on_utterance_captured=callback)
 
         # Assert
-        mock_stream.stop_stream.assert_called_once()
-        mock_stream.close.assert_called_once()
-        mock_pyaudio_instance.terminate.assert_called_once()
+        assert source.close_count >= 1
 
     @pytest.mark.integration
-    @patch("voice_concierge.voice_input.voice_activity_detector.pyaudio.PyAudio")
-    def test_metrics_collected_when_enabled(self, mock_pyaudio: MagicMock) -> None:
+    def test_metrics_collected_when_enabled(self) -> None:
         """
         VoiceActivityDetector collects and prints metrics when collect_metrics=True.
         Verifies metrics collection integrates correctly with utterance capture.
         """
         # Arrange
-        mock_stream = MagicMock()
-        mock_stream.read.return_value = np.zeros(512, dtype=np.int16).tobytes()
-        mock_pyaudio_instance = MagicMock()
-        mock_pyaudio_instance.open.return_value = mock_stream
-        mock_pyaudio.return_value = mock_pyaudio_instance
-
-        vad = VoiceActivityDetector(collect_metrics=True)
-        vad._vad_iterator = MagicMock()
-        vad._vad_iterator.side_effect = [
-            {"start": 0},
-            {"end": 512},
-        ]
+        source = FakeAudioSource(fill=_CHUNK)
+        vad = VoiceActivityDetector(collect_metrics=True, audio_source=source)
+        vad._vad_iterator = MagicMock(side_effect=[{"start": 0}, {"end": 512}])
         vad._collect_perf_metrics = MagicMock(
             return_value={
                 "latency_ms": 100.0,
