@@ -5,6 +5,7 @@ from voice_concierge.voice_input.stt.errors import (
     SpeechToTextError,
     SpeechToTextTranscriptionError,
 )
+from voice_concierge.voice_input.stt.factory import build_speech_to_text
 from voice_concierge.voice_input.stt.fakes import DeterministicSpeechToTextFake
 from voice_concierge.voice_input.stt.interfaces import SpeechToText
 from voice_concierge.voice_input.stt.types import Transcript
@@ -25,6 +26,7 @@ __all__ = [
     "DEFAULT_VAD_FILTER",
     "DeterministicSpeechToTextFake",
     "SpeechToText",
+    "build_speech_to_text",
     "SpeechToTextBackendUnavailableError",
     "SpeechToTextError",
     "SpeechToTextTranscriptionError",
