@@ -9,6 +9,8 @@ import pytest
 # Local
 from voice_concierge.voice_input import WakeWordDetector
 
+pytestmark = pytest.mark.usefixtures("mock_openwakeword_model")
+
 
 class TestWakeWordDetectorInit:
     """Unit tests for WakeWordDetector initialisation."""

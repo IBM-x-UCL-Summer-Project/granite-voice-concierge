@@ -2,6 +2,11 @@
 
 This is just a basic guide so our Python code stays reasonably consistent.
 
+## Python version
+
+Use Python 3.12 for development and CI. The repository root includes a
+`.python-version` file for pyenv users.
+
 ## Naming
 
 Use:

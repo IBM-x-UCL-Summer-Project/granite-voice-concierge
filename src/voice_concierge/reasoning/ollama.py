@@ -9,6 +9,7 @@ from json import JSONDecodeError
 from typing import Literal, cast
 
 from httpx import RequestError as HttpxRequestError
+from httpx import TimeoutException as HttpxTimeoutException
 from ollama import (
     ChatResponse,
     Client,
@@ -20,6 +21,14 @@ from ollama import (
 )
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from voice_concierge.reasoning.errors import (
+    ReasoningBackendUnavailableError,
+    ReasoningConfigurationError,
+    ReasoningError,
+    ReasoningGenerationError,
+    ReasoningModelUnavailableError,
+    ReasoningTimeoutError,
+)
 from voice_concierge.reasoning.models import (
     LocalModelDetails,
     LocalModelInfo,
@@ -38,19 +47,52 @@ from voice_concierge.reasoning.types import (
     ReasoningResponse,
     ReasoningTrace,
 )
+from voice_concierge.reasoning.validation import validate_reasoning_request
 
 _OLLAMA_CLIENT_ERRORS = (
     ConnectionError,
     HttpxRequestError,
+    HttpxTimeoutException,
     JSONDecodeError,
     RequestError,
     ResponseError,
     ValidationError,
 )
+_MIN_PREDICT_TOKENS = 96
+_PREDICT_TOKEN_OVERHEAD = 64
+_PREDICT_TOKENS_PER_WORD = 4
 
 
-class OllamaReasoningError(RuntimeError):
+class OllamaReasoningError(ReasoningError):
     """Raised when the local Ollama runner cannot produce a usable response."""
+
+
+class OllamaBackendUnavailableError(
+    ReasoningBackendUnavailableError,
+    OllamaReasoningError,
+):
+    """Raised when the local Ollama runner cannot be reached for generation."""
+
+
+class OllamaModelUnavailableError(
+    ReasoningModelUnavailableError,
+    OllamaReasoningError,
+):
+    """Raised when the selected Ollama model is unavailable during generation."""
+
+
+class OllamaTimeoutError(
+    ReasoningTimeoutError,
+    OllamaReasoningError,
+):
+    """Raised when local Ollama generation exceeds the configured timeout."""
+
+
+class OllamaGenerationError(
+    ReasoningGenerationError,
+    OllamaReasoningError,
+):
+    """Raised when local Ollama generation fails for another runtime reason."""
 
 
 class OllamaModelManagementError(RuntimeError):
@@ -103,7 +145,21 @@ class OllamaConfig:
     timeout_s: float = 120.0
     temperature: float = 0.2
     top_p: float = 0.9
+    num_ctx: int = 4096
+    max_predict_tokens: int = 512
+    keep_alive: str | float = "5m"
     prompt_version: str = DEFAULT_PROMPT_VERSION
+
+    def __post_init__(self) -> None:
+        _validate_config_string(self.model, "model")
+        _validate_config_string(self.host, "host")
+        _validate_config_string(self.prompt_version, "prompt_version")
+        _validate_positive_number(self.timeout_s, "timeout_s")
+        _validate_temperature(self.temperature)
+        _validate_top_p(self.top_p)
+        _validate_positive_integer(self.num_ctx, "num_ctx")
+        _validate_positive_integer(self.max_predict_tokens, "max_predict_tokens")
+        _validate_keep_alive(self.keep_alive)
 
 
 class OllamaReasoningEngine:
@@ -124,6 +180,8 @@ class OllamaReasoningEngine:
     def generate_trace(self, request: ReasoningRequest) -> ReasoningTrace:
         """Return parsed and policy-guarded responses from one Ollama request."""
 
+        validate_reasoning_request(request)
+        generation_options = _generation_options_for_request(request, self.config)
         messages = [
             message.as_dict()
             for message in build_granite_messages(
@@ -142,13 +200,14 @@ class OllamaReasoningEngine:
                     options={
                         "temperature": self.config.temperature,
                         "top_p": self.config.top_p,
+                        "num_ctx": generation_options.num_ctx,
+                        "num_predict": generation_options.num_predict,
                     },
+                    keep_alive=generation_options.keep_alive,
                 ),
             )
         except _OLLAMA_CLIENT_ERRORS as exc:
-            raise OllamaReasoningError(
-                _client_error_message(exc, self.config.host)
-            ) from exc
+            raise _generation_error_from_client_error(exc, self.config.host) from exc
 
         content = self._extract_content(response)
         metadata = {
@@ -157,6 +216,7 @@ class OllamaReasoningEngine:
             "output_format": "structured_json",
             "prompt_id": self._prompt_template.prompt_id,
             "prompt_version": self._prompt_template.version,
+            **generation_options.as_metadata(),
             **self._extract_metrics(response),
         }
         raw_response = self._parse_response_content(content, metadata)
@@ -173,7 +233,7 @@ class OllamaReasoningEngine:
     def _extract_content(self, response: ChatResponse) -> str:
         content = response.message.content
         if not isinstance(content, str) or not content.strip():
-            raise OllamaReasoningError("Ollama response message was empty.")
+            raise OllamaGenerationError("Ollama response message was empty.")
         return content.strip()
 
     def _parse_response_content(
@@ -291,6 +351,71 @@ class OllamaModelManager:
             ) from exc
 
 
+@dataclass(frozen=True)
+class _GenerationOptions:
+    num_ctx: int
+    num_predict: int
+    keep_alive: str | float
+    temperature: float
+    top_p: float
+    max_predict_tokens: int
+
+    def as_metadata(self) -> dict[str, str]:
+        return {
+            "num_ctx": str(self.num_ctx),
+            "num_predict": str(self.num_predict),
+            "max_predict_tokens": str(self.max_predict_tokens),
+            "keep_alive": str(self.keep_alive),
+            "temperature": str(self.temperature),
+            "top_p": str(self.top_p),
+        }
+
+
+def _generation_options_for_request(
+    request: ReasoningRequest,
+    config: OllamaConfig,
+) -> _GenerationOptions:
+    return _GenerationOptions(
+        num_ctx=config.num_ctx,
+        num_predict=_num_predict_for_word_limit(
+            request.constraints.max_words,
+            max_predict_tokens=config.max_predict_tokens,
+        ),
+        keep_alive=config.keep_alive,
+        temperature=config.temperature,
+        top_p=config.top_p,
+        max_predict_tokens=config.max_predict_tokens,
+    )
+
+
+def _num_predict_for_word_limit(
+    max_words: int,
+    *,
+    max_predict_tokens: int,
+) -> int:
+    estimate = (max_words * _PREDICT_TOKENS_PER_WORD) + _PREDICT_TOKEN_OVERHEAD
+    return min(
+        max_predict_tokens,
+        max(_MIN_PREDICT_TOKENS, estimate),
+    )
+
+
+def _generation_error_from_client_error(
+    exc: Exception,
+    host: str,
+) -> OllamaReasoningError:
+    message = _client_error_message(exc, host)
+    if isinstance(exc, (HttpxTimeoutException, TimeoutError)):
+        return OllamaTimeoutError(message)
+    if isinstance(exc, ResponseError):
+        if exc.status_code == 404:
+            return OllamaModelUnavailableError(message)
+        return OllamaGenerationError(message)
+    if isinstance(exc, (ConnectionError, HttpxRequestError, RequestError)):
+        return OllamaBackendUnavailableError(message)
+    return OllamaGenerationError(message)
+
+
 def _client_error_message(exc: Exception, host: str) -> str:
     if isinstance(exc, ResponseError):
         return f"Ollama request failed: {exc}"
@@ -302,6 +427,55 @@ def _client_error_message(exc: Exception, host: str) -> str:
     ):
         return f"Ollama request or response was invalid: {exc}"
     return f"Could not reach local Ollama runner at {host}: {exc}"
+
+
+def _validate_config_string(value: object, field_name: str) -> None:
+    if not isinstance(value, str) or not value.strip():
+        raise ReasoningConfigurationError(
+            f"Ollama config {field_name} must be a non-empty string."
+        )
+
+
+def _validate_positive_number(value: object, field_name: str) -> None:
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
+        raise ReasoningConfigurationError(
+            f"Ollama config {field_name} must be greater than 0."
+        )
+
+
+def _validate_positive_integer(value: object, field_name: str) -> None:
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise ReasoningConfigurationError(
+            f"Ollama config {field_name} must be a positive integer."
+        )
+
+
+def _validate_temperature(value: object) -> None:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise ReasoningConfigurationError("Ollama config temperature must be a number.")
+    if value < 0 or value > 2:
+        raise ReasoningConfigurationError(
+            "Ollama config temperature must be between 0 and 2."
+        )
+
+
+def _validate_top_p(value: object) -> None:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise ReasoningConfigurationError("Ollama config top_p must be a number.")
+    if value <= 0 or value > 1:
+        raise ReasoningConfigurationError(
+            "Ollama config top_p must be greater than 0 and at most 1."
+        )
+
+
+def _validate_keep_alive(value: object) -> None:
+    if isinstance(value, str) and value.strip():
+        return
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+        return
+    raise ReasoningConfigurationError(
+        "Ollama config keep_alive must be a non-empty string or positive number."
+    )
 
 
 def _response_from_structured_payload(
