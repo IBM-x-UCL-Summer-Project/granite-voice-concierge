@@ -92,6 +92,15 @@ class OfflineTTS:
             logging.error(f"Error during TTS generation or playback: {e}")
             return False
 
+    def stop(self) -> bool:
+        """Stop active playback when the audio backend supports it."""
+        try:
+            sd.stop()
+            return True
+        except Exception as e:
+            logging.error(f"Error stopping TTS playback: {e}")
+            return False
+
 
 if __name__ == "__main__":
     #  (How to use the class)
