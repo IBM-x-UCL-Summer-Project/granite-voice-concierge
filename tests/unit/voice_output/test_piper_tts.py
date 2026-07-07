@@ -37,9 +37,7 @@ class TestPiperTextToSpeechSynthesize:
 
     @pytest.mark.unit
     @patch("voice_concierge.voice_output.piper.subprocess.run")
-    def test_returns_captured_audio_from_piper_output(
-        self, mock_run: patch
-    ) -> None:
+    def test_returns_captured_audio_from_piper_output(self, mock_run: patch) -> None:
         """synthesize() reads Piper's WAV output into a CapturedAudio."""
         mock_run.side_effect = _write_wav_at_output(sample_rate=22050, channels=1)
 
@@ -82,18 +80,14 @@ class TestPiperTextToSpeechSynthesize:
     @patch("voice_concierge.voice_output.piper.subprocess.run")
     def test_nonzero_exit_raises_synthesis_error(self, mock_run: patch) -> None:
         """A non-zero Piper exit raises TextToSpeechSynthesisError."""
-        mock_run.side_effect = subprocess.CalledProcessError(
-            1, "piper", stderr=b"boom"
-        )
+        mock_run.side_effect = subprocess.CalledProcessError(1, "piper", stderr=b"boom")
 
         with pytest.raises(TextToSpeechSynthesisError):
             PiperTextToSpeech().synthesize("hello")
 
     @pytest.mark.unit
     @patch("voice_concierge.voice_output.piper.subprocess.run")
-    def test_missing_output_file_raises_synthesis_error(
-        self, mock_run: patch
-    ) -> None:
+    def test_missing_output_file_raises_synthesis_error(self, mock_run: patch) -> None:
         """A run that produces no output file raises TextToSpeechSynthesisError."""
         mock_run.return_value = None  # succeeds but writes nothing
 

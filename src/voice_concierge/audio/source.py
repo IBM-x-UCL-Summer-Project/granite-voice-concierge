@@ -67,9 +67,7 @@ class PyAudioSource:
             )
         except Exception as exc:
             self.close()
-            raise AudioDeviceError(
-                f"Could not open audio input device: {exc}"
-            ) from exc
+            raise AudioDeviceError(f"Could not open audio input device: {exc}") from exc
 
     def read(self, num_samples: int) -> bytes:
         """Read num_samples frames of raw PCM from the open stream."""

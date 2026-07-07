@@ -23,9 +23,7 @@ class TestTranscript:
     @pytest.mark.unit
     def test_carries_language_metadata(self) -> None:
         """A Transcript preserves language and probability metadata."""
-        transcript = Transcript(
-            text="hello", language="en", language_probability=0.98
-        )
+        transcript = Transcript(text="hello", language="en", language_probability=0.98)
 
         assert transcript.language == "en"
         assert transcript.language_probability == 0.98

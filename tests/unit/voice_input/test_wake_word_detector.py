@@ -114,9 +114,7 @@ class TestResolveModelReference:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A bundled resource path is returned when it exists."""
-        monkeypatch.setattr(
-            Path, "is_file", lambda self: "resources" in str(self)
-        )
+        monkeypatch.setattr(Path, "is_file", lambda self: "resources" in str(self))
 
         result = _resolve_model_reference("hey_jarvis_v0.1.onnx")
 

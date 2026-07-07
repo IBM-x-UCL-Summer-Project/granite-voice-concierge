@@ -42,9 +42,7 @@ class TestWhisperSpeechToTextInit:
     @patch("voice_concierge.voice_input.stt.whisper.WhisperModel")
     def test_constructs_default_model(self, mock_model_cls: MagicMock) -> None:
         """Without an injected model, a WhisperModel is built from the config."""
-        WhisperSpeechToText(
-            model_size="base.en", device="cpu", compute_type="int8"
-        )
+        WhisperSpeechToText(model_size="base.en", device="cpu", compute_type="int8")
 
         mock_model_cls.assert_called_once_with(
             "base.en", device="cpu", compute_type="int8"

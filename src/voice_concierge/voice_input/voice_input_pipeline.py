@@ -91,9 +91,7 @@ if __name__ == "__main__":
 
     def on_utterance_captured(audio: CapturedAudio) -> None:
         """Placeholder — this is where STT will connect later."""
-        print(
-            f">>> Utterance captured ({len(audio.samples)} samples) — ready for STT"
-        )
+        print(f">>> Utterance captured ({len(audio.samples)} samples) — ready for STT")
 
     pipeline = VoiceInputPipeline()
     pipeline.run(on_utterance_captured=on_utterance_captured)

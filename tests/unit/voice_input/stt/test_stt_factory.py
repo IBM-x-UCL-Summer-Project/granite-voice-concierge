@@ -26,9 +26,7 @@ class TestBuildSpeechToText:
     @patch("voice_concierge.voice_input.stt.factory.WhisperSpeechToText")
     def test_forwards_custom_config(self, mock_whisper: patch) -> None:
         """The factory forwards a custom model size, device and compute type."""
-        build_speech_to_text(
-            "small.en", device="cuda", compute_type="float16"
-        )
+        build_speech_to_text("small.en", device="cuda", compute_type="float16")
 
         mock_whisper.assert_called_once_with(
             "small.en", device="cuda", compute_type="float16"

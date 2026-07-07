@@ -30,6 +30,4 @@ class TestBuildTextToSpeech:
         """The factory forwards a custom model, config and length scale."""
         build_text_to_speech("voice.onnx", "voice.json", length_scale=1.5)
 
-        mock_piper.assert_called_once_with(
-            "voice.onnx", "voice.json", length_scale=1.5
-        )
+        mock_piper.assert_called_once_with("voice.onnx", "voice.json", length_scale=1.5)

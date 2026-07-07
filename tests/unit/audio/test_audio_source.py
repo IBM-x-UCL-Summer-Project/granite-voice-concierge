@@ -61,9 +61,7 @@ class TestPyAudioSource:
 
     @pytest.mark.unit
     @patch("voice_concierge.audio.source.pyaudio.PyAudio")
-    def test_close_stops_stream_and_terminates(
-        self, mock_pyaudio: MagicMock
-    ) -> None:
+    def test_close_stops_stream_and_terminates(self, mock_pyaudio: MagicMock) -> None:
         """close() stops/closes the stream and terminates PyAudio."""
         mock_stream = MagicMock()
         mock_instance = MagicMock()
@@ -95,9 +93,7 @@ class TestPyAudioSource:
 
     @pytest.mark.unit
     @patch("voice_concierge.audio.source.pyaudio.PyAudio")
-    def test_context_manager_opens_and_closes(
-        self, mock_pyaudio: MagicMock
-    ) -> None:
+    def test_context_manager_opens_and_closes(self, mock_pyaudio: MagicMock) -> None:
         """Using PyAudioSource as a context manager opens then closes it."""
         mock_stream = MagicMock()
         mock_instance = MagicMock()

@@ -143,9 +143,7 @@ class TestVoiceActivityDetectorCaptureUtterance:
         """capture_utterance() buffers chunks when VAD returns None mid-speech."""
         source = FakeAudioSource(fill=_CHUNK)
         vad = VoiceActivityDetector(audio_source=source)
-        vad._vad_iterator = MagicMock(
-            side_effect=[{"start": 0}, None, {"end": 512}]
-        )
+        vad._vad_iterator = MagicMock(side_effect=[{"start": 0}, None, {"end": 512}])
         callback = MagicMock()
 
         vad.capture_utterance(on_utterance_captured=callback)
