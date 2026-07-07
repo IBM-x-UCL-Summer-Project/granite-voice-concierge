@@ -84,6 +84,79 @@ class ConciergeOrchestratorTest(unittest.TestCase):
         self.assertTrue(request.constraints.allow_memory_writes)
         self.assertEqual(speech.speak_calls, [("Here is a useful answer.", "normal")])
 
+    def test_driving_mode_request_speaks_confirmation_without_dependencies(self) -> None:
+        memory = RecordingMemoryGateway()
+        reasoning = RecordingReasoningEngine()
+        speech = RecordingSpeechGateway()
+        orchestrator = ConciergeOrchestrator(
+            memory=memory,
+            reasoning=reasoning,
+            speech=speech,
+        )
+
+        result = orchestrator.handle_transcript("Switch to driving mode")
+
+        self.assertTrue(result.context_decision.needs_confirmation)
+        self.assertIn("Driving mode", result.spoken_response)
+        self.assertEqual(memory.retrieve_calls, [])
+        self.assertEqual(reasoning.requests, [])
+        self.assertEqual(speech.speak_calls, [(result.spoken_response, "normal")])
+
+    def test_confirming_pending_driving_mode_acknowledges_without_reasoning(self) -> None:
+        memory = RecordingMemoryGateway()
+        reasoning = RecordingReasoningEngine()
+        speech = RecordingSpeechGateway()
+        orchestrator = ConciergeOrchestrator(
+            memory=memory,
+            reasoning=reasoning,
+            speech=speech,
+        )
+
+        orchestrator.handle_transcript("Switch to driving mode")
+        result = orchestrator.handle_transcript("yes")
+
+        self.assertEqual(result.context_decision.policy.mode, "driving")
+        self.assertEqual(result.spoken_response, "Driving mode is on.")
+        self.assertEqual(memory.retrieve_calls, [])
+        self.assertEqual(reasoning.requests, [])
+        self.assertEqual(speech.speak_calls[-1], ("Driving mode is on.", "normal"))
+
+    def test_repeat_reuses_previous_spoken_response_without_dependencies(self) -> None:
+        memory = RecordingMemoryGateway()
+        reasoning = RecordingReasoningEngine()
+        speech = RecordingSpeechGateway()
+        orchestrator = ConciergeOrchestrator(
+            memory=memory,
+            reasoning=reasoning,
+            speech=speech,
+        )
+        first = orchestrator.handle_transcript("What did we decide yesterday?")
+
+        result = orchestrator.handle_transcript("repeat that")
+
+        self.assertEqual(result.spoken_response, first.spoken_response)
+        self.assertEqual(len(memory.retrieve_calls), 1)
+        self.assertEqual(len(reasoning.requests), 1)
+        self.assertEqual(speech.speak_calls[-1], (first.spoken_response, "normal"))
+
+    def test_stop_calls_speech_stop_without_memory_or_reasoning(self) -> None:
+        memory = RecordingMemoryGateway()
+        reasoning = RecordingReasoningEngine()
+        speech = RecordingSpeechGateway()
+        orchestrator = ConciergeOrchestrator(
+            memory=memory,
+            reasoning=reasoning,
+            speech=speech,
+        )
+
+        result = orchestrator.handle_transcript("stop speaking")
+
+        self.assertEqual(result.spoken_response, "Okay, I'll stop speaking.")
+        self.assertTrue(result.speech_succeeded)
+        self.assertEqual(speech.stop_calls, 1)
+        self.assertEqual(memory.retrieve_calls, [])
+        self.assertEqual(reasoning.requests, [])
+
 
 if __name__ == "__main__":
     unittest.main()
