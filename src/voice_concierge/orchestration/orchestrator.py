@@ -9,19 +9,18 @@ from voice_concierge.context import (
     MemoryScope,
     detect_confirmation_intent,
 )
-from voice_concierge.reasoning.engine import ReasoningEngine
-from voice_concierge.reasoning.types import (
-    MemoryAction,
-    ReasoningConstraints,
-    ReasoningRequest,
-)
-
 from voice_concierge.orchestration.types import (
     MemoryGateway,
     MemoryOperationResult,
     SpeechGateway,
     TurnError,
     TurnResult,
+)
+from voice_concierge.reasoning.engine import ReasoningEngine
+from voice_concierge.reasoning.types import (
+    MemoryAction,
+    ReasoningConstraints,
+    ReasoningRequest,
 )
 
 _EMPTY_TRANSCRIPT_RESPONSE = "I didn't catch that. Could you say it again?"
@@ -91,7 +90,10 @@ class ConciergeOrchestrator:
                 errors=tuple(errors),
             )
 
-        if decision.mode_changed and detect_confirmation_intent(transcript) == "confirm":
+        if (
+            decision.mode_changed
+            and detect_confirmation_intent(transcript) == "confirm"
+        ):
             spoken_response = _DRIVING_MODE_ON_RESPONSE
             speech_succeeded = self._speak(spoken_response, decision, errors)
             self._last_spoken_response = spoken_response

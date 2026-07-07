@@ -1,6 +1,6 @@
-from pathlib import Path
 import sys
 import unittest
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -101,7 +101,9 @@ class ConciergeOrchestratorTest(unittest.TestCase):
         self.assertTrue(request.constraints.allow_memory_writes)
         self.assertEqual(speech.speak_calls, [("Here is a useful answer.", "normal")])
 
-    def test_driving_mode_request_speaks_confirmation_without_dependencies(self) -> None:
+    def test_driving_mode_request_speaks_confirmation_without_dependencies(
+        self,
+    ) -> None:
         memory = RecordingMemoryGateway()
         reasoning = RecordingReasoningEngine()
         speech = RecordingSpeechGateway()
@@ -119,7 +121,9 @@ class ConciergeOrchestratorTest(unittest.TestCase):
         self.assertEqual(reasoning.requests, [])
         self.assertEqual(speech.speak_calls, [(result.spoken_response, "normal")])
 
-    def test_confirming_pending_driving_mode_acknowledges_without_reasoning(self) -> None:
+    def test_confirming_pending_driving_mode_acknowledges_without_reasoning(
+        self,
+    ) -> None:
         memory = RecordingMemoryGateway()
         reasoning = RecordingReasoningEngine()
         speech = RecordingSpeechGateway()
@@ -269,7 +273,9 @@ class ConciergeOrchestratorTest(unittest.TestCase):
         self.assertEqual(memory.apply_calls, [])
         self.assertEqual(result.spoken_response, "Okay, I won't save that.")
 
-    def test_unrelated_turn_implicitly_cancels_pending_memory_and_continues(self) -> None:
+    def test_unrelated_turn_implicitly_cancels_pending_memory_and_continues(
+        self,
+    ) -> None:
         action = MemoryAction(
             action="store",
             content="User likes oat milk.",
