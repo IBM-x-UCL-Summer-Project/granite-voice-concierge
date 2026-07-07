@@ -157,6 +157,164 @@ class ConciergeOrchestratorTest(unittest.TestCase):
         self.assertEqual(memory.retrieve_calls, [])
         self.assertEqual(reasoning.requests, [])
 
+    def test_memory_action_is_pending_until_user_confirms(self) -> None:
+        action = MemoryAction(
+            action="store",
+            content="User likes oat milk.",
+            rationale="Preference stated by user.",
+            requires_confirmation=True,
+        )
+        memory = RecordingMemoryGateway()
+        reasoning = RecordingReasoningEngine(
+            ReasoningResponse(
+                spoken_response="I'll remember that after you confirm.",
+                needs_confirmation=True,
+                proposed_memory_action=action,
+                confidence="high",
+            )
+        )
+        speech = RecordingSpeechGateway()
+        orchestrator = ConciergeOrchestrator(
+            memory=memory,
+            reasoning=reasoning,
+            speech=speech,
+            initial_state=ContextState(mode="shopping"),
+        )
+
+        result = orchestrator.handle_transcript("Add oat milk to my shopping list")
+
+        self.assertEqual(
+            result.spoken_response,
+            "Should I remember: User likes oat milk.?",
+        )
+        self.assertEqual(memory.apply_calls, [])
+        self.assertFalse(result.memory_operation.attempted)
+
+    def test_confirmed_memory_action_is_applied_and_cleared(self) -> None:
+        action = MemoryAction(
+            action="store",
+            content="User likes oat milk.",
+            rationale="Preference stated by user.",
+            requires_confirmation=True,
+        )
+        memory = RecordingMemoryGateway()
+        reasoning = RecordingReasoningEngine(
+            ReasoningResponse(
+                spoken_response="I'll remember that after you confirm.",
+                needs_confirmation=True,
+                proposed_memory_action=action,
+                confidence="high",
+            )
+        )
+        speech = RecordingSpeechGateway()
+        orchestrator = ConciergeOrchestrator(
+            memory=memory,
+            reasoning=reasoning,
+            speech=speech,
+            initial_state=ContextState(mode="shopping"),
+        )
+        orchestrator.handle_transcript("Add oat milk to my shopping list")
+
+        result = orchestrator.handle_transcript("yes")
+
+        self.assertEqual(memory.apply_calls, [(action, "list_relevant")])
+        self.assertTrue(result.memory_operation.attempted)
+        self.assertTrue(result.memory_operation.succeeded)
+        self.assertEqual(result.memory_operation.reason, "stored_successfully")
+        self.assertEqual(result.spoken_response, "I've saved that.")
+
+    def test_memory_action_cancellation_discards_pending_action(self) -> None:
+        action = MemoryAction(
+            action="store",
+            content="User likes oat milk.",
+            rationale="Preference stated by user.",
+            requires_confirmation=True,
+        )
+        memory = RecordingMemoryGateway()
+        reasoning = RecordingReasoningEngine(
+            ReasoningResponse(
+                spoken_response="I'll remember that after you confirm.",
+                needs_confirmation=True,
+                proposed_memory_action=action,
+                confidence="high",
+            )
+        )
+        speech = RecordingSpeechGateway()
+        orchestrator = ConciergeOrchestrator(
+            memory=memory,
+            reasoning=reasoning,
+            speech=speech,
+        )
+        orchestrator.handle_transcript("Remember that I like oat milk")
+
+        result = orchestrator.handle_transcript("never mind")
+
+        self.assertEqual(memory.apply_calls, [])
+        self.assertEqual(result.spoken_response, "Okay, I won't save that.")
+
+    def test_unrelated_turn_implicitly_cancels_pending_memory_and_continues(self) -> None:
+        action = MemoryAction(
+            action="store",
+            content="User likes oat milk.",
+            rationale="Preference stated by user.",
+            requires_confirmation=True,
+        )
+        memory = RecordingMemoryGateway()
+        reasoning = RecordingReasoningEngine(
+            ReasoningResponse(
+                spoken_response="New answer.",
+                needs_confirmation=False,
+                proposed_memory_action=None,
+                confidence="high",
+            )
+        )
+        speech = RecordingSpeechGateway()
+        orchestrator = ConciergeOrchestrator(
+            memory=memory,
+            reasoning=reasoning,
+            speech=speech,
+        )
+        orchestrator._pending_memory_action = action
+        orchestrator._pending_memory_scope = "personal_relevant"
+
+        result = orchestrator.handle_transcript("What is the weather plan?")
+
+        self.assertEqual(memory.apply_calls, [])
+        self.assertEqual(result.spoken_response, "New answer.")
+        self.assertEqual(len(reasoning.requests), 1)
+
+    def test_failed_memory_action_is_retained_for_retry(self) -> None:
+        action = MemoryAction(
+            action="store",
+            content="User likes oat milk.",
+            rationale="Preference stated by user.",
+            requires_confirmation=True,
+        )
+        memory = RecordingMemoryGateway()
+        memory.apply_result = (False, "storage_error")
+        reasoning = RecordingReasoningEngine(
+            ReasoningResponse(
+                spoken_response="I'll remember that after you confirm.",
+                needs_confirmation=True,
+                proposed_memory_action=action,
+                confidence="high",
+            )
+        )
+        speech = RecordingSpeechGateway()
+        orchestrator = ConciergeOrchestrator(
+            memory=memory,
+            reasoning=reasoning,
+            speech=speech,
+        )
+        orchestrator.handle_transcript("Remember that I like oat milk")
+
+        failed = orchestrator.handle_transcript("yes")
+        retried = orchestrator.handle_transcript("yes")
+
+        self.assertEqual(len(memory.apply_calls), 2)
+        self.assertIn("memory_action_failed", failed.errors)
+        self.assertIn("memory_action_failed", retried.errors)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -6,10 +6,15 @@ from voice_concierge.context import (
     ContextDecision,
     ContextManager,
     ContextState,
+    MemoryScope,
     detect_confirmation_intent,
 )
 from voice_concierge.reasoning.engine import ReasoningEngine
-from voice_concierge.reasoning.types import ReasoningConstraints, ReasoningRequest
+from voice_concierge.reasoning.types import (
+    MemoryAction,
+    ReasoningConstraints,
+    ReasoningRequest,
+)
 
 from voice_concierge.orchestration.types import (
     MemoryGateway,
@@ -23,6 +28,10 @@ _EMPTY_TRANSCRIPT_RESPONSE = "I didn't catch that. Could you say it again?"
 _REASONING_FALLBACK_RESPONSE = "Sorry, I had trouble thinking that through."
 _CANCEL_RESPONSE = "Okay, cancelled."
 _DRIVING_MODE_ON_RESPONSE = "Driving mode is on."
+_MEMORY_CANCELLED_RESPONSE = "Okay, I won't save that."
+_MEMORY_CONFIRMATION_PREFIX = "Should I remember: "
+_MEMORY_FAILED_RESPONSE = "I couldn't save that yet."
+_MEMORY_SAVED_RESPONSE = "I've saved that."
 _NOTHING_TO_REPEAT_RESPONSE = "I don't have anything to repeat yet."
 _STOP_RESPONSE = "Okay, I'll stop speaking."
 
@@ -45,6 +54,8 @@ class ConciergeOrchestrator:
         self._context_manager = context_manager or ContextManager()
         self._state = initial_state or ContextState()
         self._last_spoken_response: str | None = None
+        self._pending_memory_action: MemoryAction | None = None
+        self._pending_memory_scope: MemoryScope | None = None
 
     def handle_transcript(self, transcript: str) -> TurnResult:
         """Handle one transcribed user utterance."""
@@ -61,6 +72,10 @@ class ConciergeOrchestrator:
                 speech_succeeded=speech_succeeded,
                 errors=tuple(errors),
             )
+
+        pending_result = self._handle_pending_memory_confirmation(transcript, errors)
+        if pending_result is not None:
+            return pending_result
 
         decision = self._context_manager.handle(transcript, self._state)
         self._state = decision.state
@@ -149,6 +164,18 @@ class ConciergeOrchestrator:
             reasoning_response = None
             spoken_response = _REASONING_FALLBACK_RESPONSE
 
+        if (
+            reasoning_response is not None
+            and reasoning_response.proposed_memory_action is not None
+            and reasoning_response.proposed_memory_action.requires_confirmation
+        ):
+            self._pending_memory_action = reasoning_response.proposed_memory_action
+            self._pending_memory_scope = decision.policy.memory_scope
+            spoken_response = (
+                f"{_MEMORY_CONFIRMATION_PREFIX}"
+                f"{reasoning_response.proposed_memory_action.content}?"
+            )
+
         speech_succeeded = self._speak(spoken_response, decision, errors)
         self._last_spoken_response = spoken_response
         return TurnResult(
@@ -157,6 +184,66 @@ class ConciergeOrchestrator:
             reasoning_response=reasoning_response,
             speech_succeeded=speech_succeeded,
             memory_operation=MemoryOperationResult(),
+            errors=tuple(errors),
+        )
+
+    def _handle_pending_memory_confirmation(
+        self,
+        transcript: str,
+        errors: list[TurnError],
+    ) -> TurnResult | None:
+        if self._pending_memory_action is None or self._pending_memory_scope is None:
+            return None
+
+        intent = detect_confirmation_intent(transcript)
+        if intent is None:
+            self._pending_memory_action = None
+            self._pending_memory_scope = None
+            return None
+
+        decision = self._context_manager.handle(transcript, self._state)
+        self._state = decision.state
+
+        if intent == "cancel":
+            self._pending_memory_action = None
+            self._pending_memory_scope = None
+            speech_succeeded = self._speak(_MEMORY_CANCELLED_RESPONSE, decision, errors)
+            self._last_spoken_response = _MEMORY_CANCELLED_RESPONSE
+            return TurnResult(
+                context_decision=decision,
+                spoken_response=_MEMORY_CANCELLED_RESPONSE,
+                speech_succeeded=speech_succeeded,
+                errors=tuple(errors),
+            )
+
+        try:
+            succeeded, reason = self._memory.apply(
+                self._pending_memory_action,
+                self._pending_memory_scope,
+            )
+        except Exception:
+            succeeded = False
+            reason = "exception"
+
+        if succeeded:
+            self._pending_memory_action = None
+            self._pending_memory_scope = None
+            spoken_response = _MEMORY_SAVED_RESPONSE
+        else:
+            errors.append("memory_action_failed")
+            spoken_response = _MEMORY_FAILED_RESPONSE
+
+        speech_succeeded = self._speak(spoken_response, decision, errors)
+        self._last_spoken_response = spoken_response
+        return TurnResult(
+            context_decision=decision,
+            spoken_response=spoken_response,
+            speech_succeeded=speech_succeeded,
+            memory_operation=MemoryOperationResult(
+                attempted=True,
+                succeeded=succeeded,
+                reason=reason,
+            ),
             errors=tuple(errors),
         )
 
