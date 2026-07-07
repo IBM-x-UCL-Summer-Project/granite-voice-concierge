@@ -1,10 +1,9 @@
 # Standard library
-from typing import Callable, Optional
-
-# Third-party
-import numpy as np
+from collections.abc import Callable
 
 # Local
+from voice_concierge.audio import CapturedAudio
+from voice_concierge.voice_input.interfaces import UtteranceCapturer, WakeWordListener
 from voice_concierge.voice_input.voice_activity_detector import VoiceActivityDetector
 from voice_concierge.voice_input.wake_word_detector import WakeWordDetector
 
@@ -24,51 +23,45 @@ class VoiceInputPipeline:
 
     def __init__(
         self,
-        wake_word_detector: Optional[WakeWordDetector] = None,
-        voice_activity_detector: Optional[VoiceActivityDetector] = None,
+        wake_word_detector: WakeWordListener | None = None,
+        voice_activity_detector: UtteranceCapturer | None = None,
     ) -> None:
         """
         Initialise the voice input pipeline.
 
         Args:
-            wake_word_detector: WakeWordDetector instance to use. If None,
-                a default instance is created.
-            voice_activity_detector: VoiceActivityDetector instance to use.
-                If None, a default instance is created.
+            wake_word_detector: WakeWordListener to use. If None, a default
+                WakeWordDetector is created.
+            voice_activity_detector: UtteranceCapturer to use. If None, a default
+                VoiceActivityDetector is created.
         """
-        self._wake_word_detector: WakeWordDetector = (
+        self._wake_word_detector: WakeWordListener = (
             wake_word_detector or WakeWordDetector()
         )
-        self._voice_activity_detector: VoiceActivityDetector = (
+        self._voice_activity_detector: UtteranceCapturer = (
             voice_activity_detector or VoiceActivityDetector()
         )
-        self._on_utterance_captured: Optional[Callable[[np.ndarray], None]] = None
+        self._on_utterance_captured: Callable[[CapturedAudio], None] | None = None
 
     def _on_wake_word(self) -> None:
-        """
-        Called by WakeWordDetector when the wake word is detected.
-        Triggers VAD to capture the following utterance.
-        """
+        """Trigger VAD to capture the utterance after the wake word fires."""
         print("Wake word detected — listening for command...")
         self._voice_activity_detector.capture_utterance(
             on_utterance_captured=self._handle_utterance
         )
 
-    def _handle_utterance(self, audio: np.ndarray) -> None:
-        """
-        Called by VoiceActivityDetector when an utterance is captured.
-        Passes the audio to the registered callback if one is set.
-
-        Args:
-            audio: captured utterance as a numpy array.
-        """
+    def _handle_utterance(self, audio: CapturedAudio) -> None:
+        """Pass the captured audio to the registered callback if one is set."""
         if self._on_utterance_captured is not None:
             self._on_utterance_captured(audio)
         else:
-            print(f">>> Utterance captured ({len(audio)} samples) — STT not connected")
+            print(
+                f">>> Utterance captured ({len(audio.samples)} samples) "
+                "— STT not connected"
+            )
 
     def run(
-        self, on_utterance_captured: Optional[Callable[[np.ndarray], None]]
+        self, on_utterance_captured: Callable[[CapturedAudio], None] | None
     ) -> None:
         """
         Start the voice input pipeline.
@@ -96,9 +89,11 @@ class VoiceInputPipeline:
 
 if __name__ == "__main__":
 
-    def on_utterance_captured(audio: np.ndarray) -> None:
+    def on_utterance_captured(audio: CapturedAudio) -> None:
         """Placeholder — this is where STT will connect later."""
-        print(f">>> Utterance captured ({len(audio)} samples) — ready for STT")
+        print(
+            f">>> Utterance captured ({len(audio.samples)} samples) — ready for STT"
+        )
 
     pipeline = VoiceInputPipeline()
     pipeline.run(on_utterance_captured=on_utterance_captured)
