@@ -39,6 +39,17 @@ class TestCapturedAudioWavSerialization:
         with wave.open(stream, "rb") as wav_file:
             assert wav_file.getnframes() == 320
 
+    @pytest.mark.unit
+    def test_to_wav_file_writes_readable_wav(self, tmp_path) -> None:
+        """to_wav_file() writes a WAV file to disk and returns its path."""
+        audio = CapturedAudio(samples=np.zeros(160, dtype=np.int16))
+
+        path = audio.to_wav_file(tmp_path / "out.wav")
+
+        assert path.exists()
+        with wave.open(str(path), "rb") as wav_file:
+            assert wav_file.getnframes() == 160
+
 
 class TestCapturedAudioConstruction:
     """Unit tests for CapturedAudio construction and validation."""
@@ -74,3 +85,10 @@ class TestCapturedAudioConstruction:
         )
 
         assert audio.duration_seconds == pytest.approx(1.0)
+
+    @pytest.mark.unit
+    def test_duration_seconds_is_zero_without_sample_rate(self) -> None:
+        """duration_seconds() guards against a zero sample rate."""
+        audio = CapturedAudio(samples=np.zeros(4, dtype=np.int16), sample_rate=0)
+
+        assert audio.duration_seconds == 0.0

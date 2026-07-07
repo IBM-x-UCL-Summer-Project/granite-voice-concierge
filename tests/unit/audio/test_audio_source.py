@@ -110,6 +110,33 @@ class TestPyAudioSource:
         mock_stream.close.assert_called_once()
         mock_instance.terminate.assert_called_once()
 
+    @pytest.mark.unit
+    def test_close_without_open_is_a_safe_noop(self) -> None:
+        """close() before open() does nothing and leaves state cleared."""
+        source = PyAudioSource()
+
+        source.close()
+
+        assert source._stream is None
+        assert source._pyaudio is None
+
+    @pytest.mark.unit
+    @patch("voice_concierge.audio.source.pyaudio.PyAudio")
+    def test_close_swallows_cleanup_errors(self, mock_pyaudio: MagicMock) -> None:
+        """close() swallows errors during cleanup and still clears state."""
+        mock_stream = MagicMock()
+        mock_stream.stop_stream.side_effect = RuntimeError("boom")
+        mock_instance = MagicMock()
+        mock_instance.open.return_value = mock_stream
+        mock_pyaudio.return_value = mock_instance
+
+        source = PyAudioSource()
+        source.open()
+        source.close()
+
+        assert source._stream is None
+        assert source._pyaudio is None
+
 
 class TestFakeAudioSource:
     """Unit tests for the in-memory FakeAudioSource."""
