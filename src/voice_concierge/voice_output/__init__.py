@@ -5,6 +5,7 @@ from voice_concierge.voice_output.errors import (
     TextToSpeechError,
     TextToSpeechSynthesisError,
 )
+from voice_concierge.voice_output.factory import build_text_to_speech
 from voice_concierge.voice_output.fakes import DeterministicTextToSpeechFake
 from voice_concierge.voice_output.interfaces import TextToSpeech
 from voice_concierge.voice_output.piper import (
@@ -26,4 +27,5 @@ __all__ = [
     "TextToSpeechBackendUnavailableError",
     "TextToSpeechError",
     "TextToSpeechSynthesisError",
+    "build_text_to_speech",
 ]
