@@ -53,6 +53,23 @@ class RecordingSpeechGateway:
         return True
 
 
+class FailingMemoryGateway(RecordingMemoryGateway):
+    def retrieve(self, query: str, scope: str, limit: int = 3) -> tuple[str, ...]:
+        raise RuntimeError("memory unavailable")
+
+
+class FailingReasoningEngine(RecordingReasoningEngine):
+    def generate(self, request):
+        self.requests.append(request)
+        raise RuntimeError("reasoning unavailable")
+
+
+class FailingSpeechGateway(RecordingSpeechGateway):
+    def speak(self, text: str, pace: str) -> bool:
+        self.speak_calls.append((text, pace))
+        return False
+
+
 class ConciergeOrchestratorTest(unittest.TestCase):
     def test_home_turn_retrieves_memory_calls_reasoning_and_speaks(self) -> None:
         memory = RecordingMemoryGateway()
@@ -314,6 +331,152 @@ class ConciergeOrchestratorTest(unittest.TestCase):
         self.assertEqual(len(memory.apply_calls), 2)
         self.assertIn("memory_action_failed", failed.errors)
         self.assertIn("memory_action_failed", retried.errors)
+
+    def test_cooking_next_step_forwards_task_scope_and_word_limit(self) -> None:
+        memory = RecordingMemoryGateway()
+        reasoning = RecordingReasoningEngine()
+        speech = RecordingSpeechGateway()
+        orchestrator = ConciergeOrchestrator(
+            memory=memory,
+            reasoning=reasoning,
+            speech=speech,
+            initial_state=ContextState(mode="cooking"),
+        )
+
+        result = orchestrator.handle_transcript("what is the next step")
+
+        self.assertEqual(result.context_decision.command_action, "next_step")
+        self.assertEqual(
+            memory.retrieve_calls,
+            [("what is the next step", "task_relevant_only", 3)],
+        )
+        self.assertEqual(reasoning.requests[0].mode, "cooking")
+        self.assertEqual(reasoning.requests[0].constraints.max_words, 55)
+        self.assertTrue(reasoning.requests[0].constraints.allow_memory_writes)
+
+    def test_shopping_mode_forwards_list_scope_and_word_limit(self) -> None:
+        memory = RecordingMemoryGateway()
+        reasoning = RecordingReasoningEngine()
+        speech = RecordingSpeechGateway()
+        orchestrator = ConciergeOrchestrator(
+            memory=memory,
+            reasoning=reasoning,
+            speech=speech,
+            initial_state=ContextState(mode="shopping"),
+        )
+
+        result = orchestrator.handle_transcript("add milk")
+
+        self.assertEqual(result.context_decision.policy.mode, "shopping")
+        self.assertEqual(memory.retrieve_calls, [("add milk", "list_relevant", 3)])
+        self.assertEqual(reasoning.requests[0].constraints.max_words, 50)
+
+    def test_driving_mode_skips_memory_and_disables_memory_writes(self) -> None:
+        memory = RecordingMemoryGateway()
+        reasoning = RecordingReasoningEngine()
+        speech = RecordingSpeechGateway()
+        orchestrator = ConciergeOrchestrator(
+            memory=memory,
+            reasoning=reasoning,
+            speech=speech,
+            initial_state=ContextState(mode="driving"),
+        )
+
+        result = orchestrator.handle_transcript("read the next direction")
+
+        self.assertEqual(result.context_decision.policy.mode, "driving")
+        self.assertEqual(memory.retrieve_calls, [])
+        self.assertEqual(reasoning.requests[0].constraints.max_words, 25)
+        self.assertFalse(reasoning.requests[0].constraints.allow_memory_writes)
+
+    def test_accessibility_preferences_affect_reasoning_and_speech(self) -> None:
+        memory = RecordingMemoryGateway()
+        reasoning = RecordingReasoningEngine()
+        speech = RecordingSpeechGateway()
+        orchestrator = ConciergeOrchestrator(
+            memory=memory,
+            reasoning=reasoning,
+            speech=speech,
+        )
+
+        result = orchestrator.handle_transcript(
+            "Keep answers short and answer more slowly"
+        )
+
+        self.assertEqual(reasoning.requests[0].constraints.max_words, 45)
+        self.assertEqual(result.context_decision.policy.speech_pace, "slow")
+        self.assertEqual(speech.speak_calls[-1], ("Here is a useful answer.", "slow"))
+
+    def test_empty_transcript_returns_recoverable_result(self) -> None:
+        memory = RecordingMemoryGateway()
+        reasoning = RecordingReasoningEngine()
+        speech = RecordingSpeechGateway()
+        orchestrator = ConciergeOrchestrator(
+            memory=memory,
+            reasoning=reasoning,
+            speech=speech,
+        )
+
+        result = orchestrator.handle_transcript("   ")
+
+        self.assertEqual(
+            result.spoken_response,
+            "I didn't catch that. Could you say it again?",
+        )
+        self.assertIn("empty_transcript", result.errors)
+        self.assertEqual(memory.retrieve_calls, [])
+        self.assertEqual(reasoning.requests, [])
+
+    def test_memory_retrieval_failure_continues_to_reasoning(self) -> None:
+        memory = FailingMemoryGateway()
+        reasoning = RecordingReasoningEngine()
+        speech = RecordingSpeechGateway()
+        orchestrator = ConciergeOrchestrator(
+            memory=memory,
+            reasoning=reasoning,
+            speech=speech,
+        )
+
+        result = orchestrator.handle_transcript("What did we decide yesterday?")
+
+        self.assertIn("memory_retrieval_failed", result.errors)
+        self.assertEqual(reasoning.requests[0].memories, ())
+        self.assertEqual(result.spoken_response, "Here is a useful answer.")
+
+    def test_reasoning_failure_still_attempts_speech_with_fallback(self) -> None:
+        memory = RecordingMemoryGateway()
+        reasoning = FailingReasoningEngine()
+        speech = RecordingSpeechGateway()
+        orchestrator = ConciergeOrchestrator(
+            memory=memory,
+            reasoning=reasoning,
+            speech=speech,
+        )
+
+        result = orchestrator.handle_transcript("What did we decide yesterday?")
+
+        self.assertIn("reasoning_failed", result.errors)
+        self.assertEqual(
+            result.spoken_response,
+            "Sorry, I had trouble thinking that through.",
+        )
+        self.assertEqual(speech.speak_calls[-1], (result.spoken_response, "normal"))
+
+    def test_speech_failure_records_error_but_returns_text(self) -> None:
+        memory = RecordingMemoryGateway()
+        reasoning = RecordingReasoningEngine()
+        speech = FailingSpeechGateway()
+        orchestrator = ConciergeOrchestrator(
+            memory=memory,
+            reasoning=reasoning,
+            speech=speech,
+        )
+
+        result = orchestrator.handle_transcript("What did we decide yesterday?")
+
+        self.assertFalse(result.speech_succeeded)
+        self.assertIn("speech_failed", result.errors)
+        self.assertEqual(result.spoken_response, "Here is a useful answer.")
 
 
 if __name__ == "__main__":
