@@ -157,7 +157,7 @@ class TestWakeWordDetectorListen:
             detector.listen(on_wake_word=callback)
 
         callback.assert_not_called()
-        assert source.close_count >= 1
+        assert source.close_count == 1
 
     @pytest.mark.unit
     def test_listen_triggers_callback_above_threshold(self) -> None:
@@ -177,4 +177,4 @@ class TestWakeWordDetectorListen:
 
         callback.assert_called_once()
         detector._model.reset.assert_called_once()
-        assert source.close_count >= 1
+        assert source.close_count == 1

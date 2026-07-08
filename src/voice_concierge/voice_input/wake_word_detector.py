@@ -111,6 +111,7 @@ class WakeWordDetector:
         self._audio_source.open()
         print("Wake word detector listening...")
 
+        closed = False
         try:
             while True:
                 audio_chunk: bytes = self._audio_source.read(self._chunk)
@@ -129,6 +130,7 @@ class WakeWordDetector:
                         # Close the mic before invoking the callback so the VAD
                         # can open the same device.
                         self._audio_source.close()
+                        closed = True
                         on_wake_word()
                         return
 
@@ -136,4 +138,5 @@ class WakeWordDetector:
             print("\nWake word detector stopped.")
             raise
         finally:
-            self._audio_source.close()
+            if not closed:
+                self._audio_source.close()
