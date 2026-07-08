@@ -1,20 +1,22 @@
 # Standard library
 import time
 import tracemalloc
-from typing import Callable, Optional
+from collections.abc import Callable
 
 # Third-party
 import numpy as np
 import psutil
-import pyaudio
 import torch
 from silero_vad import VADIterator, load_silero_vad
+
+# Local
+from voice_concierge.audio import AudioSource, CapturedAudio, PyAudioSource
+from voice_concierge.audio.source import DEFAULT_FORMAT
 
 # Audio constants
 DEFAULT_CHUNK: int = 512  # ~32ms at 16kHz (required by Silero VAD)
 DEFAULT_RATE: int = 16000  # sample rate required by Silero VAD
 DEFAULT_CHANNELS: int = 1  # mono audio
-DEFAULT_FORMAT: int = pyaudio.paInt16
 
 # VAD constants — values from spike benchmarks
 DEFAULT_CONFIDENCE_THRESHOLD: float = 0.5
@@ -28,7 +30,7 @@ class VoiceActivityDetector:
     Captures a user utterance from live microphone input using Silero VAD.
 
     Listens after the wake word fires, detects speech boundaries, and returns
-    the captured audio as a numpy array via callback. Times out cleanly if no
+    the captured audio as a CapturedAudio via callback. Times out cleanly if no
     speech is detected within the configured window.
 
     Usage:
@@ -47,6 +49,7 @@ class VoiceActivityDetector:
         channels: int = DEFAULT_CHANNELS,
         fmt: int = DEFAULT_FORMAT,
         collect_metrics: bool = False,
+        audio_source: AudioSource | None = None,
     ) -> None:
         """
         Initialise the voice activity detector.
@@ -62,6 +65,8 @@ class VoiceActivityDetector:
             fmt: PyAudio format constant.
             collect_metrics: if True, collect and print performance metrics on
                 each utterance capture. Defaults to False.
+            audio_source: microphone source to read from. If None, a default
+                PyAudioSource is created.
         """
         self._confidence_threshold = confidence_threshold
         self._min_silence_ms = min_silence_ms
@@ -73,6 +78,9 @@ class VoiceActivityDetector:
         self._fmt = fmt
         self._collect_metrics = collect_metrics
         self._process: psutil.Process = psutil.Process()
+        self._audio_source: AudioSource = audio_source or PyAudioSource(
+            rate=rate, channels=channels, fmt=fmt, frames_per_buffer=chunk
+        )
 
         self._vad_model = load_silero_vad()
         self._vad_iterator: VADIterator = VADIterator(
@@ -112,13 +120,13 @@ class VoiceActivityDetector:
         print(f"  CPU                  : {metrics['cpu_percent']:.1f}%")
 
     def capture_utterance(
-        self, on_utterance_captured: Callable[[np.ndarray], None]
+        self, on_utterance_captured: Callable[[CapturedAudio], None]
     ) -> None:
         """
         Listen for a user utterance and pass it to the callback when captured.
 
         Blocks until an utterance is captured or the timeout is reached.
-        Calls on_utterance_captured() with the captured audio as a numpy array.
+        Calls on_utterance_captured() with the captured audio as a CapturedAudio.
 
         Args:
             on_utterance_captured: callback to invoke with the captured utterance.
@@ -137,14 +145,7 @@ class VoiceActivityDetector:
         t_speech_start: float = 0.0
         t_listen_start: float = time.perf_counter()
 
-        p: pyaudio.PyAudio = pyaudio.PyAudio()
-        stream: pyaudio.Stream = p.open(
-            format=self._fmt,
-            channels=self._channels,
-            rate=self._rate,
-            input=True,
-            frames_per_buffer=self._chunk,
-        )
+        self._audio_source.open()
 
         try:
             while True:
@@ -155,9 +156,7 @@ class VoiceActivityDetector:
                         print("VAD timed out — no speech detected")
                         break
 
-                audio_chunk: bytes = stream.read(
-                    self._chunk, exception_on_overflow=False
-                )
+                audio_chunk: bytes = self._audio_source.read(self._chunk)
                 audio_np: np.ndarray = np.frombuffer(audio_chunk, dtype=np.int16)
 
                 # Normalize int16 [-32768, 32767] to float32 [-1.0, 1.0]
@@ -165,7 +164,7 @@ class VoiceActivityDetector:
                     audio_np.astype(np.float32, copy=False)
                 ).div(32768.0)
 
-                vad_result: Optional[dict[str, float]] = self._vad_iterator(
+                vad_result: dict[str, float] | None = self._vad_iterator(
                     audio_float, return_seconds=False
                 )
 
@@ -192,7 +191,13 @@ class VoiceActivityDetector:
                         if started_tracemalloc and tracemalloc.is_tracing():
                             tracemalloc.stop()
 
-                        on_utterance_captured(utterance)
+                        on_utterance_captured(
+                            CapturedAudio(
+                                samples=utterance,
+                                sample_rate=self._rate,
+                                channels=self._channels,
+                            )
+                        )
                         break
 
                 elif speech_started:
@@ -204,6 +209,4 @@ class VoiceActivityDetector:
         finally:
             if started_tracemalloc and tracemalloc.is_tracing():
                 tracemalloc.stop()
-            stream.stop_stream()
-            stream.close()
-            p.terminate()
+            self._audio_source.close()

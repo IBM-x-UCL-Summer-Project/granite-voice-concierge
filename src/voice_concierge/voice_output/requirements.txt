@@ -1,4 +1,0 @@
-faster-whisper
-piper-tts
-sounddevice
-soundfile

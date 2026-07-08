@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 # Local
+from voice_concierge.audio import CapturedAudio
 from voice_concierge.voice_input import (
     VoiceActivityDetector,
     VoiceInputPipeline,
@@ -65,7 +66,7 @@ class TestVoiceInputPipelineIntegration:
         # Arrange
         mock_detector = MagicMock(spec=WakeWordDetector)
         mock_vad = MagicMock(spec=VoiceActivityDetector)
-        test_audio = np.zeros(1280, dtype=np.int16)
+        test_audio = CapturedAudio(samples=np.zeros(1280, dtype=np.int16))
 
         def listen_side_effect(on_wake_word):
             on_wake_word()
@@ -153,15 +154,15 @@ class TestVoiceInputPipelineIntegration:
         pipeline.run(on_utterance_captured=MagicMock())
 
     @pytest.mark.integration
-    def test_callback_receives_numpy_array(self) -> None:
+    def test_callback_receives_captured_audio(self) -> None:
         """
-        VoiceInputPipeline passes a numpy int16 array to the callback.
+        VoiceInputPipeline passes a CapturedAudio to the callback.
         Verifies audio format is correct for downstream STT processing.
         """
         # Arrange
         mock_detector = MagicMock(spec=WakeWordDetector)
         mock_vad = MagicMock(spec=VoiceActivityDetector)
-        test_audio = np.zeros(1280, dtype=np.int16)
+        test_audio = CapturedAudio(samples=np.zeros(1280, dtype=np.int16))
 
         def listen_side_effect(on_wake_word):
             on_wake_word()
@@ -184,8 +185,8 @@ class TestVoiceInputPipelineIntegration:
 
         # Assert
         args, _ = callback.call_args
-        assert isinstance(args[0], np.ndarray)
-        assert args[0].dtype == np.int16
+        assert isinstance(args[0], CapturedAudio)
+        assert args[0].samples.dtype == np.int16
 
     @pytest.mark.integration
     def test_no_callback_registered_prints_placeholder(
@@ -198,7 +199,7 @@ class TestVoiceInputPipelineIntegration:
         # Arrange
         mock_detector = MagicMock(spec=WakeWordDetector)
         mock_vad = MagicMock(spec=VoiceActivityDetector)
-        test_audio = np.zeros(1280, dtype=np.int16)
+        test_audio = CapturedAudio(samples=np.zeros(1280, dtype=np.int16))
 
         def listen_side_effect(on_wake_word):
             on_wake_word()

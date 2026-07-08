@@ -1,16 +1,2 @@
-# --- Audio ---
-pyaudio
-
-# --- Wake Word Detection ---
-openwakeword
-
-# --- Voice Activity Detection ---
-silero-vad
-torch
-
-# --- Utilities ---
-numpy
-psutil
-
-# --- Package installation ---
+# Runtime dependencies are declared in pyproject.toml [project.dependencies].
 -e .
