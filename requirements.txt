@@ -12,6 +12,9 @@ torch
 # --- Speech-to-Text ---
 faster-whisper
 
+# --- Text-to-Speech ---
+piper-tts
+
 # --- Utilities ---
 numpy
 psutil
