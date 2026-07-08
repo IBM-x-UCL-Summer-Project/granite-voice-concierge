@@ -1,5 +1,6 @@
 # --- Audio ---
 pyaudio
+sounddevice
 
 # --- Wake Word Detection ---
 openwakeword
@@ -7,6 +8,9 @@ openwakeword
 # --- Voice Activity Detection ---
 silero-vad
 torch
+
+# --- Speech-to-Text ---
+faster-whisper
 
 # --- Utilities ---
 numpy

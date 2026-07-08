@@ -1,4 +1,2 @@
-faster-whisper
+# --- Text-to-Speech ---
 piper-tts
-sounddevice
-soundfile
