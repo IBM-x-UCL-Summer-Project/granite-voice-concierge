@@ -19,7 +19,9 @@ dependencies = [
     "pyaudio>=0.2.11,<0.3",
     "sounddevice>=0.5,<0.6",
     # Wake word detection
-    "openwakeword>=0.6,<0.7",
+    # Unpinned: no openwakeword release with a Python 3.12-installable
+    # tflite-runtime exists, so let the resolver pick a compatible version.
+    "openwakeword",
     # Voice activity detection
     "silero-vad>=6,<7",
     "torch>=2,<3",
