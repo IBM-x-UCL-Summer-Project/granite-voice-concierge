@@ -2,8 +2,9 @@
 
 The `voice_input` module implements the offline voice activation pipeline for
 the IBM Granite On-Device Voice Concierge. It handles wake word detection,
-utterance capture, and speech-to-text entirely on-device with no internet
-connectivity required.
+utterance capture, and speech-to-text on-device: once the models are present,
+inference runs fully offline with no network access. The first run downloads and
+caches the openWakeWord and Whisper models, which requires network access.
 
 ## Components
 
