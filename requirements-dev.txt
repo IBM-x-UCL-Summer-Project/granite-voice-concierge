@@ -1,18 +1,7 @@
-# --- Package installation ---
--e .
+# Dev dependencies (runtime + tooling) are declared in
+# pyproject.toml [project.optional-dependencies].dev.
+-e .[dev]
 
-# Base Dependencies
--r requirements.txt
-
-# Additional Dependencies
+# Optional experiment extras
 #-r experiments/wake-word-detection/requirements.txt
 #-r experiments/vad-integration/requirements.txt
-
-
-# Linting & Formatting
-black
-ruff
-
-# Testing
-pytest
-pytest-cov
