@@ -1,5 +1,6 @@
 # Standard library
 import subprocess
+import wave
 from pathlib import Path
 from unittest.mock import patch
 
@@ -90,6 +91,25 @@ class TestPiperTextToSpeechSynthesize:
     def test_missing_output_file_raises_synthesis_error(self, mock_run: patch) -> None:
         """A run that produces no output file raises TextToSpeechSynthesisError."""
         mock_run.return_value = None  # succeeds but writes nothing
+
+        with pytest.raises(TextToSpeechSynthesisError):
+            PiperTextToSpeech().synthesize("hello")
+
+    @pytest.mark.unit
+    @patch("voice_concierge.voice_output.piper.subprocess.run")
+    def test_non_16bit_output_raises_synthesis_error(self, mock_run: patch) -> None:
+        """A non-16-bit WAV from Piper raises TextToSpeechSynthesisError."""
+
+        def _write_8bit(command, **kwargs):
+            output_path = Path(command[command.index("-f") + 1])
+            with wave.open(str(output_path), "wb") as wav_file:
+                wav_file.setnchannels(1)
+                wav_file.setsampwidth(1)  # 8-bit PCM, not the expected 16-bit
+                wav_file.setframerate(22050)
+                wav_file.writeframes(b"\x00" * 160)
+            return None
+
+        mock_run.side_effect = _write_8bit
 
         with pytest.raises(TextToSpeechSynthesisError):
             PiperTextToSpeech().synthesize("hello")

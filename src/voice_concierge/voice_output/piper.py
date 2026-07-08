@@ -90,6 +90,10 @@ class PiperTextToSpeech:
             sample_rate = wav_file.getframerate()
             sample_width = wav_file.getsampwidth()
             frames = wav_file.readframes(wav_file.getnframes())
+        if sample_width != 2:
+            raise TextToSpeechSynthesisError(
+                f"Expected 16-bit PCM audio from Piper, got {sample_width * 8}-bit."
+            )
         return CapturedAudio(
             samples=np.frombuffer(frames, dtype=np.int16),
             sample_rate=sample_rate,
