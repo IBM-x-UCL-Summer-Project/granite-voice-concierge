@@ -1,6 +1,6 @@
 # App Pipeline UI Contract
 
-Implemented Python app-pipeline contract for frontend/backend planning.
+Status: implemented Python app-pipeline contract for frontend/backend planning.
 The browser UI should connect through a backend wrapper rather than importing
 the Python package directly.
 
@@ -71,6 +71,23 @@ calls `pipeline.process_request(...)`, then serializes the result with
 
 Malformed payloads raise `PayloadValidationError`. An HTTP wrapper should
 translate that exception into a 400 response.
+
+## Fake Smoke Runner
+
+For local transcript-only checks without Ollama, STT, TTS, audio devices, or
+persistent memory, run:
+
+```bash
+python -m voice_concierge.app.smoke "remember that I prefer tea" "yes" "what do you remember"
+```
+
+The command prints JSON containing each request payload and response payload. It
+uses deterministic fake reasoning plus in-memory fake memory, and it round-trips
+state through the same `handle_turn(...)` adapter a backend wrapper would call.
+
+Checked-in example request/response payloads live in
+`docs/app-pipeline/examples/` and are covered by tests so they stay aligned with
+the adapter output.
 
 ## State Shape
 

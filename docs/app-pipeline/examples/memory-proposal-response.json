@@ -1,0 +1,52 @@
+{
+  "state": {
+    "context": {
+      "mode": "home",
+      "pending_mode": null,
+      "last_topic": null,
+      "accessibility": {
+        "verbosity": "normal",
+        "speech_pace": "normal"
+      }
+    },
+    "last_spoken_response": "I can remember that. Please confirm before I save it.",
+    "pending_memory_action": {
+      "action": "store",
+      "content": "I prefer tea",
+      "rationale": "Smoke runner detected a remember request.",
+      "requires_confirmation": true
+    },
+    "pending_memory_scope": "personal_relevant"
+  },
+  "transcript": {
+    "text": "remember that I prefer tea",
+    "language": null,
+    "language_probability": null
+  },
+  "spoken_response": "I can remember that. Please confirm before I save it.",
+  "context": {
+    "mode": "home",
+    "mode_changed": false,
+    "needs_confirmation": false,
+    "command_action": null,
+    "confirmation_prompt": ""
+  },
+  "reasoning": {
+    "confidence": "high",
+    "needs_confirmation": true,
+    "proposed_memory_action": {
+      "action": "store",
+      "content": "I prefer tea",
+      "rationale": "Smoke runner detected a remember request.",
+      "requires_confirmation": true
+    },
+    "mode_suggestion": null
+  },
+  "memory_operation": {
+    "attempted": false,
+    "succeeded": false,
+    "reason": ""
+  },
+  "errors": [],
+  "audio": null
+}
