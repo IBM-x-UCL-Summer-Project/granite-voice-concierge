@@ -29,7 +29,7 @@ from voice_concierge.app.types import (
 from voice_concierge.audio.types import CapturedAudio
 from voice_concierge.context.manager import ContextManager
 from voice_concierge.context.policies import policy_for_mode
-from voice_concierge.context.types import ContextDecision, ContextState
+from voice_concierge.context.types import ContextDecision, ContextMode, ContextState
 from voice_concierge.reasoning.types import ReasoningResponse
 
 _EMPTY_TRANSCRIPT_RESPONSE = "I didn't catch that. Could you say it again?"
@@ -41,6 +41,14 @@ _NOTHING_TO_REPEAT_RESPONSE = "I don't have anything to repeat yet."
 _STOP_RESPONSE = "Okay, I'll stop."
 _CANCEL_RESPONSE = "Okay, cancelled."
 _REASONING_FAILED_RESPONSE = "Local reasoning failed unexpectedly."
+_MODE_CHANGED_RESPONSES: dict[ContextMode, str] = {
+    "home": "Home mode activated.",
+    "cooking": "Cooking mode activated. I'll give one step at a time.",
+    "shopping": "Shopping mode activated. I'll keep responses list-focused.",
+    "driving": (
+        "Driving mode activated. I'll keep responses very short and safety-aware."
+    ),
+}
 
 _CONFIRM_WORDS = ("yes", "confirm", "okay", "ok", "go ahead")
 _CANCEL_WORDS = ("cancel", "stop", "never mind", "nevermind", "no")
@@ -209,6 +217,15 @@ class VoiceConciergePipeline:
                 context_decision,
                 transcript=transcript,
                 spoken_response=context_decision.confirmation_prompt,
+                options=options,
+            )
+
+        if context_decision.mode_changed:
+            return self._context_response(
+                current_state,
+                context_decision,
+                transcript=transcript,
+                spoken_response=_MODE_CHANGED_RESPONSES[context_decision.state.mode],
                 options=options,
             )
 

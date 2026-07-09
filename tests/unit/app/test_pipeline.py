@@ -17,6 +17,7 @@ from voice_concierge.app.types import (
     ConversationTurn,
 )
 from voice_concierge.audio.types import CapturedAudio
+from voice_concierge.context.types import ContextState
 from voice_concierge.reasoning.types import MemoryAction, ReasoningResponse
 
 
@@ -260,9 +261,7 @@ def test_context_confirmation_short_circuits_reasoning() -> None:
 
 
 def test_context_confirmation_can_be_accepted_on_next_turn() -> None:
-    reasoning = FakeReasoning(
-        ReasoningResponse(spoken_response="Driving mode is on.", confidence="high")
-    )
+    reasoning = FakeReasoning()
     pipeline = VoiceConciergePipeline(reasoning, memory=FakeMemory())
 
     first = pipeline.process_transcript("switch to driving mode")
@@ -270,12 +269,60 @@ def test_context_confirmation_can_be_accepted_on_next_turn() -> None:
 
     assert second.state.context.mode == "driving"
     assert second.context_decision.mode_changed is True
+    assert second.spoken_response == (
+        "Driving mode activated. I'll keep responses very short and safety-aware."
+    )
+    assert second.reasoning_result is None
     assert second.errors == ()
+    assert reasoning.calls == []
 
-    reasoning_context = reasoning.calls[0]["context"]
-    assert isinstance(reasoning_context, ReasoningTurnContext)
-    assert reasoning_context.mode == "driving"
-    assert reasoning_context.allow_memory_writes is False
+
+@pytest.mark.parametrize(
+    ("transcript", "state", "expected_mode", "expected_response"),
+    (
+        (
+            "switch to cooking mode",
+            AppPipelineState(),
+            "cooking",
+            "Cooking mode activated. I'll give one step at a time.",
+        ),
+        (
+            "switch to shopping mode",
+            AppPipelineState(),
+            "shopping",
+            "Shopping mode activated. I'll keep responses list-focused.",
+        ),
+        (
+            "switch back to home mdoe",
+            AppPipelineState(context=ContextState(mode="driving")),
+            "home",
+            "Home mode activated.",
+        ),
+    ),
+)
+def test_completed_mode_changes_use_deterministic_app_response(
+    transcript: str,
+    state: AppPipelineState,
+    expected_mode: str,
+    expected_response: str,
+) -> None:
+    reasoning = FakeReasoning(
+        ReasoningResponse(
+            spoken_response="Model claimed a different state.",
+            confidence="high",
+        )
+    )
+    memory = FakeMemory()
+    pipeline = VoiceConciergePipeline(reasoning, memory=memory)
+
+    result = pipeline.process_transcript(transcript, state)
+
+    assert result.state.context.mode == expected_mode
+    assert result.context_decision.mode_changed is True
+    assert result.spoken_response == expected_response
+    assert result.reasoning_result is None
+    assert reasoning.calls == []
+    assert memory.retrieve_calls == []
 
 
 def test_repeat_command_returns_previous_spoken_response_without_reasoning() -> None:

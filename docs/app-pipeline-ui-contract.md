@@ -232,6 +232,17 @@ type AppTurnError =
 
 The UI should still display `spoken_response` when `errors` is not empty.
 
+## Deterministic Mode Changes
+
+Mode transitions are application actions rather than model-generated claims.
+When `context.mode_changed` is `true`, the pipeline returns a fixed activation
+response and `reasoning` is `null`. Driving mode still returns its confirmation
+prompt first; the deterministic activation response is returned only after the
+user confirms.
+
+The UI should treat `state.context.mode` as authoritative. It should never infer
+the active mode from `spoken_response`.
+
 ## Example: Context Confirmation
 
 Request:
