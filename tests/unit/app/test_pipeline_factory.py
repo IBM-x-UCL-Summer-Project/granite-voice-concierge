@@ -9,7 +9,9 @@ from voice_concierge.app import (
     build_voice_concierge_pipeline,
 )
 from voice_concierge.app import factory as factory_module
+from voice_concierge.app.memory import NullMemoryGateway
 from voice_concierge.app.reasoning import ReasoningTurnContext, ReasoningTurnResult
+from voice_concierge.memory import LocalMemoryConfig
 from voice_concierge.reasoning.types import ReasoningResponse
 
 
@@ -64,3 +66,54 @@ def test_build_voice_concierge_pipeline_builds_reasoning_when_not_injected(
 
     assert result.spoken_response == "Factory response."
     assert calls == [config]
+
+
+def test_build_voice_concierge_pipeline_loads_configured_local_memory(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    reasoning = FakeReasoning()
+    memory = NullMemoryGateway()
+    memory_config = LocalMemoryConfig(
+        memory_db_path=tmp_path / "memory.sqlite3",
+        vector_db_path=tmp_path / "vectors.sqlite3",
+    )
+    calls: list[LocalMemoryConfig | None] = []
+
+    def fake_build_local_memory_gateway(
+        supplied_config: LocalMemoryConfig | None = None,
+    ) -> NullMemoryGateway:
+        calls.append(supplied_config)
+        return memory
+
+    monkeypatch.setattr(
+        factory_module,
+        "build_local_memory_gateway",
+        fake_build_local_memory_gateway,
+    )
+
+    pipeline = build_voice_concierge_pipeline(
+        reasoning_service=reasoning,
+        memory_config=memory_config,
+        load_memory=True,
+    )
+
+    assert isinstance(pipeline, VoiceConciergePipeline)
+    assert calls == [memory_config]
+
+
+def test_build_voice_concierge_pipeline_keeps_memory_unloaded_by_default(
+    monkeypatch,
+) -> None:
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("local memory should remain unloaded")
+
+    monkeypatch.setattr(
+        factory_module,
+        "build_local_memory_gateway",
+        fail_if_called,
+    )
+
+    pipeline = build_voice_concierge_pipeline(reasoning_service=FakeReasoning())
+
+    assert isinstance(pipeline, VoiceConciergePipeline)

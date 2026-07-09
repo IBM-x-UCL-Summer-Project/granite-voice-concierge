@@ -11,6 +11,7 @@ class FakeMemoryManager:
         self.retrieve_calls: list[dict[str, object]] = []
         self.store_calls: list[dict[str, object]] = []
         self.processed_actions: list[MemoryAction] = []
+        self.closed = False
 
     def retrieve_similar(
         self,
@@ -39,6 +40,8 @@ class FakeMemoryManager:
         layer: str,
         topic: str | None,
         validate: bool,
+        auto_classify: bool,
+        auto_extract: bool,
     ) -> tuple[bool, str, int]:
         self.store_calls.append(
             {
@@ -46,6 +49,8 @@ class FakeMemoryManager:
                 "layer": layer,
                 "topic": topic,
                 "validate": validate,
+                "auto_classify": auto_classify,
+                "auto_extract": auto_extract,
             }
         )
         return True, "stored_successfully", 42
@@ -53,6 +58,9 @@ class FakeMemoryManager:
     def process_memory_action(self, action: MemoryAction) -> tuple[bool, str]:
         self.processed_actions.append(action)
         return True, "processed"
+
+    def close(self) -> None:
+        self.closed = True
 
 
 def test_null_memory_gateway_returns_no_memories_and_blocks_writes() -> None:
@@ -112,6 +120,8 @@ def test_memory_manager_gateway_applies_store_with_scope_metadata() -> None:
             "layer": "feedback",
             "topic": "shopping",
             "validate": False,
+            "auto_classify": False,
+            "auto_extract": False,
         }
     ]
 
@@ -141,3 +151,12 @@ def test_memory_manager_gateway_blocks_apply_when_scope_is_none() -> None:
     assert gateway.apply(action, "none") == (False, "memory_scope_none")
     assert manager.store_calls == []
     assert manager.processed_actions == []
+
+
+def test_memory_manager_gateway_closes_manager() -> None:
+    manager = FakeMemoryManager()
+    gateway = MemoryManagerGateway(manager)
+
+    gateway.close()
+
+    assert manager.closed is True

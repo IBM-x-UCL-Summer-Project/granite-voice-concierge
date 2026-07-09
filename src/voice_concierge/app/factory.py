@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from voice_concierge.app.memory import MemoryGateway
+from voice_concierge.app.memory import MemoryGateway, build_local_memory_gateway
 from voice_concierge.app.pipeline import VoiceConciergePipeline
 from voice_concierge.app.reasoning import (
     AppReasoningConfig,
@@ -14,6 +14,7 @@ from voice_concierge.app.types import (
     SpeechToTextAdapter,
     TextToSpeechAdapter,
 )
+from voice_concierge.memory import LocalMemoryConfig
 
 
 def build_voice_concierge_pipeline(
@@ -21,9 +22,11 @@ def build_voice_concierge_pipeline(
     *,
     reasoning_service: ReasoningTurnService | None = None,
     memory: MemoryGateway | None = None,
+    memory_config: LocalMemoryConfig | None = None,
     speech_to_text: SpeechToTextAdapter | None = None,
     text_to_speech: TextToSpeechAdapter | None = None,
     audio_player: AudioPlayerAdapter | None = None,
+    load_memory: bool = False,
     load_voice_io: bool = False,
 ) -> VoiceConciergePipeline:
     """Build the app pipeline with local backends loaded only when requested."""
@@ -44,6 +47,9 @@ def build_voice_concierge_pipeline(
         from voice_concierge.audio.player import SoundDevicePlayer
 
         audio_player = SoundDevicePlayer()
+
+    if load_memory and memory is None:
+        memory = build_local_memory_gateway(memory_config)
 
     return VoiceConciergePipeline(
         service,

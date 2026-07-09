@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from voice_concierge.context.types import MemoryScope
+from voice_concierge.memory import LocalMemoryConfig, build_memory_manager
 from voice_concierge.reasoning.types import MemoryAction
 
 
@@ -23,6 +24,9 @@ class MemoryGateway(Protocol):
     def apply(self, action: MemoryAction, scope: MemoryScope) -> tuple[bool, str]:
         """Apply a previously confirmed memory action."""
 
+    def close(self) -> None:
+        """Release persistent memory resources."""
+
 
 class NullMemoryGateway:
     """No-op memory gateway for tests and installations without memory wiring."""
@@ -38,6 +42,9 @@ class NullMemoryGateway:
 
     def apply(self, action: MemoryAction, scope: MemoryScope) -> tuple[bool, str]:
         return False, "memory_not_configured"
+
+    def close(self) -> None:
+        """Release no resources for the no-op gateway."""
 
 
 class MemoryManagerGateway:
@@ -79,10 +86,25 @@ class MemoryManagerGateway:
                 layer=layer,
                 topic=topic,
                 validate=False,
+                auto_classify=False,
+                auto_extract=False,
             )
             return success, reason
 
         return self._manager.process_memory_action(action)
+
+    def close(self) -> None:
+        """Close the underlying memory manager."""
+
+        self._manager.close()
+
+
+def build_local_memory_gateway(
+    config: LocalMemoryConfig | None = None,
+) -> MemoryManagerGateway:
+    """Build the app gateway over persistent local memory components."""
+
+    return MemoryManagerGateway(build_memory_manager(config))
 
 
 def _retrieval_topic(scope: MemoryScope) -> str | None:

@@ -11,6 +11,38 @@ The pipeline returns the assistant response and the next state.
 The frontend should not need to know about STT, TTS, Ollama, memory internals, or
 context-manager internals.
 
+## Local Persistent Memory
+
+Persistent memory is opt-in when constructing the pipeline so unit tests and
+installations without the embedding model remain lightweight:
+
+```py
+from voice_concierge.app import build_voice_concierge_pipeline
+from voice_concierge.memory import LocalMemoryConfig
+
+pipeline = build_voice_concierge_pipeline(
+    memory_config=LocalMemoryConfig(),
+    load_memory=True,
+)
+
+try:
+    result = pipeline.process_transcript("remember that I prefer tea")
+finally:
+    pipeline.close()
+```
+
+The default configuration stores SQLite data under `.local/memory/`, which is
+ignored by Git. Semantic retrieval uses the local Ollama
+`granite-embedding:278m` model. Install it before enabling memory:
+
+```bash
+ollama pull granite-embedding:278m
+```
+
+Confirmed writes are stored without a second model-based classification step.
+The app context policy supplies the storage layer and topic, while the embedding
+model supplies only the vector used for later retrieval.
+
 ## Request Shape
 
 Python entry points:

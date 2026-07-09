@@ -53,6 +53,7 @@ class FakeMemory:
         self.apply_result = apply_result
         self.retrieve_calls: list[dict[str, object]] = []
         self.apply_calls: list[dict[str, object]] = []
+        self.closed = False
 
     def retrieve(
         self,
@@ -69,6 +70,9 @@ class FakeMemory:
     def apply(self, action: MemoryAction, scope: str) -> tuple[bool, str]:
         self.apply_calls.append({"action": action, "scope": scope})
         return self.apply_result
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class FakeSpeechToText:
@@ -357,6 +361,15 @@ def test_process_audio_returns_stt_failure_without_reasoning() -> None:
     assert result.errors == ("stt_failed",)
     assert result.transcript is None
     assert reasoning.calls == []
+
+
+def test_close_releases_memory_gateway() -> None:
+    memory = FakeMemory()
+    pipeline = VoiceConciergePipeline(FakeReasoning(), memory=memory)
+
+    pipeline.close()
+
+    assert memory.closed is True
 
 
 def test_synthesize_without_tts_reports_recoverable_error() -> None:

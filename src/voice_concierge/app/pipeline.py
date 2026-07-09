@@ -88,6 +88,13 @@ class VoiceConciergePipeline:
             play=request.options.play,
         )
 
+    def close(self) -> None:
+        """Release resources owned by configured pipeline adapters."""
+
+        close_memory = getattr(self._memory, "close", None)
+        if callable(close_memory):
+            close_memory()
+
     def process_transcript(
         self,
         transcript: str,
