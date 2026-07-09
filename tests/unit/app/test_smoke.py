@@ -33,9 +33,11 @@ def test_run_smoke_turns_maintains_state_across_memory_confirmation() -> None:
         "reason": "stored_in_smoke_memory",
     }
     assert second_response["state"]["pending_memory_action"] is None
+    assert len(second_response["state"]["conversation_history"]) == 2
     assert third_response["spoken_response"] == (
         "I found this in local memory: I prefer tea"
     )
+    assert len(third_response["state"]["conversation_history"]) == 3
 
 
 def test_main_prints_json_turn_payload(capsys) -> None:

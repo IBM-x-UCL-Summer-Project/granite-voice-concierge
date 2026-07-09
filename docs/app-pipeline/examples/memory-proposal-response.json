@@ -10,6 +10,12 @@
       }
     },
     "last_spoken_response": "I can remember that. Please confirm before I save it.",
+    "conversation_history": [
+      {
+        "user_transcript": "remember that I prefer tea",
+        "assistant_response": "I can remember that. Please confirm before I save it."
+      }
+    ],
     "pending_memory_action": {
       "action": "store",
       "content": "I prefer tea",

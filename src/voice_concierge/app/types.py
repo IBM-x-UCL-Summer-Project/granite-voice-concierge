@@ -68,11 +68,20 @@ class AppTranscript:
 
 
 @dataclass(frozen=True)
+class ConversationTurn:
+    """One completed user/assistant exchange retained for short-term context."""
+
+    user_transcript: str
+    assistant_response: str
+
+
+@dataclass(frozen=True)
 class AppPipelineState:
     """State that callers should round-trip between app pipeline turns."""
 
     context: ContextState = field(default_factory=ContextState)
     last_spoken_response: str | None = None
+    conversation_history: tuple[ConversationTurn, ...] = ()
     pending_memory_action: MemoryAction | None = None
     pending_memory_scope: MemoryScope | None = None
 

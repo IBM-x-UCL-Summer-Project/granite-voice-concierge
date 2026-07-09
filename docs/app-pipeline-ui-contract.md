@@ -126,6 +126,11 @@ the adapter output.
 The UI should store this whole object and send it back on the next turn. Treat it
 as application state owned by the pipeline, not as frontend business logic.
 
+`conversation_history` contains short-term session context only. The pipeline
+keeps at most six completed exchanges and passes prior exchanges to reasoning so
+follow-up references can be understood. It is separate from approved persistent
+memory and should not be edited by the UI.
+
 ```ts
 type AppPipelineState = {
   context: {
@@ -139,6 +144,11 @@ type AppPipelineState = {
   };
 
   last_spoken_response: string | null;
+
+  conversation_history: Array<{
+    user_transcript: string;
+    assistant_response: string;
+  }>;
 
   pending_memory_action: null | {
     action: 'store' | 'delete' | 'update';
@@ -263,6 +273,12 @@ Response:
       }
     },
     "last_spoken_response": "Driving mode uses very short, safety-aware responses. Please confirm before I switch.",
+    "conversation_history": [
+      {
+        "user_transcript": "Switch to driving mode",
+        "assistant_response": "Driving mode uses very short, safety-aware responses. Please confirm before I switch."
+      }
+    ],
     "pending_memory_action": null,
     "pending_memory_scope": null
   }
@@ -277,6 +293,12 @@ If the assistant response includes:
 {
   "spoken_response": "I can remember that. Please confirm before I save it.",
   "state": {
+    "conversation_history": [
+      {
+        "user_transcript": "Remember that I prefer short answers.",
+        "assistant_response": "I can remember that. Please confirm before I save it."
+      }
+    ],
     "pending_memory_action": {
       "action": "store",
       "content": "User prefers short answers.",
@@ -307,4 +329,6 @@ The backend applies the pending memory action and returns updated state with
 
 Display fields such as `spoken_response`, `context.mode`,
 `context.needs_confirmation`, and `errors`. Always send the full returned `state`
-back on the next turn.
+back on the next turn. Store `conversation_history` as opaque pipeline state;
+the UI can maintain a separate display-message list if it needs richer rendering
+metadata.

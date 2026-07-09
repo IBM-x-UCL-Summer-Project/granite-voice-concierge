@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from voice_concierge.app.pipeline import VoiceConciergePipeline
 from voice_concierge.app.reasoning import (
@@ -10,7 +11,11 @@ from voice_concierge.app.reasoning import (
     ReasoningTurnContext,
     ReasoningTurnResult,
 )
-from voice_concierge.app.types import AppPipelineState, AppTranscript
+from voice_concierge.app.types import (
+    AppPipelineState,
+    AppTranscript,
+    ConversationTurn,
+)
 from voice_concierge.audio.types import CapturedAudio
 from voice_concierge.reasoning.types import MemoryAction, ReasoningResponse
 
@@ -149,8 +154,79 @@ def test_process_transcript_calls_memory_and_reasoning_with_context_policy() -> 
     assert reasoning.calls[0]["transcript"] == "What should I drink?"
     assert reasoning_context.mode == "home"
     assert reasoning_context.memories == ("User prefers tea.",)
+    assert reasoning_context.conversation_summary is None
     assert reasoning_context.max_words == 60
     assert reasoning_context.allow_memory_writes is True
+    assert result.state.conversation_history == (
+        ConversationTurn(
+            user_transcript="What should I drink?",
+            assistant_response="Tea sounds good.",
+        ),
+    )
+
+
+def test_prior_conversation_turns_are_passed_to_reasoning() -> None:
+    reasoning = FakeReasoning(
+        ReasoningResponse(spoken_response="Follow-up response.", confidence="high")
+    )
+    pipeline = VoiceConciergePipeline(reasoning, memory=FakeMemory())
+
+    first = pipeline.process_transcript("Who is Ada Lovelace?")
+    second = pipeline.process_transcript("When was she born?", first.state)
+
+    second_context = reasoning.calls[1]["context"]
+    assert isinstance(second_context, ReasoningTurnContext)
+    assert second_context.conversation_summary == (
+        "Previous turn 1:\n"
+        "User transcript: Who is Ada Lovelace?\n"
+        "Assistant response: Follow-up response."
+    )
+    assert second.state.conversation_history == (
+        ConversationTurn(
+            user_transcript="Who is Ada Lovelace?",
+            assistant_response="Follow-up response.",
+        ),
+        ConversationTurn(
+            user_transcript="When was she born?",
+            assistant_response="Follow-up response.",
+        ),
+    )
+
+
+def test_conversation_history_is_bounded_before_and_after_reasoning() -> None:
+    reasoning = FakeReasoning()
+    state = AppPipelineState(
+        conversation_history=(
+            ConversationTurn("oldest question", "oldest answer"),
+            ConversationTurn("recent question", "recent answer"),
+            ConversationTurn("latest question", "latest answer"),
+        )
+    )
+    pipeline = VoiceConciergePipeline(
+        reasoning,
+        memory=FakeMemory(),
+        conversation_history_limit=2,
+    )
+
+    result = pipeline.process_transcript("new question", state)
+
+    context = reasoning.calls[0]["context"]
+    assert isinstance(context, ReasoningTurnContext)
+    assert "oldest question" not in context.conversation_summary
+    assert "recent question" in context.conversation_summary
+    assert "latest question" in context.conversation_summary
+    assert result.state.conversation_history == (
+        ConversationTurn("latest question", "latest answer"),
+        ConversationTurn("new question", "Reasoned response."),
+    )
+
+
+def test_negative_conversation_history_limit_is_rejected() -> None:
+    with pytest.raises(ValueError, match="must not be negative"):
+        VoiceConciergePipeline(
+            FakeReasoning(),
+            conversation_history_limit=-1,
+        )
 
 
 def test_process_transcript_returns_empty_transcript_without_reasoning() -> None:

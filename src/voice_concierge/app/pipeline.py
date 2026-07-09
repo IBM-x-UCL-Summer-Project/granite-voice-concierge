@@ -20,6 +20,7 @@ from voice_concierge.app.types import (
     AppTurnRequest,
     AppTurnResult,
     AudioPlayerAdapter,
+    ConversationTurn,
     MemoryOperationResult,
     SpeechToTextAdapter,
     TextToSpeechAdapter,
@@ -43,6 +44,7 @@ _REASONING_FAILED_RESPONSE = "Local reasoning failed unexpectedly."
 
 _CONFIRM_WORDS = ("yes", "confirm", "okay", "ok", "go ahead")
 _CANCEL_WORDS = ("cancel", "stop", "never mind", "nevermind", "no")
+DEFAULT_CONVERSATION_HISTORY_LIMIT = 6
 
 
 class ReasoningTurnProcessor(Protocol):
@@ -69,7 +71,11 @@ class VoiceConciergePipeline:
         text_to_speech: TextToSpeechAdapter | None = None,
         audio_player: AudioPlayerAdapter | None = None,
         memory_context_limit: int = 3,
+        conversation_history_limit: int = DEFAULT_CONVERSATION_HISTORY_LIMIT,
     ) -> None:
+        if conversation_history_limit < 0:
+            raise ValueError("conversation_history_limit must not be negative.")
+
         self._reasoning = reasoning
         self._context_manager = context_manager or ContextManager()
         self._memory = memory or NullMemoryGateway()
@@ -77,6 +83,7 @@ class VoiceConciergePipeline:
         self._text_to_speech = text_to_speech
         self._audio_player = audio_player
         self._memory_context_limit = memory_context_limit
+        self._conversation_history_limit = conversation_history_limit
 
     def process_request(self, request: AppTurnRequest) -> AppTurnResult:
         """Process a typed transcript request."""
@@ -105,7 +112,7 @@ class VoiceConciergePipeline:
     ) -> AppTurnResult:
         """Process one transcript turn and return response plus next state."""
 
-        current_state = state or AppPipelineState()
+        current_state = self._bounded_state(state or AppPipelineState())
         app_transcript = AppTranscript(text=transcript.strip())
         return self._process_app_transcript(
             app_transcript,
@@ -123,7 +130,7 @@ class VoiceConciergePipeline:
     ) -> AppTurnResult:
         """Transcribe captured audio, then process it through the same turn path."""
 
-        current_state = state or AppPipelineState()
+        current_state = self._bounded_state(state or AppPipelineState())
         options = AppTurnOptions(synthesize=synthesize, play=play)
         if self._speech_to_text is None:
             return self._finalize_result(
@@ -229,6 +236,9 @@ class VoiceConciergePipeline:
         reasoning_context = ReasoningTurnContext(
             mode=context_decision.policy.mode,
             memories=memories,
+            conversation_summary=_conversation_summary(
+                current_state.conversation_history
+            ),
             max_words=context_decision.policy.max_words,
             allow_memory_writes=context_decision.policy.memory_scope != "none",
         )
@@ -255,6 +265,11 @@ class VoiceConciergePipeline:
         next_state = AppPipelineState(
             context=context_decision.state,
             last_spoken_response=reasoning_result.spoken_response,
+            conversation_history=self._record_conversation(
+                current_state,
+                transcript,
+                reasoning_result.spoken_response,
+            ),
             pending_memory_action=(
                 proposed_memory_action if pending_memory_scope is not None else None
             ),
@@ -289,6 +304,11 @@ class VoiceConciergePipeline:
             next_state = AppPipelineState(
                 context=context_decision.state,
                 last_spoken_response=_MEMORY_CANCELLED_RESPONSE,
+                conversation_history=self._record_conversation(
+                    current_state,
+                    transcript,
+                    _MEMORY_CANCELLED_RESPONSE,
+                ),
             )
             return self._finalize_result(
                 state=next_state,
@@ -318,6 +338,11 @@ class VoiceConciergePipeline:
         next_state = AppPipelineState(
             context=context_decision.state,
             last_spoken_response=spoken_response,
+            conversation_history=self._record_conversation(
+                current_state,
+                transcript,
+                spoken_response,
+            ),
             pending_memory_action=None if succeeded else pending_action,
             pending_memory_scope=None if succeeded else pending_scope,
         )
@@ -343,6 +368,11 @@ class VoiceConciergePipeline:
         next_state = AppPipelineState(
             context=context_decision.state,
             last_spoken_response=spoken_response,
+            conversation_history=self._record_conversation(
+                current_state,
+                transcript,
+                spoken_response,
+            ),
             pending_memory_action=current_state.pending_memory_action,
             pending_memory_scope=current_state.pending_memory_scope,
         )
@@ -377,6 +407,11 @@ class VoiceConciergePipeline:
         next_state = AppPipelineState(
             context=context_decision.state,
             last_spoken_response=spoken_response,
+            conversation_history=self._record_conversation(
+                current_state,
+                transcript,
+                spoken_response,
+            ),
         )
         return self._finalize_result(
             state=next_state,
@@ -385,6 +420,35 @@ class VoiceConciergePipeline:
             transcript=transcript,
             options=options,
         )
+
+    def _bounded_state(self, state: AppPipelineState) -> AppPipelineState:
+        return replace(
+            state,
+            conversation_history=self._bounded_history(state.conversation_history),
+        )
+
+    def _record_conversation(
+        self,
+        state: AppPipelineState,
+        transcript: AppTranscript,
+        spoken_response: str,
+    ) -> tuple[ConversationTurn, ...]:
+        history = (
+            *state.conversation_history,
+            ConversationTurn(
+                user_transcript=_normalize(transcript.text),
+                assistant_response=spoken_response,
+            ),
+        )
+        return self._bounded_history(history)
+
+    def _bounded_history(
+        self,
+        history: tuple[ConversationTurn, ...],
+    ) -> tuple[ConversationTurn, ...]:
+        if self._conversation_history_limit == 0:
+            return ()
+        return history[-self._conversation_history_limit :]
 
     def _finalize_result(
         self,
@@ -441,6 +505,20 @@ def _to_app_transcript(transcript: TranscriptResult) -> AppTranscript:
 
 def _normalize(text: str) -> str:
     return " ".join(text.strip().split())
+
+
+def _conversation_summary(history: tuple[ConversationTurn, ...]) -> str | None:
+    if not history:
+        return None
+
+    return "\n\n".join(
+        (
+            f"Previous turn {index}:\n"
+            f"User transcript: {turn.user_transcript}\n"
+            f"Assistant response: {turn.assistant_response}"
+        )
+        for index, turn in enumerate(history, start=1)
+    )
 
 
 def _contains_any(text: str, phrases: tuple[str, ...]) -> bool:

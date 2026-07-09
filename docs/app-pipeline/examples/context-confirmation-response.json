@@ -10,6 +10,12 @@
       }
     },
     "last_spoken_response": "Driving mode uses very short, safety-aware responses. Please confirm before I switch.",
+    "conversation_history": [
+      {
+        "user_transcript": "Switch to driving mode",
+        "assistant_response": "Driving mode uses very short, safety-aware responses. Please confirm before I switch."
+      }
+    ],
     "pending_memory_action": null,
     "pending_memory_scope": null
   },

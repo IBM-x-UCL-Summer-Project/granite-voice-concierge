@@ -23,6 +23,7 @@ from voice_concierge.app.types import (
     AppTurnOptions,
     AppTurnRequest,
     AppTurnResult,
+    ConversationTurn,
     MemoryOperationResult,
 )
 from voice_concierge.audio.types import CapturedAudio
@@ -52,6 +53,12 @@ def test_app_pipeline_state_round_trips_through_plain_dict() -> None:
             ),
         ),
         last_spoken_response="I added milk.",
+        conversation_history=(
+            ConversationTurn(
+                user_transcript="Add milk to my shopping list.",
+                assistant_response="I added milk.",
+            ),
+        ),
         pending_memory_action=action,
         pending_memory_scope="list_relevant",
     )
@@ -70,6 +77,12 @@ def test_app_pipeline_state_round_trips_through_plain_dict() -> None:
             },
         },
         "last_spoken_response": "I added milk.",
+        "conversation_history": [
+            {
+                "user_transcript": "Add milk to my shopping list.",
+                "assistant_response": "I added milk.",
+            }
+        ],
         "pending_memory_action": {
             "action": "store",
             "content": "User prefers short answers.",
@@ -207,3 +220,24 @@ def test_invalid_option_type_raises_payload_validation_error() -> None:
 
     with pytest.raises(PayloadValidationError, match="synthesize must be a boolean"):
         app_turn_request_from_dict(payload)
+
+
+def test_missing_conversation_history_parses_as_empty_for_compatibility() -> None:
+    payload = app_pipeline_state_to_dict(AppPipelineState())
+    del payload["conversation_history"]
+
+    state = app_pipeline_state_from_dict(payload)
+
+    assert state is not None
+    assert state.conversation_history == ()
+
+
+def test_invalid_conversation_history_raises_payload_validation_error() -> None:
+    payload = app_pipeline_state_to_dict(AppPipelineState())
+    payload["conversation_history"] = "not-an-array"
+
+    with pytest.raises(
+        PayloadValidationError,
+        match="conversation_history must be an array",
+    ):
+        app_pipeline_state_from_dict(payload)

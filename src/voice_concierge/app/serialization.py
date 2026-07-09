@@ -12,6 +12,7 @@ from voice_concierge.app.types import (
     AppTurnOptions,
     AppTurnRequest,
     AppTurnResult,
+    ConversationTurn,
     MemoryOperationResult,
 )
 from voice_concierge.audio.types import CapturedAudio
@@ -97,6 +98,9 @@ def app_pipeline_state_from_dict(payload: object) -> AppPipelineState | None:
     return AppPipelineState(
         context=context,
         last_spoken_response=_optional_string(state_payload, "last_spoken_response"),
+        conversation_history=conversation_history_from_dict(
+            state_payload.get("conversation_history")
+        ),
         pending_memory_action=memory_action_from_dict(
             state_payload.get("pending_memory_action")
         ),
@@ -115,8 +119,48 @@ def app_pipeline_state_to_dict(state: AppPipelineState) -> JsonDict:
     return {
         "context": context_state_to_dict(state.context),
         "last_spoken_response": state.last_spoken_response,
+        "conversation_history": [
+            conversation_turn_to_dict(turn) for turn in state.conversation_history
+        ],
         "pending_memory_action": memory_action_to_dict(state.pending_memory_action),
         "pending_memory_scope": state.pending_memory_scope,
+    }
+
+
+def conversation_history_from_dict(payload: object) -> tuple[ConversationTurn, ...]:
+    """Parse optional short-term conversation history from app state."""
+
+    if payload is None:
+        return ()
+    if not isinstance(payload, list):
+        raise PayloadValidationError("conversation_history must be an array.")
+
+    return tuple(
+        conversation_turn_from_dict(turn_payload, index=index)
+        for index, turn_payload in enumerate(payload)
+    )
+
+
+def conversation_turn_from_dict(
+    payload: object,
+    *,
+    index: int = 0,
+) -> ConversationTurn:
+    """Parse one completed conversation exchange."""
+
+    turn_payload = _mapping(payload, f"conversation_history[{index}]")
+    return ConversationTurn(
+        user_transcript=_required_string(turn_payload, "user_transcript"),
+        assistant_response=_required_string(turn_payload, "assistant_response"),
+    )
+
+
+def conversation_turn_to_dict(turn: ConversationTurn) -> JsonDict:
+    """Serialize one completed conversation exchange."""
+
+    return {
+        "user_transcript": turn.user_transcript,
+        "assistant_response": turn.assistant_response,
     }
 
 
