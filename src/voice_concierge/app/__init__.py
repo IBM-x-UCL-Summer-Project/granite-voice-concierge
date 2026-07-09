@@ -1,5 +1,6 @@
 """Application orchestration interfaces for Voice Concierge."""
 
+from voice_concierge.app.adapter import handle_turn
 from voice_concierge.app.factory import build_voice_concierge_pipeline
 from voice_concierge.app.memory import (
     MemoryGateway,
@@ -16,6 +17,22 @@ from voice_concierge.app.reasoning import (
     ReasoningTurnResult,
     ReasoningTurnService,
     build_reasoning_turn_service,
+)
+from voice_concierge.app.serialization import (
+    JsonDict,
+    PayloadValidationError,
+    app_pipeline_state_from_dict,
+    app_pipeline_state_to_dict,
+    app_turn_options_from_dict,
+    app_turn_options_to_dict,
+    app_turn_request_from_dict,
+    app_turn_request_to_dict,
+    app_turn_result_to_dict,
+    captured_audio_to_dict,
+    context_state_from_dict,
+    context_state_to_dict,
+    memory_action_from_dict,
+    memory_action_to_dict,
 )
 from voice_concierge.app.types import (
     AppPipelineState,
@@ -39,10 +56,12 @@ __all__ = [
     "AppTurnRequest",
     "AppTurnResult",
     "AudioPlayerAdapter",
+    "JsonDict",
     "MemoryGateway",
     "MemoryManagerGateway",
     "MemoryOperationResult",
     "NullMemoryGateway",
+    "PayloadValidationError",
     "ReasoningEngineFactory",
     "ReasoningFailure",
     "ReasoningFailureCategory",
@@ -52,6 +71,19 @@ __all__ = [
     "SpeechToTextAdapter",
     "TextToSpeechAdapter",
     "VoiceConciergePipeline",
+    "app_pipeline_state_from_dict",
+    "app_pipeline_state_to_dict",
+    "app_turn_options_from_dict",
+    "app_turn_options_to_dict",
+    "app_turn_request_from_dict",
+    "app_turn_request_to_dict",
+    "app_turn_result_to_dict",
     "build_reasoning_turn_service",
     "build_voice_concierge_pipeline",
+    "captured_audio_to_dict",
+    "context_state_from_dict",
+    "context_state_to_dict",
+    "handle_turn",
+    "memory_action_from_dict",
+    "memory_action_to_dict",
 ]

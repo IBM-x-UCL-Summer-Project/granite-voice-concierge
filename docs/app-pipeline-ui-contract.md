@@ -1,16 +1,47 @@
 # App Pipeline UI Contract
 
-Status: proposed contract for frontend planning. The app pipeline is not
-implemented yet, but this document records the shape it is expected to expose.
+Implemented Python app-pipeline contract for frontend/backend planning.
+The browser UI should connect through a backend wrapper rather than importing
+the Python package directly.
 
-The app pipeline will be turn-based and stateful. A UI or backend wrapper should
-send one user turn at a time, along with the `state` returned from the previous
-turn. The pipeline returns the assistant response and the next state.
+The app pipeline is turn-based and stateful. A UI or backend wrapper should send
+one user turn at a time, along with the `state` returned from the previous turn.
+The pipeline returns the assistant response and the next state.
 
 The frontend should not need to know about STT, TTS, Ollama, memory internals, or
 context-manager internals.
 
 ## Request Shape
+
+Python entry points:
+
+```py
+from voice_concierge.app import (
+    app_pipeline_state_from_dict,
+    app_pipeline_state_to_dict,
+    app_turn_request_from_dict,
+    app_turn_result_to_dict,
+    handle_turn,
+)
+
+pipeline.process_transcript(
+    transcript: str,
+    state: AppPipelineState | None = None,
+    *,
+    synthesize: bool = False,
+    play: bool = False,
+) -> AppTurnResult
+
+pipeline.process_audio(
+    audio: CapturedAudio,
+    state: AppPipelineState | None = None,
+    *,
+    synthesize: bool = False,
+    play: bool = False,
+) -> AppTurnResult
+```
+
+Equivalent frontend-facing request shape:
 
 ```ts
 type AppTurnRequest = {
@@ -18,13 +49,28 @@ type AppTurnRequest = {
   state?: AppPipelineState | null;
   options?: {
     synthesize?: boolean; // default false
-    play?: boolean;       // default false, mostly for local/manual testing
+    play?: boolean; // default false, mostly for local/manual testing
   };
 };
 ```
 
 For the web UI, use `transcript`. Audio input can be added later by a backend
 wrapper using the pipeline's `process_audio(...)` method.
+
+## Backend Adapter
+
+The framework-free adapter accepts and returns plain dictionaries:
+
+```py
+response_payload = handle_turn(request_payload, pipeline)
+```
+
+`handle_turn(...)` parses the request with `app_turn_request_from_dict(...)`,
+calls `pipeline.process_request(...)`, then serializes the result with
+`app_turn_result_to_dict(...)`.
+
+Malformed payloads raise `PayloadValidationError`. An HTTP wrapper should
+translate that exception into a 400 response.
 
 ## State Shape
 
@@ -34,34 +80,38 @@ as application state owned by the pipeline, not as frontend business logic.
 ```ts
 type AppPipelineState = {
   context: {
-    mode: "home" | "cooking" | "shopping" | "driving";
-    pending_mode: "home" | "cooking" | "shopping" | "driving" | null;
+    mode: 'home' | 'cooking' | 'shopping' | 'driving';
+    pending_mode: 'home' | 'cooking' | 'shopping' | 'driving' | null;
     last_topic: string | null;
     accessibility: {
-      verbosity: "short" | "normal";
-      speech_pace: "slow" | "normal";
+      verbosity: 'short' | 'normal';
+      speech_pace: 'slow' | 'normal';
     };
   };
 
   last_spoken_response: string | null;
 
   pending_memory_action: null | {
-    action: "store" | "delete" | "update";
+    action: 'store' | 'delete' | 'update';
     content: string;
     rationale: string;
     requires_confirmation: boolean;
   };
 
   pending_memory_scope:
-    | "none"
-    | "personal_relevant"
-    | "task_relevant_only"
-    | "list_relevant"
+    | 'none'
+    | 'personal_relevant'
+    | 'task_relevant_only'
+    | 'list_relevant'
     | null;
 };
 ```
 
 ## Response Shape
+
+The Python `AppTurnResult.response_audio` field is a `CapturedAudio | None`.
+A web backend wrapper should convert it to a browser-friendly representation
+such as the optional `audio` object shown below.
 
 ```ts
 type AppTurnResponse = {
@@ -76,17 +126,17 @@ type AppTurnResponse = {
   spoken_response: string;
 
   context: {
-    mode: "home" | "cooking" | "shopping" | "driving";
+    mode: 'home' | 'cooking' | 'shopping' | 'driving';
     mode_changed: boolean;
     needs_confirmation: boolean;
-    command_action: "repeat" | "next_step" | "stop" | "cancel" | null;
+    command_action: 'repeat' | 'next_step' | 'stop' | 'cancel' | null;
     confirmation_prompt: string;
   };
 
   reasoning: {
-    confidence: "low" | "medium" | "high";
+    confidence: 'low' | 'medium' | 'high';
     needs_confirmation: boolean;
-    proposed_memory_action: AppPipelineState["pending_memory_action"];
+    proposed_memory_action: AppPipelineState['pending_memory_action'];
     mode_suggestion: string | null;
   } | null;
 
@@ -112,13 +162,13 @@ Expected recoverable errors:
 
 ```ts
 type AppTurnError =
-  | "empty_transcript"
-  | "stt_failed"
-  | "memory_retrieval_failed"
-  | "reasoning_failed"
-  | "memory_action_failed"
-  | "tts_failed"
-  | "playback_failed";
+  | 'empty_transcript'
+  | 'stt_failed'
+  | 'memory_retrieval_failed'
+  | 'reasoning_failed'
+  | 'memory_action_failed'
+  | 'tts_failed'
+  | 'playback_failed';
 ```
 
 The UI should still display `spoken_response` when `errors` is not empty.
