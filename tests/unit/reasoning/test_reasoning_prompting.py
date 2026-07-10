@@ -24,9 +24,9 @@ def test_chat_message_serializes_to_runner_dict() -> None:
 def test_default_prompt_template_loads_versioned_resources() -> None:
     prompt = load_prompt_template()
 
-    assert DEFAULT_PROMPT_VERSION == "v1"
+    assert DEFAULT_PROMPT_VERSION == "v2"
     assert prompt.prompt_id == "local-reasoning"
-    assert prompt.version == "v1"
+    assert prompt.version == "v2"
     assert prompt.default_mode == "home"
     assert set(prompt.mode_policies) == {"cooking", "driving", "home", "shopping"}
 
@@ -44,6 +44,9 @@ def test_granite_messages_include_offline_policy() -> None:
     assert [message.role for message in messages] == ["system", "user"]
     system_prompt = messages[0].content
     assert "no internet or cloud service" in system_prompt
+    assert "stable public facts" in system_prompt
+    assert "built-in general knowledge" in system_prompt
+    assert "cannot verify up-to-date information offline" in system_prompt
     assert "Do not claim to browse" in system_prompt
     assert "Ask for explicit confirmation" in system_prompt
     assert "Structured output examples" in system_prompt
@@ -76,6 +79,8 @@ def test_granite_system_prompt_includes_memory_action_examples() -> None:
     messages = build_granite_messages(request)
 
     system_prompt = messages[0].content
+    assert "Who was Anne Frank?" in system_prompt
+    assert "When is the next GTA game coming out?" in system_prompt
     assert '"action":"store"' in system_prompt
     assert '"action":"update"' in system_prompt
     assert "do not invent list items" in system_prompt

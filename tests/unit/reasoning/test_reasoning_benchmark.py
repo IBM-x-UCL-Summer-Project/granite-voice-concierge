@@ -28,7 +28,7 @@ def test_prompt_suite_loads_all_cases() -> None:
     suite = load_prompt_suite(PROMPT_SUITE)
     cases = list(iter_benchmark_cases(suite))
 
-    assert len(cases) == 13
+    assert len(cases) == 15
     assert cases[0].case_id == "cooking_scrambled_eggs_first_step"
     assert cases[0].category == "cooking"
     assert cases[0].mode == "cooking"
@@ -42,9 +42,9 @@ def test_benchmark_report_contains_core_metrics() -> None:
 
     assert report["suite"]["name"] == "reasoning_prompts_v0"
     assert report["engine"] == "DeterministicReasoningFake"
-    assert report["total_cases"] == 13
+    assert report["total_cases"] == 15
     assert report["elapsed_ms"] >= 0
-    assert len(report["results"]) == 13
+    assert len(report["results"]) == 15
 
     first_result = report["results"][0]
     assert first_result["case_id"] == "cooking_scrambled_eggs_first_step"
