@@ -200,6 +200,43 @@ python -m benchmarks.app.readiness --skip-audio-devices
 The checker is read-only. It does not install packages, pull Ollama models,
 download wake/STT/VAD/TTS files, or modify `.local/`.
 
+## Live App Runner
+
+After readiness passes, run the full local voice loop:
+
+```bash
+python -m voice_concierge.app.live
+```
+
+This wires:
+
+```text
+openWakeWord -> Silero VAD -> faster-whisper STT -> app pipeline -> Piper TTS
+-> sounddevice playback
+```
+
+Useful local variants:
+
+```bash
+# Skip wake-word detection and capture each command with VAD.
+python -m voice_concierge.app.live --no-wake-word
+
+# Use a specific PyAudio input device from the wake-word probe list.
+python -m voice_concierge.app.live --device-index <index>
+
+# Exercise one wake/capture attempt and exit.
+python -m voice_concierge.app.live --one-shot
+
+# Disable persistent memory for a clean run.
+python -m voice_concierge.app.live --no-memory
+
+# Synthesize response audio without speaker playback.
+python -m voice_concierge.app.live --no-playback
+
+# Disable TTS and playback entirely.
+python -m voice_concierge.app.live --no-tts
+```
+
 ## Current Test Surface
 
 The app pipeline can already be tested in layers:
@@ -209,3 +246,4 @@ The app pipeline can already be tested in layers:
 - captured audio through `VoiceConciergePipeline.process_audio(...)`;
 - voice input components through `build_voice_input_pipeline()`;
 - TTS through `build_text_to_speech()` and `SoundDevicePlayer`.
+- full live loop through `python -m voice_concierge.app.live`.

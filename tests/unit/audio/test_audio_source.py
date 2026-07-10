@@ -35,6 +35,20 @@ class TestPyAudioSource:
 
     @pytest.mark.unit
     @patch("voice_concierge.audio.source.pyaudio.PyAudio")
+    def test_open_uses_configured_input_device_index(
+        self, mock_pyaudio: MagicMock
+    ) -> None:
+        """open() can target a specific PyAudio input device."""
+        mock_instance = MagicMock()
+        mock_pyaudio.return_value = mock_instance
+
+        source = PyAudioSource(input_device_index=3)
+        source.open()
+
+        assert mock_instance.open.call_args.kwargs["input_device_index"] == 3
+
+    @pytest.mark.unit
+    @patch("voice_concierge.audio.source.pyaudio.PyAudio")
     def test_read_delegates_to_stream(self, mock_pyaudio: MagicMock) -> None:
         """read() reads from the stream without raising on overflow."""
         chunk = np.zeros(512, dtype=np.int16).tobytes()
