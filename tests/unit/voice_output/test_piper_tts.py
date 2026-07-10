@@ -11,11 +11,15 @@ import pytest
 # Local
 from voice_concierge.audio import CapturedAudio
 from voice_concierge.voice_output import (
+    DEFAULT_CONFIG_PATH,
+    DEFAULT_MODEL_PATH,
+    DEFAULT_PIPER_EXECUTABLE,
     PiperTextToSpeech,
     TextToSpeech,
     TextToSpeechBackendUnavailableError,
     TextToSpeechSynthesisError,
 )
+from voice_concierge.voice_output import piper as piper_module
 
 
 def _write_wav_at_output(sample_rate: int = 22050, channels: int = 1):
@@ -35,6 +39,14 @@ def _write_wav_at_output(sample_rate: int = 22050, channels: int = 1):
 
 class TestPiperTextToSpeechSynthesize:
     """Unit tests for PiperTextToSpeech.synthesize()."""
+
+    @pytest.mark.unit
+    def test_default_model_paths_are_package_local(self) -> None:
+        """Defaults point at files created by voice_output.download_models."""
+        module_dir = Path(piper_module.__file__).resolve().parent
+
+        assert Path(DEFAULT_MODEL_PATH).parent == module_dir
+        assert Path(DEFAULT_CONFIG_PATH).parent == module_dir
 
     @pytest.mark.unit
     @patch("voice_concierge.voice_output.piper.subprocess.run")
@@ -61,7 +73,7 @@ class TestPiperTextToSpeechSynthesize:
 
         command, kwargs = mock_run.call_args
         argv = command[0]
-        assert argv[0] == "piper"
+        assert argv[0] == DEFAULT_PIPER_EXECUTABLE
         assert "voice.onnx" in argv and "voice.json" in argv
         assert "1.5" in argv
         assert kwargs["input"] == b"speak this"

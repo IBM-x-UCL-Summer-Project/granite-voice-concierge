@@ -29,6 +29,7 @@ python -m benchmarks.reasoning.benchmark run --engine fake
 - [Repository Structure Guide](docs/repository-structure.md)
 - [Development Workflow Guide](docs/development-workflow.md)
 - [Python Style Guide](docs/python-style-guide.md)
+- [App Pipeline Local E2E Setup](docs/app-pipeline-local-e2e-setup.md)
 
 ## Reasoning Documentation
 
