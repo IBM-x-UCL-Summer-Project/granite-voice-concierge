@@ -1,5 +1,6 @@
 # Standard library
 from collections import defaultdict, deque
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 # Third-party
@@ -7,9 +8,13 @@ import numpy as np
 import pytest
 
 # Local
+from voice_concierge.audio import FakeAudioSource, PyAudioSource
 from voice_concierge.voice_input import WakeWordDetector
+from voice_concierge.voice_input.wake_word_detector import _resolve_model_reference
 
 pytestmark = pytest.mark.usefixtures("mock_openwakeword_model")
+
+_CHUNK_BYTES = np.zeros(1280, dtype=np.int16).tobytes()
 
 
 class TestWakeWordDetectorInit:
@@ -37,114 +42,130 @@ class TestWakeWordDetectorInit:
         assert detector._chunk == 2560
 
     @pytest.mark.unit
+    def test_creates_default_pyaudio_source(self) -> None:
+        """A default PyAudioSource is created when none is injected."""
+        detector = WakeWordDetector(download_models=False)
+        assert isinstance(detector._audio_source, PyAudioSource)
+
+    @pytest.mark.unit
+    def test_uses_injected_audio_source(self) -> None:
+        """An injected audio source is used as-is."""
+        source = FakeAudioSource()
+        detector = WakeWordDetector(download_models=False, audio_source=source)
+        assert detector._audio_source is source
+
+    @pytest.mark.unit
     def test_model_is_loaded_on_init(self) -> None:
         """WakeWordDetector loads the openWakeWord model on initialisation."""
         detector = WakeWordDetector(download_models=False)
         assert detector._model is not None
 
     @pytest.mark.unit
-    def test_custom_model_name(self) -> None:
-        """WakeWordDetector accepts a custom model name."""
-        detector = WakeWordDetector(
-            model_name="hey_jarvis_v0.1.onnx", download_models=False
-        )
-        assert detector._model is not None
+    @patch(
+        "voice_concierge.voice_input.wake_word_detector."
+        "openwakeword.utils.download_models"
+    )
+    def test_downloads_models_when_enabled(self, mock_download: MagicMock) -> None:
+        """download_models=True triggers the openWakeWord model download."""
+        WakeWordDetector(download_models=True)
+        mock_download.assert_called_once()
+
+    @pytest.mark.unit
+    @patch("voice_concierge.voice_input.wake_word_detector.Model")
+    def test_model_construction_falls_back_on_typeerror(
+        self, mock_model_cls: MagicMock
+    ) -> None:
+        """A wakeword_models TypeError falls back to wakeword_model_paths."""
+        fallback_model = MagicMock()
+        mock_model_cls.side_effect = [
+            TypeError("unexpected keyword argument 'wakeword_models'"),
+            fallback_model,
+        ]
+
+        detector = WakeWordDetector(download_models=False)
+
+        assert detector._model is fallback_model
+
+    @pytest.mark.unit
+    @patch("voice_concierge.voice_input.wake_word_detector.Model")
+    def test_model_construction_reraises_unrelated_typeerror(
+        self, mock_model_cls: MagicMock
+    ) -> None:
+        """An unrelated TypeError from Model construction is re-raised."""
+        mock_model_cls.side_effect = TypeError("some other problem")
+
+        with pytest.raises(TypeError):
+            WakeWordDetector(download_models=False)
+
+
+class TestResolveModelReference:
+    """Unit tests for _resolve_model_reference()."""
+
+    @pytest.mark.unit
+    def test_returns_path_for_existing_file(self, tmp_path: Path) -> None:
+        """An existing model file path is returned verbatim."""
+        model_file = tmp_path / "model.onnx"
+        model_file.write_bytes(b"")
+
+        assert _resolve_model_reference(str(model_file)) == str(model_file)
+
+    @pytest.mark.unit
+    def test_returns_bundled_path_when_present(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A bundled resource path is returned when it exists."""
+        monkeypatch.setattr(Path, "is_file", lambda self: "resources" in str(self))
+
+        result = _resolve_model_reference("hey_jarvis_v0.1.onnx")
+
+        assert result.endswith("resources/models/hey_jarvis_v0.1.onnx")
+
+    @pytest.mark.unit
+    def test_returns_name_when_no_file_found(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The raw model name is returned when no file is found."""
+        monkeypatch.setattr(Path, "is_file", lambda self: False)
+
+        assert _resolve_model_reference("missing.onnx") == "missing.onnx"
 
 
 class TestWakeWordDetectorListen:
     """Unit tests for WakeWordDetector.listen()."""
 
     @pytest.mark.unit
-    @patch("voice_concierge.voice_input.wake_word_detector.pyaudio.PyAudio")
-    def test_listen_opens_audio_stream(self, mock_pyaudio: MagicMock) -> None:
-        """listen() opens a PyAudio stream with correct parameters."""
-        # Arrange — use KeyboardInterrupt to stop the loop immediately
-        mock_stream = MagicMock()
-        mock_stream.read.side_effect = KeyboardInterrupt
-        mock_pyaudio_instance = MagicMock()
-        mock_pyaudio_instance.open.return_value = mock_stream
-        mock_pyaudio.return_value = mock_pyaudio_instance
+    def test_listen_opens_audio_source(self) -> None:
+        """listen() opens the audio source before reading."""
+        source = FakeAudioSource(raise_when_exhausted=KeyboardInterrupt())
+        detector = WakeWordDetector(download_models=False, audio_source=source)
 
-        detector = WakeWordDetector(download_models=False)
-        callback = MagicMock()
-
-        # Act
         with pytest.raises(KeyboardInterrupt):
-            detector.listen(on_wake_word=callback)
+            detector.listen(on_wake_word=MagicMock())
 
-        # Assert
-        mock_pyaudio_instance.open.assert_called_once_with(
-            format=detector._fmt,
-            channels=detector._channels,
-            rate=detector._rate,
-            input=True,
-            frames_per_buffer=detector._chunk,
+        assert source.open_count == 1
+
+    @pytest.mark.unit
+    def test_listen_closes_source_on_keyboard_interrupt(self) -> None:
+        """listen() closes the audio source when interrupted with no detection."""
+        source = FakeAudioSource(
+            [_CHUNK_BYTES], raise_when_exhausted=KeyboardInterrupt()
         )
-
-    @pytest.mark.unit
-    @patch("voice_concierge.voice_input.wake_word_detector.pyaudio.PyAudio")
-    def test_listen_cleans_up_stream_on_keyboard_interrupt(
-        self, mock_pyaudio: MagicMock
-    ) -> None:
-        """listen() closes the stream and terminates PyAudio on KeyboardInterrupt."""
-        # Arrange
-        mock_stream = MagicMock()
-        mock_stream.read.side_effect = KeyboardInterrupt
-        mock_pyaudio_instance = MagicMock()
-        mock_pyaudio_instance.open.return_value = mock_stream
-        mock_pyaudio.return_value = mock_pyaudio_instance
-
-        detector = WakeWordDetector(download_models=False)
+        detector = WakeWordDetector(download_models=False, audio_source=source)
         callback = MagicMock()
 
-        # Act
         with pytest.raises(KeyboardInterrupt):
             detector.listen(on_wake_word=callback)
 
-        # Assert
-        mock_stream.stop_stream.assert_called_once()
-        mock_stream.close.assert_called_once()
-        mock_pyaudio_instance.terminate.assert_called_once()
-
-    @pytest.mark.unit
-    @patch("voice_concierge.voice_input.wake_word_detector.pyaudio.PyAudio")
-    def test_listen_callback_not_called_on_silence(
-        self, mock_pyaudio: MagicMock, silent_audio_stream: list[np.ndarray]
-    ) -> None:
-        """listen() does not fire callback when audio is silent."""
-        # Arrange
-        chunks = [chunk.tobytes() for chunk in silent_audio_stream]
-
-        mock_stream = MagicMock()
-        mock_stream.read.side_effect = chunks + [KeyboardInterrupt]
-        mock_pyaudio_instance = MagicMock()
-        mock_pyaudio_instance.open.return_value = mock_stream
-        mock_pyaudio.return_value = mock_pyaudio_instance
-
-        detector = WakeWordDetector(download_models=False)
-        callback = MagicMock()
-
-        # Act
-        with pytest.raises(KeyboardInterrupt):
-            detector.listen(on_wake_word=callback)
-
-        # Assert
         callback.assert_not_called()
+        assert source.close_count == 1
 
     @pytest.mark.unit
-    @patch("voice_concierge.voice_input.wake_word_detector.pyaudio.PyAudio")
-    def test_listen_resets_model_after_detection(self, mock_pyaudio: MagicMock) -> None:
-        """listen() resets the model buffer after wake word is detected."""
-        # Arrange
-        mock_stream = MagicMock()
-        mock_stream.read.return_value = np.zeros(1280, dtype=np.int16).tobytes()
-        mock_pyaudio_instance = MagicMock()
-        mock_pyaudio_instance.open.return_value = mock_stream
-        mock_pyaudio.return_value = mock_pyaudio_instance
-
-        detector = WakeWordDetector(download_models=False)
-
-        # Mock predict() to avoid overwriting the injected buffer
+    def test_listen_triggers_callback_above_threshold(self) -> None:
+        """listen() fires the callback, resets, and closes on detection."""
+        source = FakeAudioSource(
+            [_CHUNK_BYTES], raise_when_exhausted=KeyboardInterrupt()
+        )
+        detector = WakeWordDetector(download_models=False, audio_source=source)
         detector._model.predict = MagicMock()
         detector._model.prediction_buffer = defaultdict(
             deque, {"hey_jarvis_v0.1.onnx": deque([0.9])}
@@ -152,32 +173,8 @@ class TestWakeWordDetectorListen:
         detector._model.reset = MagicMock()
         callback = MagicMock()
 
-        # Act
         detector.listen(on_wake_word=callback)
 
-        # Assert
+        callback.assert_called_once()
         detector._model.reset.assert_called_once()
-
-    @pytest.mark.unit
-    @patch("voice_concierge.voice_input.wake_word_detector.pyaudio.PyAudio")
-    def test_listen_handles_stream_close_error_gracefully(
-        self, mock_pyaudio: MagicMock
-    ) -> None:
-        """listen() handles errors when closing already-closed stream gracefully."""
-        # Arrange
-        mock_stream = MagicMock()
-        mock_stream.read.return_value = np.zeros(1280, dtype=np.int16).tobytes()
-        mock_stream.stop_stream.side_effect = [None, Exception("Stream already closed")]
-        mock_pyaudio_instance = MagicMock()
-        mock_pyaudio_instance.open.return_value = mock_stream
-        mock_pyaudio.return_value = mock_pyaudio_instance
-
-        detector = WakeWordDetector(download_models=False)
-        detector._model.predict = MagicMock()
-        detector._model.prediction_buffer = defaultdict(
-            deque, {"hey_jarvis_v0.1.onnx": deque([0.9])}
-        )
-        callback = MagicMock()
-
-        # Act / Assert — should not raise even when finally block stream close fails
-        detector.listen(on_wake_word=callback)
+        assert source.close_count == 1

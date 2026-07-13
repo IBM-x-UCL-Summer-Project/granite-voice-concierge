@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 # Local
+from voice_concierge.audio import CapturedAudio
 from voice_concierge.voice_input import (
     VoiceActivityDetector,
     VoiceInputPipeline,
@@ -178,7 +179,7 @@ class TestVoiceInputPipelineHandleUtterance:
         pipeline = VoiceInputPipeline()
         callback = MagicMock()
         pipeline._on_utterance_captured = callback
-        audio = np.zeros(1280, dtype=np.int16)
+        audio = CapturedAudio(samples=np.zeros(1280, dtype=np.int16))
 
         # Act
         pipeline._handle_utterance(audio)
@@ -194,7 +195,7 @@ class TestVoiceInputPipelineHandleUtterance:
         # Arrange
         pipeline = VoiceInputPipeline()
         pipeline._on_utterance_captured = None
-        audio = np.zeros(1280, dtype=np.int16)
+        audio = CapturedAudio(samples=np.zeros(1280, dtype=np.int16))
 
         # Act
         pipeline._handle_utterance(audio)

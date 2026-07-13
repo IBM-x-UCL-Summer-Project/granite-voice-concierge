@@ -1,19 +1,21 @@
 # Standard library
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 # Third-party
 import numpy as np
 import openwakeword
 import openwakeword.utils
-import pyaudio
 from openwakeword.model import Model
+
+# Local
+from voice_concierge.audio import AudioSource, PyAudioSource
+from voice_concierge.audio.source import DEFAULT_FORMAT
 
 # Wake word detection constants
 DEFAULT_CHUNK: int = 1280  # ~80ms at 16kHz (openWakeWord's expected chunk size)
 DEFAULT_RATE: int = 16000  # sample rate required by openWakeWord
 DEFAULT_CHANNELS: int = 1  # mono audio
-DEFAULT_FORMAT: int = pyaudio.paInt16
 DEFAULT_CONFIDENCE_THRESHOLD: float = 0.3  # from spike benchmarks
 
 
@@ -39,7 +41,7 @@ class WakeWordDetector:
     """
     Detects a wake word from live microphone input using openWakeWord.
 
-    Listens continuously to the microphone and calls the provided callback
+    Listens continuously to the audio source and calls the provided callback
     when the wake word confidence exceeds the threshold. Resets automatically
     after each detection to allow successive triggers.
 
@@ -57,6 +59,7 @@ class WakeWordDetector:
         channels: int = DEFAULT_CHANNELS,
         fmt: int = DEFAULT_FORMAT,
         download_models: bool = True,
+        audio_source: AudioSource | None = None,
     ) -> None:
         """
         Initialise the wake word detector.
@@ -68,12 +71,18 @@ class WakeWordDetector:
             rate: audio sample rate in Hz.
             channels: number of audio channels.
             fmt: PyAudio format constant.
+            download_models: whether to fetch bundled openWakeWord models.
+            audio_source: microphone source to read from. If None, a default
+                PyAudioSource is created.
         """
         self._confidence_threshold = confidence_threshold
         self._chunk = chunk
         self._rate = rate
         self._channels = channels
         self._fmt = fmt
+        self._audio_source: AudioSource = audio_source or PyAudioSource(
+            rate=rate, channels=channels, fmt=fmt, frames_per_buffer=chunk
+        )
 
         if download_models and hasattr(openwakeword.utils, "download_models"):
             openwakeword.utils.download_models()
@@ -99,22 +108,13 @@ class WakeWordDetector:
         Args:
             on_wake_word: callback to invoke on wake word detection.
         """
-        p: pyaudio.PyAudio = pyaudio.PyAudio()
-        stream: pyaudio.Stream = p.open(
-            format=self._fmt,
-            channels=self._channels,
-            rate=self._rate,
-            input=True,
-            frames_per_buffer=self._chunk,
-        )
-
+        self._audio_source.open()
         print("Wake word detector listening...")
 
+        closed = False
         try:
             while True:
-                audio_chunk: bytes = stream.read(
-                    self._chunk, exception_on_overflow=False
-                )
+                audio_chunk: bytes = self._audio_source.read(self._chunk)
                 audio_np: np.ndarray = np.frombuffer(audio_chunk, dtype=np.int16)
 
                 self._model.predict(audio_np)
@@ -127,12 +127,10 @@ class WakeWordDetector:
                         )
                         self._model.reset()
 
-                        # Close stream before invoking callback to free microphone
-                        # for VAD to open on the same device
-                        stream.stop_stream()
-                        stream.close()
-                        p.terminate()
-
+                        # Close the mic before invoking the callback so the VAD
+                        # can open the same device.
+                        self._audio_source.close()
+                        closed = True
                         on_wake_word()
                         return
 
@@ -140,9 +138,5 @@ class WakeWordDetector:
             print("\nWake word detector stopped.")
             raise
         finally:
-            try:
-                stream.stop_stream()
-                stream.close()
-                p.terminate()
-            except Exception:
-                pass
+            if not closed:
+                self._audio_source.close()
