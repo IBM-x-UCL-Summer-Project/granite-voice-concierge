@@ -4,6 +4,33 @@ Complete API documentation for the memory module.
 
 ---
 
+## Local Construction
+
+Use the memory factory for application code instead of constructing each
+storage component directly:
+
+```python
+from voice_concierge.memory import LocalMemoryConfig, build_memory_manager
+
+manager = build_memory_manager(LocalMemoryConfig())
+```
+
+The defaults create:
+
+- `.local/memory/memories.sqlite3` for memory records;
+- `.local/memory/vectors.sqlite3` for sqlite-vec embeddings;
+- 768-dimension vectors from the local Ollama
+  `granite-embedding:278m` model.
+
+`LocalMemoryConfig` can override both paths, the embedding model, and vector
+dimension. Parent directories are created automatically. Call `manager.close()`
+when the owner shuts down.
+
+The app pipeline normally wraps this manager with `MemoryManagerGateway` by
+calling `build_voice_concierge_pipeline(load_memory=True)`.
+
+---
+
 ## Table of Contents
 
 - [MemoryManager](#memorymanager) - Main interface
@@ -31,6 +58,7 @@ manager = MemoryManager(
 ```
 
 **Parameters:**
+
 - `memory_store`: SQLite storage instance
 - `vector_store`: Vector store instance
 - `embedding_service`: Embedding service instance
@@ -58,11 +86,13 @@ success, reason, memory_id = manager.store_memory(
 ```
 
 **Return values:**
+
 - `success: bool` - Whether successful
 - `reason: str` - Status description
 - `memory_id: Optional[int]` - Memory ID (None if failed)
 
 **Example:**
+
 ```python
 # Option 1: Full auto-extraction (recommended)
 success, reason, mid = manager.store_memory(
@@ -90,6 +120,7 @@ else:
 ```
 
 **Possible reason values:**
+
 - `"stored_successfully"` - Successfully stored
 - `"validation_failed: llm_rejected"` - LLM rejected
 - `"validation_failed: too_short"` - Content too short
@@ -112,6 +143,7 @@ memories = manager.retrieve_similar(
 ```
 
 **Return values:**
+
 ```python
 List[dict]  # Memory list sorted by similarity
 
@@ -131,6 +163,7 @@ List[dict]  # Memory list sorted by similarity
 ```
 
 **Example:**
+
 ```python
 results = manager.retrieve_similar(
     query="User food preferences",
@@ -143,6 +176,7 @@ for mem in results:
 ```
 
 **Exceptions:**
+
 - `RuntimeError` - Retrieval failed (network, model, etc.)
 
 ---
@@ -163,10 +197,12 @@ success, reason = manager.update_memory(
 ```
 
 **Return values:**
+
 - `success: bool` - Whether successful
 - `reason: str` - Status description
 
 **Example:**
+
 ```python
 success, reason = manager.update_memory(
     memory_id=1,
@@ -176,6 +212,7 @@ success, reason = manager.update_memory(
 ```
 
 **Possible reason values:**
+
 - `"updated_successfully"` - Successfully updated
 - `"no_changes"` - No changes made
 - `"update_error: ..."` - Update failed
@@ -191,10 +228,12 @@ success, reason = manager.delete_memory(memory_id: int)
 ```
 
 **Return values:**
+
 - `success: bool`
 - `reason: str`
 
 **Example:**
+
 ```python
 success, reason = manager.delete_memory(1)
 ```
@@ -214,6 +253,7 @@ success, reason = manager.process_memory_action(
 ```
 
 **MemoryAction structure:**
+
 ```python
 MemoryAction(
     action: str,  # "store" / "update" / "delete"
@@ -224,6 +264,7 @@ MemoryAction(
 ```
 
 **Example:**
+
 ```python
 action = MemoryAction(
     action="store",
@@ -249,6 +290,7 @@ memories = manager.get_context_memories(
 ```
 
 **Return values:**
+
 ```python
 List[str]  # List of memory contents
 
@@ -257,6 +299,7 @@ List[str]  # List of memory contents
 ```
 
 **Example:**
+
 ```python
 context = manager.get_context_memories(
     "Tell me about the user",
@@ -283,6 +326,7 @@ memories = manager.get_all_memories()
 ```
 
 **Return values:**
+
 ```python
 List[dict]  # All memories, ordered by creation time (newest first)
 ```
@@ -312,6 +356,7 @@ store = MemoryStore(db_path: str)
 ### Methods
 
 #### `create_memory()`
+
 ```python
 memory_id = store.create_memory(
     content: str,
@@ -325,6 +370,7 @@ memory_id = store.create_memory(
 ```
 
 #### `get_memories()`
+
 ```python
 memories = store.get_memories(
     person: Optional[str] = None,
@@ -334,6 +380,7 @@ memories = store.get_memories(
 ```
 
 #### `update_memory()`
+
 ```python
 success = store.update_memory(
     memory_id: int,
@@ -343,11 +390,13 @@ success = store.update_memory(
 ```
 
 #### `delete_memory()`
+
 ```python
 success = store.delete_memory(memory_id: int)
 ```
 
 #### `close()`
+
 ```python
 store.close()
 ```
@@ -361,9 +410,11 @@ Query interface. Typically accessed through MemoryManager.
 ### Methods
 
 #### `retrieve_similar()`
+
 See MemoryManager.retrieve_similar()
 
 #### `retrieve_by_metadata()`
+
 ```python
 memories = retriever.retrieve_by_metadata(
     person: Optional[str] = None,
@@ -373,6 +424,7 @@ memories = retriever.retrieve_by_metadata(
 ```
 
 #### `retrieve_by_person()`
+
 ```python
 memories = retriever.retrieve_by_person(
     person: str,
@@ -381,6 +433,7 @@ memories = retriever.retrieve_by_person(
 ```
 
 #### `retrieve_by_topic()`
+
 ```python
 memories = retriever.retrieve_by_topic(
     topic: str,
@@ -389,6 +442,7 @@ memories = retriever.retrieve_by_topic(
 ```
 
 #### `retrieve_by_layer()`
+
 ```python
 memories = retriever.retrieve_by_layer(
     layer: str,
@@ -397,6 +451,7 @@ memories = retriever.retrieve_by_layer(
 ```
 
 #### `retrieve_all()`
+
 ```python
 memories = retriever.retrieve_all()
 ```
@@ -427,10 +482,12 @@ should_store, reason = validator.should_store(content: str)
 ```
 
 **Return values:**
+
 - `should_store: bool`
 - `reason: str` - Reason
 
 **Possible reason values:**
+
 - `"llm_approved"` / `"llm_rejected"`
 - `"empty_content"` / `"too_short"`
 - `"validation_error: ..."`
@@ -448,10 +505,12 @@ memory_type, reason = validator.classify_memory_type(content: str)
 ```
 
 **Return values:**
+
 - `memory_type: Optional[MemoryType]` - Classification result
 - `reason: str` - Reason
 
 **MemoryType values:**
+
 - `MemoryType.EPISODIC` - Episodic
 - `MemoryType.SEMANTIC` - Semantic
 - `MemoryType.PROCEDURAL` - Procedural
@@ -469,6 +528,7 @@ metadata = validator.extract_metadata(content: str)
 ```
 
 **Return values:**
+
 ```python
 {
     "person": Optional[str],      # Name of person mentioned (or None)
@@ -479,6 +539,7 @@ metadata = validator.extract_metadata(content: str)
 ```
 
 **Example:**
+
 ```python
 metadata = validator.extract_metadata(
     "Had lunch with Alice at the Italian place downtown yesterday"
@@ -505,6 +566,7 @@ report = validator.get_validation_report(content: str)
 ```
 
 **Return values:**
+
 ```python
 {
     "should_store": bool,
@@ -535,6 +597,7 @@ store = VectorStore(
 ### Methods
 
 #### `save_vector()`
+
 ```python
 store.save_vector(
     memory_id: int,
@@ -543,6 +606,7 @@ store.save_vector(
 ```
 
 #### `search_similar()`
+
 ```python
 results = store.search_similar(
     query_embedding: List[float],
@@ -551,6 +615,7 @@ results = store.search_similar(
 ```
 
 **Return values:**
+
 ```python
 List[dict]  # Results
 # [
@@ -560,6 +625,7 @@ List[dict]  # Results
 ```
 
 #### `close()`
+
 ```python
 store.close()
 ```
@@ -589,6 +655,7 @@ embedding = service.get_embedding(content: str)
 ```
 
 **Return values:**
+
 ```python
 List[float]  # 768-dimensional vector
 ```
@@ -689,7 +756,7 @@ try:
     success, reason, mid = manager.store_memory(...)
     if not success:
         print(f"Failed: {reason}")
-    
+
     memories = manager.retrieve_similar(...)
 except RuntimeError as e:
     print(f"Retrieval error: {e}")
@@ -706,4 +773,3 @@ finally:
 - Metadata filtering is faster than semantic search
 - Limit `top_k` to improve retrieval speed
 - Regularly backup the database
-

@@ -24,11 +24,26 @@ repository root:
 python -m benchmarks.reasoning.benchmark run --engine fake
 ```
 
+Run the local live voice loop after completing the local E2E setup:
+
+```bash
+python -m voice_concierge.app.live
+```
+
+Useful manual variants:
+
+```bash
+python -m voice_concierge.app.live --no-wake-word
+python -m voice_concierge.app.live --device-index <index>
+python -m voice_concierge.app.live --no-memory --no-playback
+```
+
 ## Project Documentation
 
 - [Repository Structure Guide](docs/repository-structure.md)
 - [Development Workflow Guide](docs/development-workflow.md)
 - [Python Style Guide](docs/python-style-guide.md)
+- [App Pipeline Local E2E Setup](docs/app-pipeline-local-e2e-setup.md)
 
 ## Reasoning Documentation
 

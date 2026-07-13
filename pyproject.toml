@@ -22,6 +22,8 @@ dependencies = [
     # Unpinned: no openwakeword release with a Python 3.12-installable
     # tflite-runtime exists, so let the resolver pick a compatible version.
     "openwakeword",
+    # Specific onnxruntime as other versions resulting in nil wakeword score
+    "onnxruntime>=1.20.1,<1.21",
     # Voice activity detection
     "silero-vad>=6,<7",
     "torch>=2,<3",

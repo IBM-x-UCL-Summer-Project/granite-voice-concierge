@@ -2,7 +2,9 @@
 
 # Standard library
 import logging
+import shutil
 import subprocess
+import sys
 import tempfile
 import wave
 from pathlib import Path
@@ -19,11 +21,25 @@ from voice_concierge.voice_output.errors import (
 
 logger = logging.getLogger(__name__)
 
+
+def _default_piper_executable() -> str:
+    executable = shutil.which("piper")
+    if executable is not None:
+        return executable
+
+    venv_executable = Path(sys.executable).with_name("piper")
+    if venv_executable.is_file():
+        return str(venv_executable)
+
+    return "piper"
+
+
 # Piper defaults tuned for older-adult listeners
-DEFAULT_MODEL_PATH: str = "en_GB-alan-medium.onnx"
-DEFAULT_CONFIG_PATH: str = "en_GB-alan-medium.onnx.json"
-DEFAULT_LENGTH_SCALE: float = 1.2  # >1 slows speech; 1.2 suits older adults
-DEFAULT_PIPER_EXECUTABLE: str = "piper"
+_MODULE_DIR = Path(__file__).resolve().parent
+DEFAULT_MODEL_PATH: str = str(_MODULE_DIR / "en_GB-alan-medium.onnx")
+DEFAULT_CONFIG_PATH: str = str(_MODULE_DIR / "en_GB-alan-medium.onnx.json")
+DEFAULT_LENGTH_SCALE: float = 1.0  # >1 slows speech; 1.2 suits older adults
+DEFAULT_PIPER_EXECUTABLE: str = _default_piper_executable()
 
 
 class PiperTextToSpeech:

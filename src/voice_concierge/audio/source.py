@@ -46,11 +46,13 @@ class PyAudioSource:
         channels: int = DEFAULT_CHANNELS,
         fmt: int = DEFAULT_FORMAT,
         frames_per_buffer: int = DEFAULT_FRAMES_PER_BUFFER,
+        input_device_index: int | None = None,
     ) -> None:
         self._rate = rate
         self._channels = channels
         self._fmt = fmt
         self._frames_per_buffer = frames_per_buffer
+        self._input_device_index = input_device_index
         self._pyaudio: pyaudio.PyAudio | None = None
         self._stream: pyaudio.Stream | None = None
 
@@ -58,13 +60,16 @@ class PyAudioSource:
         """Open the PyAudio input stream, releasing partial state on failure."""
         try:
             self._pyaudio = pyaudio.PyAudio()
-            self._stream = self._pyaudio.open(
-                format=self._fmt,
-                channels=self._channels,
-                rate=self._rate,
-                input=True,
-                frames_per_buffer=self._frames_per_buffer,
-            )
+            kwargs = {
+                "format": self._fmt,
+                "channels": self._channels,
+                "rate": self._rate,
+                "input": True,
+                "frames_per_buffer": self._frames_per_buffer,
+            }
+            if self._input_device_index is not None:
+                kwargs["input_device_index"] = self._input_device_index
+            self._stream = self._pyaudio.open(**kwargs)
         except Exception as exc:
             self.close()
             raise AudioDeviceError(f"Could not open audio input device: {exc}") from exc

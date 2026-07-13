@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 
 from voice_concierge.context.policies import policy_for_mode
@@ -16,6 +17,10 @@ from voice_concierge.context.types import (
 
 _CONFIRM_WORDS = ("yes", "confirm", "okay", "ok", "go ahead")
 _CANCEL_WORDS = ("cancel", "stop", "never mind", "nevermind")
+_EXPLICIT_MODE_SWITCH = re.compile(
+    r"\b(?:switch|change)(?:\s+back)?\s+to\s+(?:the\s+)?"
+    r"(home|cooking|shopping|driving)\b"
+)
 
 
 class ContextManager:
@@ -141,6 +146,16 @@ def _detect_requested_mode(transcript: str) -> ContextMode | None:
     for mode, phrases in mode_phrases:
         if _contains_any(transcript, phrases):
             return mode
+
+    explicit_switch = _EXPLICIT_MODE_SWITCH.search(transcript)
+    if explicit_switch is not None:
+        modes: dict[str, ContextMode] = {
+            "home": "home",
+            "cooking": "cooking",
+            "shopping": "shopping",
+            "driving": "driving",
+        }
+        return modes[explicit_switch.group(1)]
 
     return None
 

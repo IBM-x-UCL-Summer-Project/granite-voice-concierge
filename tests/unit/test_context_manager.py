@@ -39,6 +39,14 @@ class ContextManagerTest(unittest.TestCase):
         self.assertEqual(decision.policy.response_style, "step_by_step")
         self.assertEqual(decision.policy.memory_scope, "task_relevant_only")
 
+    def test_switch_back_phrase_selects_mode_despite_trailing_typo(self) -> None:
+        state = ContextState(mode="driving")
+
+        decision = self.manager.handle("Switch back to home mdoe", state)
+
+        self.assertEqual(decision.state.mode, "home")
+        self.assertTrue(decision.mode_changed)
+
     def test_preserves_active_mode_without_new_mode_command(self) -> None:
         state = ContextState(mode="shopping")
 
