@@ -27,3 +27,11 @@ class PlaybackController(Protocol):
 
     def resume(self) -> None:
         """Resume paused playback."""
+
+
+@runtime_checkable
+class PhraseRecognizer(Protocol):
+    """Recognizes a constrained-vocabulary phrase from an audio frame."""
+
+    def recognize(self, frame: bytes) -> str | None:
+        """Return a finalized recognized phrase, or None if not yet available."""

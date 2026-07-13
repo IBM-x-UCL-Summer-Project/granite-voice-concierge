@@ -4,10 +4,12 @@ import pytest
 # Local
 from voice_concierge.command_control.fakes import (
     FakeCommandSpotter,
+    FakePhraseRecognizer,
     FakePlaybackController,
 )
 from voice_concierge.command_control.interfaces import (
     CommandSpotter,
+    PhraseRecognizer,
     PlaybackController,
 )
 from voice_concierge.command_control.types import CommandEvent
@@ -40,6 +42,33 @@ class TestFakeCommandSpotter:
     def test_satisfies_command_spotter_protocol(self) -> None:
         """The fake satisfies the runtime-checkable CommandSpotter protocol."""
         assert isinstance(FakeCommandSpotter(), CommandSpotter)
+
+
+class TestFakePhraseRecognizer:
+    """Unit tests for the FakePhraseRecognizer."""
+
+    @pytest.mark.unit
+    def test_returns_scripted_phrases_then_none(self) -> None:
+        """The fake returns scripted phrases in order, then None."""
+        recognizer = FakePhraseRecognizer(["stop", None])
+
+        assert recognizer.recognize(b"a") == "stop"
+        assert recognizer.recognize(b"b") is None
+        assert recognizer.recognize(b"c") is None  # exhausted
+
+    @pytest.mark.unit
+    def test_records_frames(self) -> None:
+        """The fake records every frame it processes."""
+        recognizer = FakePhraseRecognizer()
+
+        recognizer.recognize(b"x")
+
+        assert recognizer.frames == [b"x"]
+
+    @pytest.mark.unit
+    def test_satisfies_phrase_recognizer_protocol(self) -> None:
+        """The fake satisfies the runtime-checkable PhraseRecognizer protocol."""
+        assert isinstance(FakePhraseRecognizer(), PhraseRecognizer)
 
 
 class TestFakePlaybackController:

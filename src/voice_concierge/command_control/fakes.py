@@ -23,6 +23,21 @@ class FakeCommandSpotter:
         return None
 
 
+class FakePhraseRecognizer:
+    """PhraseRecognizer fake that returns scripted phrases per frame."""
+
+    def __init__(self, phrases: Iterable[str | None] = ()) -> None:
+        self._phrases: deque[str | None] = deque(phrases)
+        self.frames: list[bytes] = []
+
+    def recognize(self, frame: bytes) -> str | None:
+        """Record the frame and return the next scripted phrase, if any."""
+        self.frames.append(frame)
+        if self._phrases:
+            return self._phrases.popleft()
+        return None
+
+
 class FakePlaybackController:
     """PlaybackController fake that records the actions it received."""
 

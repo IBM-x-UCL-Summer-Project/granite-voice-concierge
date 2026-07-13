@@ -4,6 +4,7 @@ import pytest
 # Local
 from voice_concierge.command_control.interfaces import (
     CommandSpotter,
+    PhraseRecognizer,
     PlaybackController,
 )
 
@@ -12,6 +13,13 @@ class _Spotter:
     """Stub implementing only the CommandSpotter method."""
 
     def process(self, frame):
+        return None
+
+
+class _Recognizer:
+    """Stub implementing only the PhraseRecognizer method."""
+
+    def recognize(self, frame):
         return None
 
 
@@ -42,3 +50,9 @@ class TestCommandControlInterfaces:
         """Only a type exposing stop/pause/resume satisfies PlaybackController."""
         assert isinstance(_Controller(), PlaybackController)
         assert not isinstance(_Spotter(), PlaybackController)
+
+    @pytest.mark.unit
+    def test_phrase_recognizer_protocol(self) -> None:
+        """Only a type exposing recognize() satisfies PhraseRecognizer."""
+        assert isinstance(_Recognizer(), PhraseRecognizer)
+        assert not isinstance(_Spotter(), PhraseRecognizer)
