@@ -8,6 +8,7 @@ from voice_concierge.command_control.errors import (
 )
 from voice_concierge.command_control.factory import (
     build_command_listener,
+    build_stop_command_control,
     build_vosk_command_spotter,
 )
 from voice_concierge.command_control.fakes import (
@@ -50,5 +51,6 @@ __all__ = [
     "SoundDevicePlaybackController",
     "VoskPhraseRecognizer",
     "build_command_listener",
+    "build_stop_command_control",
     "build_vosk_command_spotter",
 ]

@@ -13,6 +13,7 @@ from voice_concierge.command_control import (
     FakePlaybackController,
     PhraseCommandSpotter,
     build_command_listener,
+    build_stop_command_control,
     build_vosk_command_spotter,
 )
 from voice_concierge.command_control.spotter import DEFAULT_PHRASE_COMMANDS
@@ -73,3 +74,17 @@ class TestBuildVoskCommandSpotter:
 
         (vocabulary,), _ = mock_recognizer.call_args
         assert vocabulary == ("halt",)
+
+
+class TestBuildStopCommandControl:
+    """Unit tests for the stop-only assembly factory."""
+
+    @pytest.mark.unit
+    @patch("voice_concierge.command_control.factory.VoskPhraseRecognizer")
+    def test_assembles_stop_only_listener(self, mock_recognizer: patch) -> None:
+        """The stop assembly recognizes only 'stop' and returns a listener."""
+        listener = build_stop_command_control(audio_source=FakeAudioSource(fill=_FRAME))
+
+        assert isinstance(listener, CommandListener)
+        (vocabulary,), _ = mock_recognizer.call_args
+        assert vocabulary == ("stop",)

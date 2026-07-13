@@ -8,6 +8,9 @@ from voice_concierge.command_control.interfaces import (
     PlaybackController,
 )
 from voice_concierge.command_control.listener import DEFAULT_CHUNK, CommandListener
+from voice_concierge.command_control.sounddevice_controller import (
+    SoundDevicePlaybackController,
+)
 from voice_concierge.command_control.spotter import (
     DEFAULT_PHRASE_COMMANDS,
     PhraseCommandSpotter,
@@ -45,3 +48,27 @@ def build_vosk_command_spotter(
         tuple(commands), model_path=model_path, sample_rate=sample_rate
     )
     return PhraseCommandSpotter(recognizer, phrase_commands=commands)
+
+
+def build_stop_command_control(
+    *,
+    model_path: str = DEFAULT_MODEL_PATH,
+    sample_rate: int = DEFAULT_SAMPLE_RATE,
+    audio_source: AudioSource | None = None,
+    chunk: int = DEFAULT_CHUNK,
+) -> CommandListener:
+    """Assemble the stop-only barge-in stack into a windowed command listener.
+
+    Recognizes only "stop" (via Vosk) and stops active playback through a
+    SoundDevicePlaybackController. Call listener.start() when the VAD utterance
+    ends and listener.stop() when TTS output ends.
+    """
+    spotter = build_vosk_command_spotter(
+        model_path=model_path,
+        sample_rate=sample_rate,
+        phrase_commands={"stop": "stop"},
+    )
+    controller = SoundDevicePlaybackController()
+    return build_command_listener(
+        spotter, controller, audio_source=audio_source, chunk=chunk
+    )
