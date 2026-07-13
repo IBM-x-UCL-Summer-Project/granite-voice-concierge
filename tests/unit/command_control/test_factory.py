@@ -11,8 +11,11 @@ from voice_concierge.command_control import (
     CommandListener,
     FakeCommandSpotter,
     FakePlaybackController,
+    PhraseCommandSpotter,
     build_command_listener,
+    build_vosk_command_spotter,
 )
+from voice_concierge.command_control.spotter import DEFAULT_PHRASE_COMMANDS
 from voice_concierge.command_control.types import CommandEvent
 
 _FRAME = np.zeros(512, dtype=np.int16).tobytes()
@@ -46,3 +49,27 @@ class TestBuildCommandListener:
         )
 
         mock_source.assert_called_once_with(frames_per_buffer=256)
+
+
+class TestBuildVoskCommandSpotter:
+    """Unit tests for the build_vosk_command_spotter factory."""
+
+    @pytest.mark.unit
+    @patch("voice_concierge.command_control.factory.VoskPhraseRecognizer")
+    def test_wires_default_vocabulary(self, mock_recognizer: patch) -> None:
+        """The factory builds a Vosk recognizer over the default command words."""
+        spotter = build_vosk_command_spotter(model_path="m", sample_rate=8000)
+
+        mock_recognizer.assert_called_once_with(
+            tuple(DEFAULT_PHRASE_COMMANDS), model_path="m", sample_rate=8000
+        )
+        assert isinstance(spotter, PhraseCommandSpotter)
+
+    @pytest.mark.unit
+    @patch("voice_concierge.command_control.factory.VoskPhraseRecognizer")
+    def test_wires_custom_phrase_commands(self, mock_recognizer: patch) -> None:
+        """A custom phrase map drives both the grammar vocabulary and mapping."""
+        build_vosk_command_spotter(phrase_commands={"halt": "stop"})
+
+        (vocabulary,), _ = mock_recognizer.call_args
+        assert vocabulary == ("halt",)
