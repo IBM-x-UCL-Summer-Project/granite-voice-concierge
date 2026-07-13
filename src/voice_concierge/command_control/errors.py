@@ -7,3 +7,7 @@ class CommandControlError(RuntimeError):
 
 class CommandSpotterUnavailableError(CommandControlError):
     """Raised when a command spotter backend cannot be initialised."""
+
+
+class PlaybackControlError(CommandControlError):
+    """Raised when playback control cannot be performed."""

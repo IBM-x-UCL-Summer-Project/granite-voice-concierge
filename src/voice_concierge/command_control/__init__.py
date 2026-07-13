@@ -4,6 +4,7 @@ from voice_concierge.command_control.dispatcher import CommandDispatcher
 from voice_concierge.command_control.errors import (
     CommandControlError,
     CommandSpotterUnavailableError,
+    PlaybackControlError,
 )
 from voice_concierge.command_control.factory import (
     build_command_listener,
@@ -20,6 +21,9 @@ from voice_concierge.command_control.interfaces import (
     PlaybackController,
 )
 from voice_concierge.command_control.listener import CommandListener
+from voice_concierge.command_control.sounddevice_controller import (
+    SoundDevicePlaybackController,
+)
 from voice_concierge.command_control.spotter import (
     DEFAULT_PHRASE_COMMANDS,
     PhraseCommandSpotter,
@@ -41,7 +45,9 @@ __all__ = [
     "PhraseCommandSpotter",
     "PhraseRecognizer",
     "PlaybackCommand",
+    "PlaybackControlError",
     "PlaybackController",
+    "SoundDevicePlaybackController",
     "VoskPhraseRecognizer",
     "build_command_listener",
     "build_vosk_command_spotter",
