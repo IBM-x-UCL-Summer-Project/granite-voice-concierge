@@ -48,7 +48,7 @@ class TestVoskPhraseRecognizerInit:
     @patch("voice_concierge.command_control.vosk_recognizer._build_recognizer")
     def test_builds_grammar_constrained_recognizer(self, mock_build: patch) -> None:
         """Without an injected recognizer, a grammar-constrained one is built."""
-        VoskPhraseRecognizer(["stop", "pause"], model_path="m", sample_rate=8000)
+        VoskPhraseRecognizer(["stop", "pause"], model_name="m", sample_rate=8000)
 
         mock_build.assert_called_once_with(
             "m", 8000, json.dumps(["stop", "pause", "[unk]"])
@@ -82,8 +82,8 @@ class TestBuildRecognizer:
         calls: dict[str, object] = {}
 
         class _Model:
-            def __init__(self, path: str) -> None:
-                calls["model_path"] = path
+            def __init__(self, model_name: str) -> None:
+                calls["model_name"] = model_name
 
         class _Kaldi:
             def __init__(self, model, rate, grammar) -> None:
@@ -95,7 +95,7 @@ class TestBuildRecognizer:
         result = _build_recognizer("model", 16000, "[]")
 
         assert isinstance(result, _Kaldi)
-        assert calls["model_path"] == "model"
+        assert calls["model_name"] == "model"
         assert calls["rate"] == 16000
         assert calls["grammar"] == "[]"
 

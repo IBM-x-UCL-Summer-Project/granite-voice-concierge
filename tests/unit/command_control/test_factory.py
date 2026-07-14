@@ -59,10 +59,10 @@ class TestBuildVoskCommandSpotter:
     @patch("voice_concierge.command_control.factory.VoskPhraseRecognizer")
     def test_wires_default_vocabulary(self, mock_recognizer: patch) -> None:
         """The factory builds a Vosk recognizer over the default command words."""
-        spotter = build_vosk_command_spotter(model_path="m", sample_rate=8000)
+        spotter = build_vosk_command_spotter(model_name="m", sample_rate=8000)
 
         mock_recognizer.assert_called_once_with(
-            tuple(DEFAULT_PHRASE_COMMANDS), model_path="m", sample_rate=8000
+            tuple(DEFAULT_PHRASE_COMMANDS), model_name="m", sample_rate=8000
         )
         assert isinstance(spotter, PhraseCommandSpotter)
 

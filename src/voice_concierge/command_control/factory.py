@@ -17,7 +17,7 @@ from voice_concierge.command_control.spotter import (
 )
 from voice_concierge.command_control.types import PlaybackCommand
 from voice_concierge.command_control.vosk_recognizer import (
-    DEFAULT_MODEL_PATH,
+    DEFAULT_MODEL_NAME,
     DEFAULT_SAMPLE_RATE,
     VoskPhraseRecognizer,
 )
@@ -38,21 +38,21 @@ def build_command_listener(
 
 def build_vosk_command_spotter(
     *,
-    model_path: str = DEFAULT_MODEL_PATH,
+    model_name: str = DEFAULT_MODEL_NAME,
     sample_rate: int = DEFAULT_SAMPLE_RATE,
     phrase_commands: dict[str, PlaybackCommand] | None = None,
 ) -> PhraseCommandSpotter:
     """Build a PhraseCommandSpotter backed by a Vosk phrase recognizer."""
     commands = dict(phrase_commands or DEFAULT_PHRASE_COMMANDS)
     recognizer = VoskPhraseRecognizer(
-        tuple(commands), model_path=model_path, sample_rate=sample_rate
+        tuple(commands), model_name=model_name, sample_rate=sample_rate
     )
     return PhraseCommandSpotter(recognizer, phrase_commands=commands)
 
 
 def build_stop_command_control(
     *,
-    model_path: str = DEFAULT_MODEL_PATH,
+    model_name: str = DEFAULT_MODEL_NAME,
     sample_rate: int = DEFAULT_SAMPLE_RATE,
     audio_source: AudioSource | None = None,
     chunk: int = DEFAULT_CHUNK,
@@ -64,7 +64,7 @@ def build_stop_command_control(
     ends and listener.stop() when TTS output ends.
     """
     spotter = build_vosk_command_spotter(
-        model_path=model_path,
+        model_name=model_name,
         sample_rate=sample_rate,
         phrase_commands={"stop": "stop"},
     )

@@ -7,15 +7,19 @@ from collections.abc import Iterable
 # Local
 from voice_concierge.command_control.errors import CommandSpotterUnavailableError
 
-DEFAULT_MODEL_PATH: str = "vosk-model-small-en-us-0.15"
+DEFAULT_MODEL_NAME: str = "vosk-model-small-en-us-0.15"
 DEFAULT_SAMPLE_RATE: int = 16000
 
 
-def _build_recognizer(model_path: str, sample_rate: int, grammar: str):
-    """Build a grammar-constrained Vosk recognizer (vosk imported lazily)."""
+def _build_recognizer(model_name: str, sample_rate: int, grammar: str):
+    """Build a grammar-constrained Vosk recognizer (vosk imported lazily).
+
+    The model is downloaded and cached by Vosk on first use (under
+    ``~/.cache/vosk``) when referenced by name, so no manual download is needed.
+    """
     from vosk import KaldiRecognizer, Model
 
-    return KaldiRecognizer(Model(model_path), sample_rate, grammar)
+    return KaldiRecognizer(Model(model_name=model_name), sample_rate, grammar)
 
 
 class VoskPhraseRecognizer:
@@ -25,7 +29,7 @@ class VoskPhraseRecognizer:
         self,
         vocabulary: Iterable[str],
         *,
-        model_path: str = DEFAULT_MODEL_PATH,
+        model_name: str = DEFAULT_MODEL_NAME,
         sample_rate: int = DEFAULT_SAMPLE_RATE,
         recognizer=None,
     ) -> None:
@@ -34,10 +38,10 @@ class VoskPhraseRecognizer:
             return
         grammar = json.dumps([*vocabulary, "[unk]"])
         try:
-            self._recognizer = _build_recognizer(model_path, sample_rate, grammar)
+            self._recognizer = _build_recognizer(model_name, sample_rate, grammar)
         except Exception as exc:
             raise CommandSpotterUnavailableError(
-                f"Could not load Vosk model at {model_path!r}: {exc}"
+                f"Could not load Vosk model {model_name!r}: {exc}"
             ) from exc
 
     def recognize(self, frame: bytes) -> str | None:
