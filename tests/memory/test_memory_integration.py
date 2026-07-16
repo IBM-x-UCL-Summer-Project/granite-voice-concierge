@@ -317,3 +317,135 @@ class TestContextMemories:
 
         assert len(context) <= 2
         assert all(isinstance(m, str) for m in context)
+
+
+class TestSQLVectorConsistency:
+    """Test SQL and vector store consistency."""
+
+    def test_store_creates_both_sql_and_vector(self, memory_manager):
+        """Storing a memory should create both SQL record and vector."""
+        success, reason, memory_id = memory_manager.store_memory(
+            content="I like coffee",
+            layer="profile",
+            validate=False,
+        )
+
+        assert success is True
+        assert memory_id is not None
+
+        # Verify SQL record exists
+        memory = memory_manager.memory_store.get_memory_by_id(memory_id)
+        assert memory is not None
+        assert memory["content"] == "I like coffee"
+
+        # Verify vector exists (by checking if search finds it)
+        results = memory_manager.retrieve_similar("coffee", top_k=5)
+        assert any(r["id"] == memory_id for r in results)
+
+    def test_delete_removes_both_sql_and_vector(self, memory_manager):
+        """Deleting a memory should remove both SQL record and vector."""
+        # Create a memory
+        success, reason, memory_id = memory_manager.store_memory(
+            content="Remember this",
+            layer="profile",
+            validate=False,
+        )
+        assert success is True
+
+        # Delete it
+        success, reason = memory_manager.delete_memory(memory_id)
+        assert success is True
+
+        # Verify SQL record is deleted
+        memory = memory_manager.memory_store.get_memory_by_id(memory_id)
+        assert memory is None
+
+        # Verify vector is deleted (search should not find it)
+        results = memory_manager.retrieve_similar("Remember this", top_k=10)
+        assert not any(r["id"] == memory_id for r in results)
+
+    def test_update_keeps_sql_and_vector_in_sync(self, memory_manager):
+        """Updating a memory should update both SQL and vector."""
+        # Create a memory
+        success, reason, memory_id = memory_manager.store_memory(
+            content="I prefer tea",
+            layer="profile",
+            validate=False,
+        )
+        assert success is True
+
+        # Update the content
+        success, reason = memory_manager.update_memory(
+            memory_id=memory_id,
+            content="I prefer coffee",
+        )
+        assert success is True
+
+        # Verify SQL record is updated
+        memory = memory_manager.memory_store.get_memory_by_id(memory_id)
+        assert memory["content"] == "I prefer coffee"
+
+        # Verify vector still exists (by checking we can retrieve it)
+        results = memory_manager.retrieve_similar("I prefer", top_k=10)
+        assert any(r["id"] == memory_id for r in results)
+        assert results[0]["content"] == "I prefer coffee"
+
+    def test_store_rollback_on_vector_failure(self, memory_manager, monkeypatch):
+        """If vector storage fails, SQL record should be deleted."""
+        # Mock embedding service to fail
+        def failing_save_vector(memory_id, embedding):
+            raise RuntimeError("Vector storage failed")
+
+        monkeypatch.setattr(
+            memory_manager.vector_store, "save_vector", failing_save_vector
+        )
+
+        # Try to store a memory
+        success, reason, memory_id = memory_manager.store_memory(
+            content="This should fail",
+            layer="profile",
+            validate=False,
+        )
+
+        # Should fail
+        assert success is False
+        assert "vector" in reason.lower()
+
+        # Verify no SQL record was left behind
+        if memory_id:
+            memory = memory_manager.memory_store.get_memory_by_id(memory_id)
+            assert memory is None
+
+    def test_update_rollback_on_vector_failure(self, memory_manager, monkeypatch):
+        """If vector update fails, SQL record should be reverted."""
+        # Create a memory
+        success, reason, memory_id = memory_manager.store_memory(
+            content="Original content",
+            layer="profile",
+            validate=False,
+        )
+        assert success is True
+
+        # Mock vector_store to fail on save
+        def failing_save_vector(memory_id, embedding):
+            raise RuntimeError("Vector storage failed")
+
+        monkeypatch.setattr(
+            memory_manager.vector_store,
+            "save_vector",
+            failing_save_vector,
+        )
+
+        # Try to update the memory with new content
+        success, reason = memory_manager.update_memory(
+            memory_id=memory_id,
+            content="New content",
+        )
+
+        # Should fail due to vector storage error
+        assert success is False
+        assert "embedding" in reason.lower() or "vector" in reason.lower()
+
+        # Verify SQL record was reverted to original content
+        memory = memory_manager.memory_store.get_memory_by_id(memory_id)
+        assert memory["content"] == "Original content"

@@ -1,10 +1,13 @@
 """Validates whether content should be stored as a memory using LLM judgment."""
 
 import json
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, Optional, Tuple
 
 from ollama import Client
+
+from voice_concierge.memory.temporal_extractor import TemporalExtractor
 
 
 class ValidationReason(Enum):
@@ -56,12 +59,13 @@ Respond with ONLY the category name (episodic/semantic/procedural/emotional/refl
     EXTRACTION_PROMPT = """Extract structured metadata from this memory content.
 
 Content: "{content}"
+Current date (reference): {reference_date}
 
 Extract and return as JSON (only these exact keys):
 {{
     "person": "name of person mentioned (or null if none)",
     "source_type": "one of: conversation, document, observation, experience (or null)",
-    "event_time": "ISO timestamp if event time is mentioned (or null)",
+    "event_time": "ISO 8601 timestamp (YYYY-MM-DDTHH:MM:SS) if event time mentioned (or null). For relative dates like 'yesterday' or 'next Friday', calculate from reference date above",
     "strength": integer from 1 to 10 indicating importance (1=trivial, 10=critical)
 }}
 
@@ -149,14 +153,15 @@ Respond with ONLY valid JSON, no other text."""
 
     def extract_metadata(self, content: str) -> Dict[str, Any]:
         """
-        Extract structured metadata from memory content using LLM.
+        Extract structured metadata from memory content.
+        Uses local temporal parsing + LLM for robust extraction.
 
         Args:
             content: Memory content to extract metadata from
 
         Returns:
             Dict with keys: person, source_type, event_time, strength
-            All values are optional and may be None if not extractable
+            event_time is ISO 8601 format or None
         """
         if not content or not content.strip():
             return {
@@ -167,7 +172,14 @@ Respond with ONLY valid JSON, no other text."""
             }
 
         try:
-            prompt = self.EXTRACTION_PROMPT.format(content=content[:500])
+            # Extract event_time using local temporal parser first (fast, reliable)
+            event_time = TemporalExtractor.extract_iso_datetime(content)
+
+            # Use LLM for other metadata
+            reference_date = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+            prompt = self.EXTRACTION_PROMPT.format(
+                content=content[:500], reference_date=reference_date
+            )
             response = self.client.generate(
                 model=self.model,
                 prompt=prompt,
@@ -178,25 +190,30 @@ Respond with ONLY valid JSON, no other text."""
 
             try:
                 data = json.loads(result)
+                # Use local temporal extraction result, or LLM's if local found nothing
+                extracted_event_time = event_time or data.get("event_time")
+
                 return {
                     "person": data.get("person"),
                     "source_type": data.get("source_type"),
-                    "event_time": data.get("event_time"),
+                    "event_time": extracted_event_time,
                     "strength": data.get("strength", 5),
                 }
             except json.JSONDecodeError:
                 return {
                     "person": None,
                     "source_type": None,
-                    "event_time": None,
+                    "event_time": event_time,
                     "strength": 5,
                 }
 
         except Exception:
+            # Fallback: at least try local temporal extraction
+            event_time = TemporalExtractor.extract_iso_datetime(content)
             return {
                 "person": None,
                 "source_type": None,
-                "event_time": None,
+                "event_time": event_time,
                 "strength": 5,
             }
 
