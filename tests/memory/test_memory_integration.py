@@ -211,12 +211,14 @@ class TestMemoryRetrieval:
             "shopping-list",
             source_type="user_input",
             validate=False,
+            check_duplicates=False,
         )
         memory_manager.store_memory(
             "User likes hiking",
             "profile",
             source_type="inference",
             validate=False,
+            check_duplicates=False,
         )
 
         # Filter by layer should not be affected by source_type
@@ -286,6 +288,78 @@ class TestMemoryValidation:
         )
 
         assert success is True
+
+
+class TestDuplicatePrevention:
+    """Test duplicate memory prevention."""
+
+    def test_duplicate_count_stays_same(self, memory_manager):
+        """Adding same memory twice should keep count at 1."""
+        content = "I prefer tea"
+
+        # Store first time
+        success1, reason1, id1 = memory_manager.store_memory(
+            content=content,
+            layer="profile",
+            validate=False,
+            check_duplicates=False,  # First one, no check
+        )
+        assert success1 is True
+
+        all_memories = memory_manager.get_all_memories()
+        assert len(all_memories) == 1
+
+        # Store second time (same content)
+        success2, reason2, id2 = memory_manager.store_memory(
+            content=content,
+            layer="profile",
+            validate=False,
+            check_duplicates=True,  # Check for duplicates
+        )
+
+        # Should reject as duplicate
+        assert success2 is False
+        assert "duplicate" in reason2.lower()
+
+        # Count should still be 1 (not 2)
+        all_memories = memory_manager.get_all_memories()
+        assert len(all_memories) == 1
+
+    @pytest.mark.skip(reason="Requires real embeddings for semantic similarity")
+    def test_store_different_increases_count(self, memory_manager):
+        """Adding different memory should increase count."""
+        # This test requires actual vector embeddings to distinguish different content
+        # With fake_embedding_service (all zeros), all memories appear identical
+        pass
+
+    def test_disable_duplicate_check_allows_duplicates(self, memory_manager):
+        """Disabling check allows storing duplicates."""
+        content = "I prefer tea"
+
+        # Store first time
+        success1, _, id1 = memory_manager.store_memory(
+            content=content,
+            layer="profile",
+            validate=False,
+            check_duplicates=False,
+        )
+        assert success1 is True
+        assert len(memory_manager.get_all_memories()) == 1
+
+        # Store duplicate with check disabled
+        success2, _, id2 = memory_manager.store_memory(
+            content=content,
+            layer="profile",
+            validate=False,
+            check_duplicates=False,  # Disable check
+        )
+
+        # Should allow it
+        assert success2 is True
+        assert id1 != id2
+
+        # Count should be 2 (both stored)
+        assert len(memory_manager.get_all_memories()) == 2
 
 
 class TestContextMemories:

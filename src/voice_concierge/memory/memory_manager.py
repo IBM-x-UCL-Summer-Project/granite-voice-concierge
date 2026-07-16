@@ -35,6 +35,31 @@ class MemoryManager:
         self.validator = validator or MemoryValidator()
         self.retriever = MemoryRetriever(memory_store, vector_store, embedding_service)
 
+    def find_similar_memory(
+        self,
+        content: str,
+        threshold: float = 0.85,
+        top_k: int = 5,
+    ) -> Optional[dict]:
+        """
+        Find semantically similar existing memory.
+
+        Args:
+            content: Memory content to match
+            threshold: Similarity threshold (0-1), higher = more strict
+            top_k: Number of candidates to check
+
+        Returns:
+            Most similar memory dict if found above threshold, else None
+        """
+        try:
+            results = self.retrieve_similar(content, top_k=top_k)
+            if results and results[0].get("distance", 1.0) < (1.0 - threshold):
+                return results[0]
+            return None
+        except Exception:
+            return None
+
     def store_memory(
         self,
         content: str,
@@ -47,9 +72,11 @@ class MemoryManager:
         validate: bool = True,
         auto_classify: bool = True,
         auto_extract: bool = True,
+        check_duplicates: bool = True,
     ) -> Tuple[bool, str, Optional[int]]:
         """
         Store a memory after validation and optional auto-classification.
+        Prevents duplicate/similar memories from being stored.
 
         Args:
             content: Memory content
@@ -62,10 +89,17 @@ class MemoryManager:
             validate: Whether to validate with LLM first
             auto_classify: Whether to auto-classify memory type (episodic/semantic/etc.)
             auto_extract: Whether to auto-extract metadata (person, source_type, etc.)
+            check_duplicates: Whether to check for similar/duplicate memories (default: True)
 
         Returns:
             Tuple of (success: bool, reason: str, memory_id: Optional[int])
         """
+        # Check for duplicates if enabled
+        if check_duplicates:
+            similar = self.find_similar_memory(content, threshold=0.9)
+            if similar:
+                return False, f"duplicate_found: memory_id={similar['id']}", similar["id"]
+
         # Validate if enabled
         if validate:
             should_store, reason = self.validator.should_store(content)
