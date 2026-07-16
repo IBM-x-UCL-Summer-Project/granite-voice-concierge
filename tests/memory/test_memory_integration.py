@@ -191,6 +191,67 @@ class TestMemoryRetrieval:
         assert len(results) == 1
         assert "pizza" in results[0]["content"]
 
+    def test_retrieve_by_layer(self, memory_manager):
+        """Test filtering memories by layer."""
+        memory_manager.store_memory(
+            "Milk and eggs", "shopping-list", validate=False
+        )
+        memory_manager.store_memory(
+            "Prefers coffee in the morning", "profile", validate=False
+        )
+
+        shopping_memories = memory_manager.retriever.retrieve_by_layer("shopping-list")
+        assert len(shopping_memories) == 1
+        assert "Milk and eggs" in shopping_memories[0]["content"]
+
+    def test_layer_and_source_type_separate(self, memory_manager):
+        """Test that layer and source_type filters are independent."""
+        memory_manager.store_memory(
+            "Buy groceries",
+            "shopping-list",
+            source_type="user_input",
+            validate=False,
+        )
+        memory_manager.store_memory(
+            "User likes hiking",
+            "profile",
+            source_type="inference",
+            validate=False,
+        )
+
+        # Filter by layer should not be affected by source_type
+        shopping = memory_manager.retriever.retrieve_by_layer("shopping-list")
+        assert len(shopping) == 1
+        assert shopping[0]["layer"] == "shopping-list"
+
+        profile = memory_manager.retriever.retrieve_by_layer("profile")
+        assert len(profile) == 1
+        assert profile[0]["layer"] == "profile"
+
+    def test_metadata_filtering_with_layer(self, memory_manager):
+        """Test metadata filtering including layer."""
+        memory_manager.store_memory(
+            "Milk",
+            "shopping-list",
+            person="Kenny",
+            topic="groceries",
+            validate=False,
+        )
+        memory_manager.store_memory(
+            "Bread",
+            "shopping-list",
+            person="Alice",
+            topic="groceries",
+            validate=False,
+        )
+
+        results = memory_manager.retriever.retrieve_by_metadata(
+            person="Kenny", layer="shopping-list"
+        )
+        assert len(results) == 1
+        assert results[0]["person"] == "Kenny"
+        assert results[0]["layer"] == "shopping-list"
+
 
 class TestMemoryValidation:
     """Test memory validation."""

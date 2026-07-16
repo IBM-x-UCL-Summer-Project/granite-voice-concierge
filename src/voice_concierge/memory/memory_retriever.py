@@ -105,7 +105,7 @@ class MemoryRetriever:
             List of matching memory dicts
         """
         return self.memory_store.get_memories(
-            person=person, topic=topic, source_type=layer
+            person=person, topic=topic, layer=layer
         )
 
     def retrieve_by_person(self, person: str, top_k: int = 10) -> list[dict]:
@@ -120,7 +120,7 @@ class MemoryRetriever:
 
     def retrieve_by_layer(self, layer: str, top_k: int = 10) -> list[dict]:
         """Get all memories from a specific layer."""
-        memories = self.memory_store.get_memories(source_type=layer)
+        memories = self.memory_store.get_memories(layer=layer)
         return memories[:top_k]
 
     def retrieve_all(self) -> list[dict]:
