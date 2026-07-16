@@ -104,8 +104,13 @@ class MemoryManager:
             )
 
             # Generate and store embedding
-            embedding = self.embedding_service.get_embedding(content)
-            self.vector_store.save_vector(memory_id, embedding)
+            try:
+                embedding = self.embedding_service.get_embedding(content)
+                self.vector_store.save_vector(memory_id, embedding)
+            except Exception as e:
+                # Rollback: delete SQL record if vector storage fails
+                self.memory_store.delete_memory(memory_id)
+                return False, f"vector_storage_failed_rolled_back: {str(e)}", None
 
             return True, "stored_successfully", memory_id
 
@@ -154,6 +159,7 @@ class MemoryManager:
     ) -> Tuple[bool, str]:
         """
         Update a memory and regenerate its embedding if content changed.
+        Rolls back SQL changes if embedding generation/storage fails.
 
         Args:
             memory_id: ID of memory to update
@@ -169,6 +175,12 @@ class MemoryManager:
             Tuple of (success: bool, reason: str)
         """
         try:
+            # Save original state for potential rollback
+            original_memory = self.memory_store.get_memory_by_id(memory_id)
+            if not original_memory:
+                return False, "memory_not_found"
+
+            # Update SQL
             success = self.memory_store.update_memory(
                 memory_id=memory_id,
                 content=content,
@@ -185,8 +197,22 @@ class MemoryManager:
 
             # Regenerate embedding if content changed
             if content:
-                embedding = self.embedding_service.get_embedding(content)
-                self.vector_store.save_vector(memory_id, embedding)
+                try:
+                    embedding = self.embedding_service.get_embedding(content)
+                    self.vector_store.save_vector(memory_id, embedding)
+                except Exception as e:
+                    # Rollback SQL changes if embedding fails
+                    self.memory_store.update_memory(
+                        memory_id=memory_id,
+                        content=original_memory.get("content"),
+                        layer=original_memory.get("layer"),
+                        person=original_memory.get("person"),
+                        topic=original_memory.get("topic"),
+                        source_type=original_memory.get("source_type"),
+                        event_time=original_memory.get("event_time"),
+                        strength=original_memory.get("strength"),
+                    )
+                    return False, f"embedding_error_rolled_back: {str(e)}"
 
             return True, "updated_successfully"
 
@@ -207,6 +233,13 @@ class MemoryManager:
             success = self.memory_store.delete_memory(memory_id)
             if not success:
                 return False, "memory_not_found"
+
+            # Also delete the associated vector
+            try:
+                self.vector_store.delete_vector(memory_id)
+            except Exception as e:
+                return False, f"vector_deletion_failed: {str(e)}"
+
             return True, "deleted_successfully"
 
         except Exception as e:
