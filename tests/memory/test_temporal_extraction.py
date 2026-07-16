@@ -119,9 +119,7 @@ class TestTemporalExtractor:
 
     def test_no_temporal_expression(self, reference_time):
         """Test text with no temporal expression returns None."""
-        result = TemporalExtractor.extract_iso_datetime(
-            "I like pizza", reference_time
-        )
+        result = TemporalExtractor.extract_iso_datetime("I like pizza", reference_time)
         assert result is None
 
     def test_empty_text(self, reference_time):

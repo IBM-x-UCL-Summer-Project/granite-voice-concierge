@@ -87,9 +87,9 @@ class MemoryManager:
             event_time: Event time timestamp (optional, auto-extracted if None)
             strength: Memory strength 1-10 (optional, auto-extracted if None)
             validate: Whether to validate with LLM first
-            auto_classify: Whether to auto-classify memory type (episodic/semantic/etc.)
-            auto_extract: Whether to auto-extract metadata (person, source_type, etc.)
-            check_duplicates: Whether to check for similar/duplicate memories (default: True)
+            auto_classify: Whether to auto-classify memory type
+            auto_extract: Whether to auto-extract metadata
+            check_duplicates: Whether to check for duplicates (default: True)
 
         Returns:
             Tuple of (success: bool, reason: str, memory_id: Optional[int])
@@ -98,7 +98,8 @@ class MemoryManager:
         if check_duplicates:
             similar = self.find_similar_memory(content, threshold=0.9)
             if similar:
-                return False, f"duplicate_found: memory_id={similar['id']}", similar["id"]
+                mem_id = similar["id"]
+                return False, f"duplicate_found: memory_id={mem_id}", mem_id
 
         # Validate if enabled
         if validate:

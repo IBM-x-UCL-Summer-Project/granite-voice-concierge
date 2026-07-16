@@ -104,9 +104,7 @@ class MemoryRetriever:
         Returns:
             List of matching memory dicts
         """
-        return self.memory_store.get_memories(
-            person=person, topic=topic, layer=layer
-        )
+        return self.memory_store.get_memories(person=person, topic=topic, layer=layer)
 
     def retrieve_by_person(self, person: str, top_k: int = 10) -> list[dict]:
         """Get all memories for a specific person."""

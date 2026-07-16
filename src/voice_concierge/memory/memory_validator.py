@@ -64,8 +64,10 @@ Current date (reference): {reference_date}
 Extract and return as JSON (only these exact keys):
 {{
     "person": "name of person mentioned (or null if none)",
-    "source_type": "one of: conversation, document, observation, experience (or null)",
-    "event_time": "ISO 8601 timestamp (YYYY-MM-DDTHH:MM:SS) if event time mentioned (or null). For relative dates like 'yesterday' or 'next Friday', calculate from reference date above",
+    "source_type": "one of: conversation, document, observation, experience",
+    "event_time": "ISO 8601 timestamp if event time mentioned (or null). "
+                  "For relative dates like 'yesterday' or 'next Friday', "
+                  "calculate from reference date",
     "strength": integer from 1 to 10 indicating importance (1=trivial, 10=critical)
 }}
 

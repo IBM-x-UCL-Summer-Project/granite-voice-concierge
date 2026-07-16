@@ -193,9 +193,7 @@ class TestMemoryRetrieval:
 
     def test_retrieve_by_layer(self, memory_manager):
         """Test filtering memories by layer."""
-        memory_manager.store_memory(
-            "Milk and eggs", "shopping-list", validate=False
-        )
+        memory_manager.store_memory("Milk and eggs", "shopping-list", validate=False)
         memory_manager.store_memory(
             "Prefers coffee in the morning", "profile", validate=False
         )
@@ -466,6 +464,7 @@ class TestSQLVectorConsistency:
 
     def test_store_rollback_on_vector_failure(self, memory_manager, monkeypatch):
         """If vector storage fails, SQL record should be deleted."""
+
         # Mock embedding service to fail
         def failing_save_vector(memory_id, embedding):
             raise RuntimeError("Vector storage failed")
