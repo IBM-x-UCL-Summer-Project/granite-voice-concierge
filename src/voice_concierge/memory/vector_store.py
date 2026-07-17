@@ -83,5 +83,13 @@ class VectorStore:
             for row in rows
         ]
 
+    def delete_vector(self, memory_id):
+        """Delete a vector by memory_id."""
+        self.con.execute(
+            "DELETE FROM memory_vectors WHERE memory_id = ?",
+            (memory_id,),
+        )
+        self.con.commit()
+
     def close(self):
         self.con.close()
