@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 
 from voice_concierge.context.policies import policy_for_mode
@@ -13,8 +14,31 @@ from voice_concierge.context.types import (
     ContextState,
 )
 
-_CONFIRM_WORDS = ("yes", "confirm", "okay", "ok", "go ahead")
-_CANCEL_WORDS = ("cancel", "stop", "never mind", "nevermind")
+_MODE_ALIASES: tuple[tuple[ContextMode, tuple[str, ...]], ...] = (
+    ("cooking", ("cooking", "kitchen")),
+    ("shopping", ("shopping", "shop")),
+    ("driving", ("driving", "drive")),
+    ("home", ("home", "living")),
+)
+
+_QUESTION_PREFIXES = (
+    "what",
+    "why",
+    "how",
+    "when",
+    "where",
+    "who",
+    "which",
+    "is",
+    "are",
+    "do",
+    "does",
+    "did",
+    "can",
+    "could",
+    "would",
+    "should",
+)
 
 
 class ContextManager:
@@ -87,7 +111,7 @@ class ContextManager:
         state: ContextState,
         command_action: CommandAction | None,
     ) -> ContextDecision | None:
-        if _contains_any(normalized, _CANCEL_WORDS):
+        if command_action in ("cancel", "stop"):
             cleared_state = replace(state, pending_mode=None)
             return ContextDecision(
                 state=cleared_state,
@@ -95,7 +119,7 @@ class ContextManager:
                 command_action=command_action or "cancel",
             )
 
-        if _contains_any(normalized, _CONFIRM_WORDS):
+        if _is_confirmation(normalized):
             target_mode = state.pending_mode
             switched_state = replace(state, mode=target_mode, pending_mode=None)
             return ContextDecision(
@@ -112,39 +136,73 @@ def _normalize(transcript: str) -> str:
     return " ".join(transcript.lower().strip().split())
 
 
-def _contains_any(text: str, phrases: tuple[str, ...]) -> bool:
-    return any(phrase in text for phrase in phrases)
-
-
 def _detect_requested_mode(transcript: str) -> ContextMode | None:
-    mode_phrases: tuple[tuple[ContextMode, tuple[str, ...]], ...] = (
-        ("cooking", ("cooking mode", "kitchen mode", "switch to cooking")),
-        ("shopping", ("shopping mode", "shop mode", "switch to shopping")),
-        ("driving", ("driving mode", "drive mode", "switch to driving")),
-        ("home", ("home mode", "living mode", "switch to home")),
-    )
+    if _is_question(transcript):
+        return None
 
-    for mode, phrases in mode_phrases:
-        if _contains_any(transcript, phrases):
+    for mode, aliases in _MODE_ALIASES:
+        alias_pattern = "|".join(re.escape(alias) for alias in aliases)
+        target = rf"(?:{alias_pattern})(?:\s+mode)?"
+        patterns = (
+            rf"^(?:please\s+)?(?:switch|change|go)\s+(?:me\s+)?to\s+"
+            rf"(?:the\s+)?{target}(?:\s+please)?[.!]*$",
+            rf"^(?:please\s+)?(?:enter|enable|activate|start|use)\s+"
+            rf"(?:the\s+)?{target}(?:\s+please)?[.!]*$",
+            rf"^(?:please\s+)?(?:{alias_pattern})\s+mode(?:\s+please)?[.!]*$",
+        )
+        if any(re.fullmatch(pattern, transcript) for pattern in patterns):
             return mode
 
     return None
 
 
 def _detect_command_action(transcript: str) -> CommandAction | None:
-    if "repeat" in transcript or "say that again" in transcript:
+    if _matches_command(
+        transcript,
+        r"(?:repeat(?:\s+(?:that|this|it))?|say\s+that\s+again)",
+    ):
         return "repeat"
-    if "next step" in transcript:
+    if _matches_command(
+        transcript,
+        r"(?:next\s+step|what(?:'s|\s+is)\s+the\s+next\s+step)",
+    ):
         return "next_step"
-    if "stop" in transcript:
+    if _matches_command(
+        transcript,
+        r"stop(?:\s+(?:speaking|talking|that|this|now|the\s+response|playback))?",
+    ):
         return "stop"
-    if (
-        "cancel" in transcript
-        or "never mind" in transcript
-        or "nevermind" in transcript
+    if _matches_command(
+        transcript,
+        r"(?:cancel(?:\s+(?:that|this))?|never\s+mind|nevermind)",
     ):
         return "cancel"
     return None
+
+
+def _matches_command(transcript: str, command_pattern: str) -> bool:
+    """Return whether the whole transcript is an explicit command."""
+
+    pattern = rf"^(?:please\s+)?{command_pattern}(?:\s+please)?[.!]*$"
+    return re.fullmatch(pattern, transcript) is not None
+
+
+def _is_question(transcript: str) -> bool:
+    """Return whether a transcript is phrased as a question, not a mode command."""
+
+    if transcript.rstrip().endswith("?"):
+        return True
+    first_word = transcript.split(maxsplit=1)[0].rstrip(".,!?") if transcript else ""
+    return first_word in _QUESTION_PREFIXES
+
+
+def _is_confirmation(transcript: str) -> bool:
+    """Accept an explicit affirmative while rejecting negated confirmations."""
+
+    return _matches_command(
+        transcript,
+        r"(?:yes(?:\s*,?\s*confirm)?|confirm|okay|ok|go\s+ahead)",
+    )
 
 
 def _apply_accessibility_preferences(

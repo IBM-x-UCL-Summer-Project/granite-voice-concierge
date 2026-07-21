@@ -296,26 +296,52 @@ function reasoning(confidence, proposedMemoryAction = null) {
 }
 
 function detectMode(text) {
-  for (const mode of ["cooking", "shopping", "driving", "home"]) {
-    if (text.includes(`${mode} mode`) || text.includes(`switch to ${mode}`)) return mode;
+  const normalized = text.trim().toLowerCase();
+  const firstWord = normalized.split(/\s+/, 1)[0]?.replace(/[.,!?]+$/g, "") || "";
+  const questionPrefixes = new Set([
+    "what", "why", "how", "when", "where", "who", "which",
+    "is", "are", "do", "does", "did", "can", "could", "would", "should",
+  ]);
+  if (normalized.endsWith("?") || questionPrefixes.has(firstWord)) return null;
+
+  const modes = {
+    cooking: ["cooking", "kitchen"],
+    shopping: ["shopping", "shop"],
+    driving: ["driving", "drive"],
+    home: ["home", "living"],
+  };
+  for (const [mode, aliases] of Object.entries(modes)) {
+    const aliasPattern = aliases.join("|");
+    const target = `(?:${aliasPattern})(?:\\s+mode)?`;
+    const patterns = [
+      `(?:switch|change|go)\\s+(?:me\\s+)?to\\s+(?:the\\s+)?${target}`,
+      `(?:enter|enable|activate|start|use)\\s+(?:the\\s+)?${target}`,
+      `(?:${aliasPattern})\\s+mode`,
+    ];
+    if (patterns.some((pattern) => matchesCommand(normalized, pattern))) return mode;
   }
   return null;
 }
 
 function detectCommand(text) {
-  if (text.includes("repeat") || text.includes("say that again")) return "repeat";
-  if (text.includes("next step")) return "next_step";
-  if (text.includes("stop")) return "stop";
-  if (text.includes("cancel") || text.includes("never mind")) return "cancel";
+  if (matchesCommand(text, "(?:repeat(?:\\s+(?:that|this|it))?|say\\s+that\\s+again)")) return "repeat";
+  if (matchesCommand(text, "(?:next\\s+step|what(?:'s|\\s+is)\\s+the\\s+next\\s+step)")) return "next_step";
+  if (matchesCommand(text, "stop(?:\\s+(?:speaking|talking|that|this|now|the\\s+response|playback))?")) return "stop";
+  if (matchesCommand(text, "(?:cancel(?:\\s+(?:that|this))?|never\\s+mind|nevermind)")) return "cancel";
   return null;
 }
 
+function matchesCommand(text, commandPattern) {
+  const pattern = new RegExp(`^(?:please\\s+)?${commandPattern}(?:\\s+please)?[.!]*$`);
+  return pattern.test(text.trim().toLowerCase());
+}
+
 function isConfirmation(text) {
-  return ["yes", "confirm", "okay", "ok", "go ahead"].some((word) => text.includes(word));
+  return matchesCommand(text, "(?:yes(?:\\s*,?\\s*confirm)?|confirm|okay|ok|go\\s+ahead)");
 }
 
 function isCancellation(text) {
-  return ["cancel", "stop", "never mind", "nevermind"].some((word) => text.includes(word));
+  return ["cancel", "stop"].includes(detectCommand(text));
 }
 
 function confirmationKind(response) {
