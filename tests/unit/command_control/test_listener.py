@@ -1,5 +1,6 @@
 # Standard library
 import threading
+import time
 
 # Third-party
 import numpy as np
@@ -12,6 +13,30 @@ from voice_concierge.command_control.listener import CommandListener
 from voice_concierge.command_control.types import CommandEvent
 
 _FRAME = np.zeros(512, dtype=np.int16).tobytes()
+
+
+class _BlockingAudioSource:
+    """AudioSource whose read() blocks until close() is called.
+
+    Stands in for a wedged microphone read, the failure that used to make
+    CommandListener.stop() hang forever on its unbounded join.
+    """
+
+    def __init__(self) -> None:
+        self.open_count = 0
+        self.close_count = 0
+        self._released = threading.Event()
+
+    def open(self) -> None:
+        self.open_count += 1
+
+    def read(self, num_samples: int) -> bytes:
+        self._released.wait()
+        return _FRAME
+
+    def close(self) -> None:
+        self.close_count += 1
+        self._released.set()
 
 
 class TestCommandListenerPump:
@@ -84,6 +109,21 @@ class TestCommandListenerLifecycle:
         listener.stop()
 
         assert source.open_count == 1
+
+    @pytest.mark.unit
+    def test_stop_does_not_hang_on_a_wedged_read(self) -> None:
+        """stop() gives up on the join rather than blocking forever."""
+        source = _BlockingAudioSource()
+        listener = CommandListener(source, FakeCommandSpotter(), lambda e: None)
+
+        listener.start()
+        started = time.monotonic()
+        listener.stop(timeout=0.1)
+        elapsed = time.monotonic() - started
+
+        assert elapsed < 1.0  # would be unbounded before the fix
+        assert source.close_count == 1  # mic released despite the wedged read
+        assert listener._thread is None
 
     @pytest.mark.unit
     def test_stop_without_start_is_noop(self) -> None:

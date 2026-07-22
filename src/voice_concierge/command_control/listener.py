@@ -10,6 +10,7 @@ from voice_concierge.command_control.interfaces import CommandSpotter
 from voice_concierge.command_control.types import CommandEvent
 
 DEFAULT_CHUNK: int = 512  # samples per frame fed to the spotter
+DEFAULT_STOP_TIMEOUT: float = 2.0  # seconds to wait for the thread to exit
 
 
 class CommandListener:
@@ -44,12 +45,17 @@ class CommandListener:
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
-    def stop(self) -> None:
-        """Signal the thread to stop, join it, and close the audio source."""
+    def stop(self, timeout: float = DEFAULT_STOP_TIMEOUT) -> None:
+        """Signal the thread to stop, join it, and close the audio source.
+
+        The join is bounded: the worker spends most of its time blocked in a
+        read() on the microphone, and a wedged read must not hang the caller.
+        The source is closed either way, which releases a blocked read.
+        """
         if self._thread is None:
             return
         self._stop_event.set()
-        self._thread.join()
+        self._thread.join(timeout=timeout)
         self._thread = None
         self._audio_source.close()
 
