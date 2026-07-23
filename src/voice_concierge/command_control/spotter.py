@@ -9,6 +9,7 @@ DEFAULT_PHRASE_COMMANDS: dict[str, PlaybackCommand] = {
     "pause": "pause",
     "wait": "pause",
     "continue": "resume",
+    "resume": "resume",
 }
 
 

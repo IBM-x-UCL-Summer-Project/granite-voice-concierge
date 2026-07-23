@@ -50,6 +50,32 @@ def build_vosk_command_spotter(
     return PhraseCommandSpotter(recognizer, phrase_commands=commands)
 
 
+def build_playback_command_control(
+    controller: PlaybackController,
+    *,
+    model_name: str = DEFAULT_MODEL_NAME,
+    sample_rate: int = DEFAULT_SAMPLE_RATE,
+    phrase_commands: dict[str, PlaybackCommand] | None = None,
+    audio_source: AudioSource | None = None,
+    chunk: int = DEFAULT_CHUNK,
+) -> CommandListener:
+    """Assemble the full stop/pause/resume barge-in stack over a controller.
+
+    Unlike build_stop_command_control, the caller supplies the controller, since
+    pause and resume need one that can hold a playback position (for example
+    StreamingAudioPlayer). The recognizer vocabulary is derived from the phrase
+    map, so adding a phrase there is enough to make it spottable.
+    """
+    spotter = build_vosk_command_spotter(
+        model_name=model_name,
+        sample_rate=sample_rate,
+        phrase_commands=phrase_commands,
+    )
+    return build_command_listener(
+        spotter, controller, audio_source=audio_source, chunk=chunk
+    )
+
+
 def build_stop_command_control(
     *,
     model_name: str = DEFAULT_MODEL_NAME,

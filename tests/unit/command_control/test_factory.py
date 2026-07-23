@@ -13,6 +13,7 @@ from voice_concierge.command_control import (
     FakePlaybackController,
     PhraseCommandSpotter,
     build_command_listener,
+    build_playback_command_control,
     build_stop_command_control,
     build_vosk_command_spotter,
 )
@@ -74,6 +75,43 @@ class TestBuildVoskCommandSpotter:
 
         (vocabulary,), _ = mock_recognizer.call_args
         assert vocabulary == ("halt",)
+
+
+class TestBuildPlaybackCommandControl:
+    """Unit tests for the full stop/pause/resume assembly factory."""
+
+    @pytest.mark.unit
+    @patch("voice_concierge.command_control.factory.VoskPhraseRecognizer")
+    def test_assembles_full_vocabulary_listener(self, mock_recognizer: patch) -> None:
+        """The assembly recognizes every default phrase, not just 'stop'."""
+        listener = build_playback_command_control(
+            FakePlaybackController(), audio_source=FakeAudioSource(fill=_FRAME)
+        )
+
+        assert isinstance(listener, CommandListener)
+        (vocabulary,), _ = mock_recognizer.call_args
+        assert set(vocabulary) == set(DEFAULT_PHRASE_COMMANDS)
+        assert {"pause", "continue", "resume"} <= set(vocabulary)
+
+    @pytest.mark.unit
+    def test_routes_pause_and_resume_to_the_controller(self) -> None:
+        """Pause and resume events reach the supplied controller."""
+        controller = FakePlaybackController()
+        listener = build_command_listener(
+            FakeCommandSpotter(
+                [
+                    CommandEvent(command="pause", phrase="wait"),
+                    CommandEvent(command="resume", phrase="continue"),
+                ]
+            ),
+            controller,
+            audio_source=FakeAudioSource(fill=_FRAME),
+        )
+
+        listener._pump()
+        listener._pump()
+
+        assert controller.actions == ["pause", "resume"]
 
 
 class TestBuildStopCommandControl:

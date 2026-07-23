@@ -1,8 +1,9 @@
 """Manual live test: full pipeline (wake word -> VAD -> STT -> reasoning -> TTS)
 with barge-in.
 
-Say the wake word ("hey jarvis"), speak a request, then say "stop" while the
-assistant is talking to cut it off.
+Say the wake word ("hey jarvis"), speak a request, then control the reply while
+it plays: "stop" cuts it off, "pause"/"wait" holds it, "continue"/"resume"
+picks up where it left off.
 
 Run from the repo root in the venv:
     .venv/bin/python scripts/demo_live_barge_in.py
@@ -26,14 +27,13 @@ from voice_concierge.app.live import (  # noqa: E402
     build_wake_word_listener,
 )
 from voice_concierge.app.types import AppPipelineState  # noqa: E402
-from voice_concierge.audio import CapturedAudio  # noqa: E402
-from voice_concierge.audio.player import SoundDevicePlayer  # noqa: E402
+from voice_concierge.audio import CapturedAudio, StreamingAudioPlayer  # noqa: E402
 from voice_concierge.audio.source import PyAudioSource  # noqa: E402
 from voice_concierge.command_control import (  # noqa: E402
     CommandDispatcher,
     CommandEvent,
     CommandListener,
-    SoundDevicePlaybackController,
+    PlaybackController,
     build_vosk_command_spotter,
 )
 from voice_concierge.command_control.listener import DEFAULT_CHUNK  # noqa: E402
@@ -41,15 +41,15 @@ from voice_concierge.voice_input.stt.factory import build_speech_to_text  # noqa
 from voice_concierge.voice_output import SayTextToSpeech  # noqa: E402
 
 
-def build_logged_barge_in() -> CommandListener:
-    """Build the stop-only barge-in stack, logging every command it spots.
+def build_logged_barge_in(controller: PlaybackController) -> CommandListener:
+    """Build the stop/pause/resume barge-in stack, logging each spotted command.
 
-    build_stop_command_control() wires the dispatcher in silently, so a run
-    cannot tell "never spotted" apart from "spotted but playback ignored it".
-    Composing the callback by hand keeps that distinction visible.
+    The assembly factories wire the dispatcher in silently, so a run cannot tell
+    "never spotted" apart from "spotted but playback ignored it". Composing the
+    callback by hand keeps that distinction visible.
     """
-    spotter = build_vosk_command_spotter(phrase_commands={"stop": "stop"})
-    dispatcher = CommandDispatcher(SoundDevicePlaybackController())
+    spotter = build_vosk_command_spotter()  # full default vocabulary
+    dispatcher = CommandDispatcher(controller)
 
     def on_command(event: CommandEvent) -> None:
         print(f"    [barge-in] spotted {event.phrase!r} -> {event.command}")
@@ -63,21 +63,25 @@ def main() -> None:
     print("Loading models (first run downloads them)...")
     config = LiveAppConfig(download_wake_models=True)
 
+    # One pausable player serves as both the pipeline's speaker output and the
+    # barge-in controller, so pause/resume act on the audio actually playing.
+    player = StreamingAudioPlayer()
+
     pipeline = build_voice_concierge_pipeline(
         speech_to_text=build_speech_to_text(),
         text_to_speech=SayTextToSpeech(),  # macOS TTS instead of piper
-        audio_player=SoundDevicePlayer(),
+        audio_player=player,
         load_memory=True,
     )
     wake = build_wake_word_listener(config)
     capturer = build_utterance_capturer(config)
-    barge_in = build_logged_barge_in()  # Vosk model auto-downloads on first use
+    barge_in = build_logged_barge_in(player)  # Vosk model downloads on first use
 
     state = AppPipelineState()
 
     def handle_audio(audio: CapturedAudio) -> None:
         nonlocal state
-        print(">>> thinking / speaking — say 'stop' to interrupt")
+        print(">>> thinking / speaking — say 'stop', 'pause', or 'continue'")
         barge_in.start()
         started = time.monotonic()
         try:
