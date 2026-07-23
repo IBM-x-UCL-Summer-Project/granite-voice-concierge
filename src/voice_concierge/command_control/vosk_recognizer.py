@@ -45,8 +45,20 @@ class VoskPhraseRecognizer:
             ) from exc
 
     def recognize(self, frame: bytes) -> str | None:
-        """Feed one frame to Vosk; return a finalized phrase or None."""
-        if not self._recognizer.AcceptWaveform(frame):
+        """Feed one frame to Vosk; return a recognized phrase or None.
+
+        Emits from a partial result rather than waiting for AcceptWaveform() to
+        finalize. Finalization needs an end-of-utterance silence boundary, which
+        does not arrive while the assistant is still speaking, so a finalized-only
+        recognizer cannot interrupt playback in time.
+        """
+        if self._recognizer.AcceptWaveform(frame):
+            text = json.loads(self._recognizer.Result()).get("text", "").strip()
+            return text or None
+        partial = json.loads(self._recognizer.PartialResult()).get("partial", "")
+        words = partial.split()
+        if not words:
             return None
-        text = json.loads(self._recognizer.Result()).get("text", "").strip()
-        return text or None
+        # Reset so the phrase is emitted once per utterance, not once per frame.
+        self._recognizer.Reset()
+        return words[-1]

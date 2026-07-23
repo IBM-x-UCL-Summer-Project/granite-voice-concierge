@@ -19,10 +19,12 @@ from voice_concierge.command_control.vosk_recognizer import (
 class _FakeVoskRecognizer:
     """Minimal stand-in for a Vosk KaldiRecognizer."""
 
-    def __init__(self, final: bool, text: str = "") -> None:
+    def __init__(self, final: bool, text: str = "", partial: str = "") -> None:
         self._final = final
         self._text = text
+        self._partial = partial
         self.frames: list[bytes] = []
+        self.reset_count = 0
 
     def AcceptWaveform(self, frame: bytes) -> bool:
         self.frames.append(frame)
@@ -30,6 +32,12 @@ class _FakeVoskRecognizer:
 
     def Result(self) -> str:
         return json.dumps({"text": self._text})
+
+    def PartialResult(self) -> str:
+        return json.dumps({"partial": self._partial})
+
+    def Reset(self) -> None:
+        self.reset_count += 1
 
 
 class TestVoskPhraseRecognizerInit:
@@ -104,13 +112,30 @@ class TestVoskPhraseRecognizerRecognize:
     """Unit tests for VoskPhraseRecognizer.recognize()."""
 
     @pytest.mark.unit
-    def test_returns_none_when_not_final(self) -> None:
-        """recognize() returns None when the recognizer has no final result."""
-        recognizer = VoskPhraseRecognizer(
-            ["stop"], recognizer=_FakeVoskRecognizer(final=False)
-        )
+    def test_returns_none_when_nothing_recognized(self) -> None:
+        """recognize() returns None with neither a final nor a partial result."""
+        fake = _FakeVoskRecognizer(final=False, partial="")
+        recognizer = VoskPhraseRecognizer(["stop"], recognizer=fake)
 
         assert recognizer.recognize(b"frame") is None
+        assert fake.reset_count == 0  # nothing to emit, so no reset
+
+    @pytest.mark.unit
+    def test_returns_partial_before_finalization(self) -> None:
+        """A partial phrase is emitted without waiting for a silence boundary."""
+        fake = _FakeVoskRecognizer(final=False, partial="stop")
+        recognizer = VoskPhraseRecognizer(["stop"], recognizer=fake)
+
+        assert recognizer.recognize(b"frame") == "stop"
+        assert fake.reset_count == 1  # emitted once per utterance
+
+    @pytest.mark.unit
+    def test_returns_newest_word_of_a_partial(self) -> None:
+        """An accumulated partial yields its newest word, not the whole phrase."""
+        fake = _FakeVoskRecognizer(final=False, partial="stop back")
+        recognizer = VoskPhraseRecognizer(["stop", "back"], recognizer=fake)
+
+        assert recognizer.recognize(b"frame") == "back"
 
     @pytest.mark.unit
     def test_returns_recognized_phrase(self) -> None:

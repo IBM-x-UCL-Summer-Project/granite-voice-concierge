@@ -34,4 +34,8 @@ class PhraseRecognizer(Protocol):
     """Recognizes a constrained-vocabulary phrase from an audio frame."""
 
     def recognize(self, frame: bytes) -> str | None:
-        """Return a finalized recognized phrase, or None if not yet available."""
+        """Return a recognized phrase, or None if none is available yet.
+
+        Implementations should emit as early as they confidently can: a barge-in
+        command is only useful while playback is still running.
+        """
