@@ -1,6 +1,11 @@
 """Rule-based context manager for the MVP assistant."""
-
 from __future__ import annotations
+import json
+from dataclasses import asdict
+from pathlib import Path
+from dataclasses import replace
+
+
 
 from dataclasses import replace
 
@@ -159,3 +164,55 @@ def _apply_accessibility_preferences(
         updated = replace(updated, speech_pace="slow")
 
     return updated
+
+
+# ==========================================
+# Persistence & Restoration
+# ==========================================
+
+DEFAULT_STATE_FILE = Path(".voice_concierge_state.json")
+
+
+def save_context_state(state: ContextState, path: Path = DEFAULT_STATE_FILE) -> None:
+
+    with open(path, "w", encoding="utf-8") as f:
+
+        json.dump(asdict(state), f, indent=2)
+
+
+def load_context_state(path: Path = DEFAULT_STATE_FILE) -> ContextState:
+
+    if not path.exists():
+        return ContextState()
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+
+        acc_data = data.get("accessibility", {})
+        accessibility = AccessibilityProfile(
+            verbosity=acc_data.get("verbosity", "normal"),
+            speech_pace=acc_data.get("speech_pace", "normal")
+        )
+
+
+        return ContextState(
+            mode=data.get("mode", "home"),
+            pending_mode=data.get("pending_mode"),
+            last_topic=data.get("last_topic"),
+            accessibility=accessibility
+        )
+    except (json.JSONDecodeError, KeyError, TypeError):
+
+        return ContextState()
+
+
+def get_length_scale_from_pace(pace: str) -> float:
+    """
+    """
+    mapping = {
+        "normal": 1.2,
+        "slow": 1.6,
+    }
+    return mapping.get(pace, 1.2)
