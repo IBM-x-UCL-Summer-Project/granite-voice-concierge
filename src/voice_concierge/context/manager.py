@@ -4,7 +4,7 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 from dataclasses import replace
-
+import re
 
 
 from dataclasses import replace
@@ -19,7 +19,7 @@ from voice_concierge.context.types import (
 )
 
 _CONFIRM_WORDS = ("yes", "confirm", "okay", "ok", "go ahead")
-_CANCEL_WORDS = ("cancel", "stop", "never mind", "nevermind")
+_CANCEL_WORDS = ("no", "cancel", "stop", "never mind", "nevermind")
 
 
 class ContextManager:
@@ -87,10 +87,10 @@ class ContextManager:
         )
 
     def _handle_pending_mode(
-        self,
-        normalized: str,
-        state: ContextState,
-        command_action: CommandAction | None,
+            self,
+            normalized: str,
+            state: ContextState,
+            command_action: CommandAction | None,
     ) -> ContextDecision | None:
         if _contains_any(normalized, _CANCEL_WORDS):
             cleared_state = replace(state, pending_mode=None)
@@ -110,7 +110,15 @@ class ContextManager:
                 command_action=command_action,
             )
 
-        return None
+        # "I mentioned that yesterday"
+        return ContextDecision(
+            state=state,
+            policy=policy_for_mode(state.mode, state.accessibility),
+            command_action=command_action,
+            needs_confirmation=True,
+            pending_mode=state.pending_mode,
+            confirmation_prompt="Sorry, was that a yes or a no?"
+        )
 
 
 def _normalize(transcript: str) -> str:
@@ -118,7 +126,12 @@ def _normalize(transcript: str) -> str:
 
 
 def _contains_any(text: str, phrases: tuple[str, ...]) -> bool:
-    return any(phrase in text for phrase in phrases)
+    for phrase in phrases:
+        #  yesterday - yes
+        pattern = rf"\b{re.escape(phrase)}\b"
+        if re.search(pattern, text, re.IGNORECASE):
+            return True
+    return False
 
 
 def _detect_requested_mode(transcript: str) -> ContextMode | None:
