@@ -9,6 +9,7 @@ from voice_concierge.context.policies import policy_for_mode
 from voice_concierge.context.types import (
     AccessibilityProfile,
     CommandAction,
+    ConfirmationIntent,
     ContextDecision,
     ContextMode,
     ContextState,
@@ -92,7 +93,9 @@ class ContextManager:
         state: ContextState,
         command_action: CommandAction | None,
     ) -> ContextDecision | None:
-        if _contains_any(normalized, _CANCEL_WORDS):
+        confirmation_intent = detect_confirmation_intent(normalized)
+
+        if confirmation_intent == "cancel":
             cleared_state = replace(state, pending_mode=None)
             return ContextDecision(
                 state=cleared_state,
@@ -100,7 +103,7 @@ class ContextManager:
                 command_action=command_action or "cancel",
             )
 
-        if _contains_any(normalized, _CONFIRM_WORDS):
+        if confirmation_intent == "confirm":
             target_mode = state.pending_mode
             switched_state = replace(state, mode=target_mode, pending_mode=None)
             return ContextDecision(
@@ -115,6 +118,17 @@ class ContextManager:
 
 def _normalize(transcript: str) -> str:
     return " ".join(transcript.lower().strip().split())
+
+
+def detect_confirmation_intent(transcript: str) -> ConfirmationIntent | None:
+    """Return an explicit confirmation intent from a user transcript."""
+
+    normalized = _normalize(transcript)
+    if _contains_any(normalized, _CANCEL_WORDS):
+        return "cancel"
+    if _contains_any(normalized, _CONFIRM_WORDS):
+        return "confirm"
+    return None
 
 
 def _contains_any(text: str, phrases: tuple[str, ...]) -> bool:

@@ -31,6 +31,8 @@ dependencies = [
     "faster-whisper>=1,<2",
     # Text-to-speech
     "piper-tts>=1,<2",
+    # Barge-in command spotting
+    "vosk>=0.3,<0.4",
     # Utilities
     "numpy>=2,<3",
     "psutil>=5,<8",

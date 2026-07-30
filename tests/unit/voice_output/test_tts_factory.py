@@ -6,7 +6,11 @@ import pytest
 
 # Local
 from voice_concierge.voice_output import build_text_to_speech
-from voice_concierge.voice_output.piper import DEFAULT_CONFIG_PATH, DEFAULT_MODEL_PATH
+from voice_concierge.voice_output.piper import (
+    DEFAULT_CONFIG_PATH,
+    DEFAULT_LENGTH_SCALE,
+    DEFAULT_MODEL_PATH,
+)
 
 
 class TestBuildTextToSpeech:
@@ -21,7 +25,7 @@ class TestBuildTextToSpeech:
         mock_piper.assert_called_once_with(
             DEFAULT_MODEL_PATH,
             DEFAULT_CONFIG_PATH,
-            length_scale=1.2,
+            length_scale=DEFAULT_LENGTH_SCALE,
         )
         assert engine is mock_piper.return_value
 
