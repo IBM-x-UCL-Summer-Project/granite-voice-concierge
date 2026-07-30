@@ -30,6 +30,7 @@ from voice_concierge.command_control.spotter import (
     DEFAULT_PHRASE_COMMANDS,
     PhraseCommandSpotter,
 )
+from voice_concierge.command_control.transcript_parser import TranscriptCommandParser
 from voice_concierge.command_control.types import CommandEvent, PlaybackCommand
 from voice_concierge.command_control.vosk_recognizer import VoskPhraseRecognizer
 
@@ -50,6 +51,7 @@ __all__ = [
     "PlaybackControlError",
     "PlaybackController",
     "SoundDevicePlaybackController",
+    "TranscriptCommandParser",
     "VoskPhraseRecognizer",
     "build_command_listener",
     "build_playback_command_control",

@@ -28,6 +28,7 @@ from voice_concierge.audio.source import PyAudioSource  # noqa: E402
 from voice_concierge.command_control import (  # noqa: E402
     CommandEvent,
     CommandListener,
+    TranscriptCommandParser,
     build_vosk_command_spotter,
 )
 from voice_concierge.command_control.listener import DEFAULT_CHUNK  # noqa: E402
@@ -48,7 +49,8 @@ def main() -> None:
     wake = build_wake_word_listener(config)
     capturer = build_utterance_capturer(config)
 
-    # Navigation commands spotted during a routine drive the adapter directly.
+    # Path 1 — always-on KWS: navigation words spotted during a routine drive
+    # the adapter directly.
     spotter = build_vosk_command_spotter()
 
     def on_command(event: CommandEvent) -> None:
@@ -61,15 +63,26 @@ def main() -> None:
         chunk=DEFAULT_CHUNK,
     )
 
+    # Path 2 — wake-word: a command word inside a transcribed utterance drives
+    # the adapter too, using the same shared vocabulary as the KWS path.
+    parser = TranscriptCommandParser()
+    active = False
+
     def on_wake() -> None:
+        nonlocal active
         captured: list[CapturedAudio] = []
         capturer.capture_utterance(on_utterance_captured=captured.append)
         if not captured:
             return
         transcript = stt.transcribe(captured[0]).text
         print(f"You: {transcript}")
+        command = parser.parse(transcript)
+        if active and command is not None:
+            print(adapter.handle_command(command))  # wake-word navigation
+            return
         print(f"Assistant: {adapter.start_routine(transcript)}")
-        nav.start()  # listen for next/back/repeat/pause/stop during the routine
+        active = True
+        nav.start()  # KWS listens for next/back/repeat/pause/stop during the routine
 
     print("Say 'hey jarvis', then e.g. 'start making tea'. Ctrl+C to quit.\n")
     try:
