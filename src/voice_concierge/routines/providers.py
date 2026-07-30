@@ -26,6 +26,28 @@ class ChainedRoutineProvider:
                 return routine
         return None
 
+    def find_candidates(self, request: str) -> tuple[Routine, ...]:
+        """Return candidates from the first provider that yields any.
+
+        A provider exposing find_candidates can offer several matches (for
+        disambiguation); one exposing only get_routine yields at most one.
+        """
+        for provider in self._providers:
+            candidates = self._candidates_from(provider, request)
+            if candidates:
+                return candidates
+        return ()
+
+    @staticmethod
+    def _candidates_from(
+        provider: RoutineProvider, request: str
+    ) -> tuple[Routine, ...]:
+        finder = getattr(provider, "find_candidates", None)
+        if finder is not None:
+            return tuple(finder(request))
+        routine = provider.get_routine(request)
+        return (routine,) if routine is not None else ()
+
 
 #: A numbered step line: "1. text", "2) text", tolerant of leading space.
 _STEP_LINE = re.compile(r"^\s*\d+[.)]\s+(.+?)\s*$")

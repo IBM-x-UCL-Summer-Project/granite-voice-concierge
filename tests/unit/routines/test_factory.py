@@ -34,3 +34,23 @@ def test_build_routine_adapter_uses_a_chain() -> None:
         memory_manager=_FakeMemory(), reasoning_engine=engine
     )
     assert isinstance(adapter._provider, ChainedRoutineProvider)
+
+
+@pytest.mark.unit
+def test_built_adapter_asks_when_memory_has_multiple_matches() -> None:
+    from voice_concierge.routines.providers import serialize_routine
+    from voice_concierge.routines.types import Routine, RoutineStep
+
+    def _rec(name: str) -> dict:
+        return {
+            "content": serialize_routine(Routine(name=name, steps=(RoutineStep("a"),)))
+        }
+
+    class _Mem:
+        def retrieve_similar(self, *, query, top_k, topic):
+            return [_rec("pasta bake"), _rec("pasta salad")]
+
+    engine = DeterministicReasoningFake(ReasoningResponse(spoken_response="1. x"))
+    adapter = build_routine_adapter(memory_manager=_Mem(), reasoning_engine=engine)
+    said = adapter.start_routine("pasta")
+    assert "pasta bake" in said and "pasta salad" in said  # it asks
