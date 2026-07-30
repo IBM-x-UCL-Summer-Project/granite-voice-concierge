@@ -67,15 +67,31 @@ listener.start()   # when the VAD utterance ends
 listener.stop()    # when TTS output ends
 ```
 
-Vosk needs a local model (~40 MB): download e.g. `vosk-model-small-en-us-0.15`
-and pass its path via `build_stop_command_control(model_path=...)`.
+For the full `stop`/`pause`/`resume` vocabulary, pass a controller that can hold
+a playback position — `StreamingAudioPlayer` satisfies both `AudioPlayer` (so it
+is the pipeline's speaker) and `PlaybackController` (so barge-in drives it):
+
+```python
+from voice_concierge.audio import StreamingAudioPlayer
+from voice_concierge.command_control import build_playback_command_control
+
+player = StreamingAudioPlayer()          # also used as the pipeline's audio player
+listener = build_playback_command_control(player)
+```
+
+The Vosk model (~40 MB, e.g. `vosk-model-small-en-us-0.15`) is downloaded and
+cached automatically on first use; there is no manual download step. Override
+the name via the `model_name=` argument if needed.
 
 ## Scope
 
-- **Implemented:** stop-only barge-in — Vosk recognition, phrase→command
-  mapping, windowed listener, and a `sounddevice.stop()` playback controller.
-- **Deferred:** pause/resume (needs a streamed, resumable playback controller —
-  `SoundDevicePlaybackController` treats them as no-ops for now); wiring
-  `listener.start()`/`stop()` into the `app/` pipeline (requires non-blocking
-  TTS playback); acoustic echo / self-trigger handling.
+- **Implemented:** stop/pause/resume barge-in — Vosk recognition, phrase→command
+  mapping, windowed listener, and two playback controllers: a stop-only
+  `SoundDevicePlaybackController` (`sounddevice.stop()`) and the resumable
+  `audio.StreamingAudioPlayer`, which holds a playback position so `pause` and
+  `resume` work.
+- **Deferred:** wiring `listener.start()`/`stop()` into the `app/` pipeline
+  (requires non-blocking TTS playback); acoustic echo / self-trigger handling
+  (the recognizer emits from partial results, so the assistant's own voice can
+  in principle self-trigger during playback).
 ```
