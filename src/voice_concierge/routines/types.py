@@ -40,6 +40,10 @@ class Routine:
     name: str
     steps: tuple[RoutineStep, ...]
 
+    def __post_init__(self) -> None:
+        if not self.steps:
+            raise ValueError("Routine requires at least one step.")
+
 
 @dataclass(frozen=True)
 class StepView:
