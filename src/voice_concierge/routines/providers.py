@@ -1,6 +1,7 @@
 """Routine step-source backends: chained, LLM, and memory providers."""
 
 # Standard library
+import json
 import re
 from collections.abc import Iterable
 
@@ -71,3 +72,66 @@ class LLMRoutineProvider:
         except Exception as exc:  # backend failure -> typed routine error
             raise RoutineError(f"reasoning backend failed: {exc}") from exc
         return parse_numbered_steps(request, response.spoken_response)
+
+
+#: Topic under which routines are stored/retrieved in the memory layer.
+ROUTINE_TOPIC: str = "routine"
+
+#: Default number of candidate routines to retrieve for a request.
+DEFAULT_ROUTINE_TOP_K: int = 5
+
+
+def serialize_routine(routine: Routine) -> str:
+    """Serialize a routine to a single JSON string (one memory record)."""
+    return json.dumps(
+        {"name": routine.name, "steps": [step.text for step in routine.steps]}
+    )
+
+
+def deserialize_routine(content: str) -> Routine | None:
+    """Parse a stored routine record, or None if it is malformed or empty."""
+    try:
+        data = json.loads(content)
+        name = data["name"]
+        steps = tuple(RoutineStep(text) for text in data["steps"])
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return None
+    if not steps:
+        return None
+    return Routine(name=name, steps=steps)
+
+
+class MemoryRoutineProvider:
+    """Loads saved routines from the memory layer (one record per routine)."""
+
+    def __init__(
+        self,
+        memory_manager: object,
+        *,
+        topic: str = ROUTINE_TOPIC,
+        top_k: int = DEFAULT_ROUTINE_TOP_K,
+    ) -> None:
+        self._memory = memory_manager
+        self._topic = topic
+        self._top_k = top_k
+
+    def get_routine(self, request: str) -> Routine | None:
+        candidates = self.find_candidates(request)
+        return candidates[0] if candidates else None
+
+    def find_candidates(self, request: str) -> tuple[Routine, ...]:
+        try:
+            rows = self._memory.retrieve_similar(
+                query=request, top_k=self._top_k, topic=self._topic
+            )
+        except Exception as exc:  # backend failure -> typed routine error
+            raise RoutineError(f"memory backend failed: {exc}") from exc
+        routines = []
+        for row in rows:
+            content = row.get("content") if isinstance(row, dict) else None
+            if not isinstance(content, str):
+                continue
+            routine = deserialize_routine(content)
+            if routine is not None:
+                routines.append(routine)
+        return tuple(routines)
