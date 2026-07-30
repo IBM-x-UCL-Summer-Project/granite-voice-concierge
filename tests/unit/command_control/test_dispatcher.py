@@ -39,3 +39,17 @@ class TestCommandDispatcher:
         )
 
         assert controller.actions == ["resume"]
+
+
+@pytest.mark.unit
+def test_dispatch_ignores_routine_commands() -> None:
+    """next/back/repeat are routine commands; the playback dispatcher ignores them."""
+    from voice_concierge.command_control.dispatcher import CommandDispatcher
+    from voice_concierge.command_control.fakes import FakePlaybackController
+    from voice_concierge.command_control.types import CommandEvent
+
+    controller = FakePlaybackController()
+    dispatcher = CommandDispatcher(controller)
+    for command in ("next", "back", "repeat"):
+        dispatcher.dispatch(CommandEvent(command=command, phrase=command))
+    assert controller.actions == []  # no playback action for any of them

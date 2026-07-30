@@ -36,3 +36,12 @@ class TestCommandEvent:
 
         with pytest.raises(dataclasses.FrozenInstanceError):
             event.command = "stop"  # type: ignore[misc]
+
+
+@pytest.mark.unit
+def test_command_event_accepts_routine_commands() -> None:
+    """CommandEvent can carry navigation commands, not only playback ones."""
+    from voice_concierge.command_control.types import CommandEvent
+
+    event = CommandEvent(command="next", phrase="next")
+    assert event.command == "next"
