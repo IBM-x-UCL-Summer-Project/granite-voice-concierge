@@ -46,25 +46,33 @@ class CommandListener:
         self._thread.start()
 
     def stop(self, timeout: float = DEFAULT_STOP_TIMEOUT) -> None:
-        """Signal the thread to stop, join it, and close the audio source.
+        """Signal the thread to stop, release the source, and join the thread.
 
-        The join is bounded: the worker spends most of its time blocked in a
-        read() on the microphone, and a wedged read must not hang the caller.
-        The source is closed either way, which releases a blocked read.
+        The source is closed *before* the join: the worker spends most of its
+        time blocked in read(), and closing the source is what unblocks a wedged
+        read, so a blocked worker exits at once instead of after the timeout.
+        The join keeps its bound purely as a safety net.
         """
         if self._thread is None:
             return
         self._stop_event.set()
+        self._audio_source.close()
         self._thread.join(timeout=timeout)
         self._thread = None
-        self._audio_source.close()
 
     def _run(self) -> None:
         while not self._stop_event.is_set():
             self._pump()
 
     def _pump(self) -> None:
-        frame = self._audio_source.read(self._chunk)
+        try:
+            frame = self._audio_source.read(self._chunk)
+        except Exception:
+            # stop() closes the source under a live read; that failure is the
+            # expected way the read unblocks during shutdown, so swallow it.
+            if self._stop_event.is_set():
+                return
+            raise
         event = self._spotter.process(frame)
         if event is not None:
             self._on_command(event)

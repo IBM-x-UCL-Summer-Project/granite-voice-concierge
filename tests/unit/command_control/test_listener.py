@@ -71,6 +71,41 @@ class TestCommandListenerPump:
 
         assert received == []
 
+    @pytest.mark.unit
+    def test_pump_swallows_read_error_during_shutdown(self) -> None:
+        """A read() that fails after stop() is signalled is treated as expected."""
+
+        def _boom(num_samples: int) -> bytes:
+            raise OSError("stream closed")
+
+        received: list[CommandEvent] = []
+        source = FakeAudioSource(fill=_FRAME)
+        source.read = _boom  # simulate stop() closing the source under the read
+        listener = CommandListener(
+            source,
+            FakeCommandSpotter([CommandEvent(command="stop", phrase="stop")]),
+            received.append,
+        )
+        listener._stop_event.set()
+
+        listener._pump()  # must not raise
+
+        assert received == []  # no dispatch on a shutdown read error
+
+    @pytest.mark.unit
+    def test_pump_reraises_read_error_while_running(self) -> None:
+        """A read() failure that is not part of shutdown propagates."""
+
+        def _boom(num_samples: int) -> bytes:
+            raise OSError("device fault")
+
+        source = FakeAudioSource(fill=_FRAME)
+        source.read = _boom
+        listener = CommandListener(source, FakeCommandSpotter(), lambda e: None)
+
+        with pytest.raises(OSError):
+            listener._pump()  # stop not signalled -> a real fault surfaces
+
 
 class TestCommandListenerLifecycle:
     """Unit tests for the windowed start()/stop() lifecycle."""
