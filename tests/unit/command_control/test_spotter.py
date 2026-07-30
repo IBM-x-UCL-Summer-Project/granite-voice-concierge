@@ -25,10 +25,14 @@ class TestPhraseCommandSpotter:
             ("pause", "pause"),
             ("wait", "pause"),
             ("continue", "resume"),
+            ("resume", "resume"),
+            ("next", "next"),
+            ("back", "back"),
+            ("repeat", "repeat"),
         ],
     )
     def test_maps_known_phrase_to_command(self, phrase: str, command: str) -> None:
-        """A recognized command phrase maps to the correct playback command."""
+        """A recognized command phrase maps to the correct voice command."""
         spotter = PhraseCommandSpotter(FakePhraseRecognizer([phrase]))
 
         event = spotter.process(b"frame")

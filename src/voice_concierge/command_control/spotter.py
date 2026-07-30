@@ -2,29 +2,36 @@
 
 # Local
 from voice_concierge.command_control.interfaces import PhraseRecognizer
-from voice_concierge.command_control.types import CommandEvent, PlaybackCommand
+from voice_concierge.command_control.types import CommandEvent, VoiceCommand
 
-DEFAULT_PHRASE_COMMANDS: dict[str, PlaybackCommand] = {
+# The single shared vocabulary: both the recognizer grammar and this mapping are
+# built from it, so playback (stop/pause/resume) and routine (next/back/repeat)
+# words are spotted through one table.
+DEFAULT_PHRASE_COMMANDS: dict[str, VoiceCommand] = {
     "stop": "stop",
     "pause": "pause",
     "wait": "pause",
     "continue": "resume",
     "resume": "resume",
+    "next": "next",
+    "back": "back",
+    "repeat": "repeat",
 }
 
 
 class PhraseCommandSpotter:
-    """A CommandSpotter that maps recognized phrases to playback commands.
+    """A CommandSpotter that maps recognized phrases to voice commands.
 
     Recognition is delegated to any PhraseRecognizer, so the speech backend
-    (Vosk today) can be swapped without changing this mapping logic.
+    (Vosk today) can be swapped without changing this mapping logic. The mapped
+    command may be a playback action or a routine-navigation action.
     """
 
     def __init__(
         self,
         recognizer: PhraseRecognizer,
         *,
-        phrase_commands: dict[str, PlaybackCommand] | None = None,
+        phrase_commands: dict[str, VoiceCommand] | None = None,
     ) -> None:
         self._recognizer = recognizer
         self._phrase_commands = dict(phrase_commands or DEFAULT_PHRASE_COMMANDS)

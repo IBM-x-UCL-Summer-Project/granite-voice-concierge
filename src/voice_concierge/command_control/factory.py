@@ -15,7 +15,7 @@ from voice_concierge.command_control.spotter import (
     DEFAULT_PHRASE_COMMANDS,
     PhraseCommandSpotter,
 )
-from voice_concierge.command_control.types import PlaybackCommand
+from voice_concierge.command_control.types import VoiceCommand
 from voice_concierge.command_control.vosk_recognizer import (
     DEFAULT_MODEL_NAME,
     DEFAULT_SAMPLE_RATE,
@@ -40,7 +40,7 @@ def build_vosk_command_spotter(
     *,
     model_name: str = DEFAULT_MODEL_NAME,
     sample_rate: int = DEFAULT_SAMPLE_RATE,
-    phrase_commands: dict[str, PlaybackCommand] | None = None,
+    phrase_commands: dict[str, VoiceCommand] | None = None,
 ) -> PhraseCommandSpotter:
     """Build a PhraseCommandSpotter backed by a Vosk phrase recognizer."""
     commands = dict(phrase_commands or DEFAULT_PHRASE_COMMANDS)
@@ -55,7 +55,7 @@ def build_playback_command_control(
     *,
     model_name: str = DEFAULT_MODEL_NAME,
     sample_rate: int = DEFAULT_SAMPLE_RATE,
-    phrase_commands: dict[str, PlaybackCommand] | None = None,
+    phrase_commands: dict[str, VoiceCommand] | None = None,
     audio_source: AudioSource | None = None,
     chunk: int = DEFAULT_CHUNK,
 ) -> CommandListener:
