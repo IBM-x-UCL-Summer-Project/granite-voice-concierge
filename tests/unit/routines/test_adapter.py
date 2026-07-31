@@ -131,3 +131,25 @@ def test_provider_without_find_candidates_uses_get_routine() -> None:
     adapter = RoutineCommandAdapter(StaticRoutineProvider({"tea": _routine()}))
     assert "Step 1 of 2" in adapter.start_routine("tea")
     assert adapter.start_routine("unknown") == "I don't have a routine for that."
+
+
+@pytest.mark.unit
+def test_new_start_request_clears_stale_pending() -> None:
+    """A fresh start_routine abandons a still-pending disambiguation."""
+
+    class _Mutable:
+        def __init__(self) -> None:
+            self.candidates: tuple = ()
+
+        def find_candidates(self, request: str) -> tuple:
+            return self.candidates
+
+    provider = _Mutable()
+    provider.candidates = (_routine("a"), _routine("b"))
+    adapter = RoutineCommandAdapter(provider)
+    adapter.start_routine("x")  # multiple matches -> pending set, asks
+
+    provider.candidates = ()  # nothing matches now
+    assert adapter.start_routine("y") == "I don't have a routine for that."
+    # the old pending was cleared, so there is nothing left to resolve
+    assert adapter.resolve_choice("a") == "There's nothing to choose."

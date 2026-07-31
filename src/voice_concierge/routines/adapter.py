@@ -33,6 +33,7 @@ class RoutineCommandAdapter:
         self._pending: tuple[Routine, ...] = ()
 
     def start_routine(self, request: str) -> str:
+        self._pending = ()  # a new start-request abandons any pending disambiguation
         try:
             candidates = provider_candidates(self._provider, request)
         except RoutineError:
