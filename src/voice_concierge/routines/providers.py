@@ -33,20 +33,20 @@ class ChainedRoutineProvider:
         disambiguation); one exposing only get_routine yields at most one.
         """
         for provider in self._providers:
-            candidates = self._candidates_from(provider, request)
+            candidates = provider_candidates(provider, request)
             if candidates:
                 return candidates
         return ()
 
-    @staticmethod
-    def _candidates_from(
-        provider: RoutineProvider, request: str
-    ) -> tuple[Routine, ...]:
-        finder = getattr(provider, "find_candidates", None)
-        if finder is not None:
-            return tuple(finder(request))
-        routine = provider.get_routine(request)
-        return (routine,) if routine is not None else ()
+
+def provider_candidates(provider: object, request: str) -> tuple[Routine, ...]:
+    """Candidate routines from a provider: its find_candidates if it has one,
+    otherwise its get_routine wrapped as at most one candidate."""
+    finder = getattr(provider, "find_candidates", None)
+    if finder is not None:
+        return tuple(finder(request))
+    routine = provider.get_routine(request)
+    return (routine,) if routine is not None else ()
 
 
 #: A numbered step line: "1. text", "2) text", tolerant of leading space.

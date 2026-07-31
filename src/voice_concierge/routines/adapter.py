@@ -10,6 +10,7 @@ backend failure to a generic spoken fallback.
 # Local
 from voice_concierge.command_control.types import CommandEvent
 from voice_concierge.routines.errors import RoutineError
+from voice_concierge.routines.providers import provider_candidates
 from voice_concierge.routines.session import RoutineSession
 from voice_concierge.routines.types import Routine, RoutineResponse
 
@@ -33,7 +34,7 @@ class RoutineCommandAdapter:
 
     def start_routine(self, request: str) -> str:
         try:
-            candidates = self._candidates(request)
+            candidates = provider_candidates(self._provider, request)
         except RoutineError:
             return _BACKEND_FALLBACK
         if not candidates:
@@ -67,12 +68,6 @@ class RoutineCommandAdapter:
             "stop": self._session.stop,
         }[event.command]
         return self._speak(method())
-
-    def _candidates(self, request: str) -> tuple[Routine, ...]:
-        if hasattr(self._provider, "find_candidates"):
-            return tuple(self._provider.find_candidates(request))
-        routine = self._provider.get_routine(request)
-        return (routine,) if routine is not None else ()
 
     def _begin(self, routine: Routine) -> str:
         self._session = RoutineSession(routine)
