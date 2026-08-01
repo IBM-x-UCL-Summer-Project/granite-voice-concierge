@@ -7,12 +7,16 @@ starting a routine (with ask-then-default disambiguation), and degrades a
 backend failure to a generic spoken fallback.
 """
 
+# Standard library
+from typing import cast
+
 # Local
 from voice_concierge.command_control.types import CommandEvent
 from voice_concierge.routines.errors import RoutineError
+from voice_concierge.routines.interfaces import RoutineProvider
 from voice_concierge.routines.providers import provider_candidates
 from voice_concierge.routines.session import RoutineSession
-from voice_concierge.routines.types import Routine, RoutineResponse
+from voice_concierge.routines.types import Routine, RoutineResponse, StepView
 
 _NOT_RUNNING = "No routine is running."
 _NOT_FOUND = "I don't have a routine for that."
@@ -27,7 +31,7 @@ _STEP_PREFIX = {
 class RoutineCommandAdapter:
     """Drives a RoutineSession from spoken commands and speaks the outcome."""
 
-    def __init__(self, provider: object) -> None:
+    def __init__(self, provider: RoutineProvider) -> None:
         self._provider = provider
         self._session: RoutineSession | None = None
         self._pending: tuple[Routine, ...] = ()
@@ -81,6 +85,8 @@ class RoutineCommandAdapter:
             return "Routine stopped."
         if response.outcome == "not_active":
             return _NOT_RUNNING
-        step = response.step
+        # Every remaining (step-bearing) outcome carries a step; the early
+        # returns above have handled the step-less outcomes.
+        step = cast(StepView, response.step)
         prefix = _STEP_PREFIX.get(response.outcome, "")
         return f"{prefix}Step {step.number} of {step.total}. {step.text}"

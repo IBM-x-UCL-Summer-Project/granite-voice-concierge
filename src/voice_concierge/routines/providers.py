@@ -4,6 +4,7 @@
 import json
 import re
 from collections.abc import Iterable
+from typing import Protocol
 
 # Local
 from voice_concierge.reasoning.engine import ReasoningEngine
@@ -39,7 +40,7 @@ class ChainedRoutineProvider:
         return ()
 
 
-def provider_candidates(provider: object, request: str) -> tuple[Routine, ...]:
+def provider_candidates(provider: RoutineProvider, request: str) -> tuple[Routine, ...]:
     """Candidate routines from a provider: its find_candidates if it has one,
     otherwise its get_routine wrapped as at most one candidate."""
     finder = getattr(provider, "find_candidates", None)
@@ -103,6 +104,13 @@ ROUTINE_TOPIC: str = "routine"
 DEFAULT_ROUTINE_TOP_K: int = 5
 
 
+class RoutineMemory(Protocol):
+    """The slice of the memory manager MemoryRoutineProvider depends on."""
+
+    def retrieve_similar(self, *, query: str, top_k: int, topic: str) -> list[dict]:
+        """Return stored memory records similar to the query, filtered by topic."""
+
+
 def serialize_routine(routine: Routine) -> str:
     """Serialize a routine to a single JSON string (one memory record)."""
     return json.dumps(
@@ -128,7 +136,7 @@ class MemoryRoutineProvider:
 
     def __init__(
         self,
-        memory_manager: object,
+        memory_manager: RoutineMemory,
         *,
         topic: str = ROUTINE_TOPIC,
         top_k: int = DEFAULT_ROUTINE_TOP_K,

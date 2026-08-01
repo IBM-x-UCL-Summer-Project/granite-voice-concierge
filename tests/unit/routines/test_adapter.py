@@ -29,6 +29,10 @@ class _Provider:
             raise RoutineError("backend down")
         return self._candidates
 
+    def get_routine(self, request: str) -> Routine | None:
+        candidates = self.find_candidates(request)
+        return candidates[0] if candidates else None
+
 
 def _event(command: str) -> CommandEvent:
     return CommandEvent(command=command, phrase=command)
@@ -143,6 +147,9 @@ def test_new_start_request_clears_stale_pending() -> None:
 
         def find_candidates(self, request: str) -> tuple:
             return self.candidates
+
+        def get_routine(self, request: str) -> Routine | None:
+            return self.candidates[0] if self.candidates else None
 
     provider = _Mutable()
     provider.candidates = (_routine("a"), _routine("b"))

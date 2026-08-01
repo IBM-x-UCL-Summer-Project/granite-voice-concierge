@@ -8,12 +8,13 @@ from voice_concierge.routines.providers import (
     ChainedRoutineProvider,
     LLMRoutineProvider,
     MemoryRoutineProvider,
+    RoutineMemory,
 )
 
 
 def build_routine_adapter(
     *,
-    memory_manager: object,
+    memory_manager: RoutineMemory,
     reasoning_engine: ReasoningEngine,
 ) -> RoutineCommandAdapter:
     """Wire a memory-first, LLM-fallback provider into a command adapter."""
