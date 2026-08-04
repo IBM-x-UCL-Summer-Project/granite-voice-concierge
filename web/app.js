@@ -1,4 +1,18 @@
 const STORAGE_KEY = "granite-pipeline-state-v1";
+const SETTINGS_STORAGE_KEY = "granite-personal-settings-v1";
+
+const defaultSettings = {
+  version: 1,
+  setup_complete: false,
+  microphone_id: "default",
+  speaker_id: "default",
+  speech_rate: 1,
+  volume: 80,
+  response_length: "normal",
+  wake_word_sensitivity: 60,
+  interaction_mode: "voice_first",
+  speak_confirmations: true,
+};
 
 const defaultState = {
   context: {
@@ -11,14 +25,21 @@ const defaultState = {
     },
   },
   last_spoken_response: null,
+  conversation_history: [],
   pending_memory_action: null,
   pending_memory_scope: null,
 };
 
 const state = {
   pipeline: loadState(),
+  settings: loadSettings(),
+  settingsDraft: null,
+  setupStep: 0,
   turn: 0,
   running: false,
+  capabilities: { text_input: false, voice_input: false, voice_output: false },
+  recorder: null,
+  playback: null,
 };
 
 const elements = {
@@ -26,7 +47,10 @@ const elements = {
   input: document.querySelector("#transcript-input"),
   send: document.querySelector("#send-button"),
   conversation: document.querySelector("#conversation"),
-  modeLabel: document.querySelector("#mode-label"),
+  modeSelect: document.querySelector("#mode-select"),
+  microphoneButton: document.querySelector("#mic-button"),
+  runtimeLabel: document.querySelector("#runtime-label"),
+  runtimeDot: document.querySelector("#runtime-dot"),
   pipelineList: document.querySelector("#pipeline-list"),
   turnCounter: document.querySelector("#turn-counter"),
   statusOrb: document.querySelector("#status-orb"),
@@ -37,6 +61,28 @@ const elements = {
   copyState: document.querySelector("#copy-state"),
   toast: document.querySelector("#toast"),
   themeButton: document.querySelector("#theme-button"),
+  settingsButton: document.querySelector("#settings-button"),
+  setupDialog: document.querySelector("#setup-dialog"),
+  setupForm: document.querySelector("#setup-form"),
+  setupClose: document.querySelector("#setup-close"),
+  setupSkip: document.querySelector("#setup-skip"),
+  setupBack: document.querySelector("#setup-back"),
+  setupNext: document.querySelector("#setup-next"),
+  setupStepLabel: document.querySelector("#setup-step-label"),
+  setupTitle: document.querySelector("#setup-title"),
+  setupDescription: document.querySelector("#setup-description"),
+  microphoneSelect: document.querySelector("#microphone-select"),
+  speakerSelect: document.querySelector("#speaker-select"),
+  deviceStatus: document.querySelector("#device-status"),
+  detectDevices: document.querySelector("#detect-devices"),
+  speechRate: document.querySelector("#speech-rate"),
+  speechRateOutput: document.querySelector("#speech-rate-output"),
+  voiceVolume: document.querySelector("#voice-volume"),
+  volumeOutput: document.querySelector("#volume-output"),
+  wakeSensitivity: document.querySelector("#wake-sensitivity"),
+  sensitivityOutput: document.querySelector("#sensitivity-output"),
+  previewVoice: document.querySelector("#preview-voice"),
+  interactionLabel: document.querySelector("#interaction-label"),
 };
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -44,15 +90,278 @@ const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, mil
 function loadState() {
   try {
     const persisted = window.localStorage.getItem(STORAGE_KEY);
-    return persisted ? { ...defaultState, ...JSON.parse(persisted) } : structuredClone(defaultState);
+    if (!persisted) return structuredClone(defaultState);
+    const parsed = JSON.parse(persisted);
+    return {
+      ...structuredClone(defaultState),
+      ...parsed,
+      context: {
+        ...structuredClone(defaultState.context),
+        ...parsed.context,
+        accessibility: {
+          ...defaultState.context.accessibility,
+          ...parsed.context?.accessibility,
+        },
+      },
+      conversation_history: Array.isArray(parsed.conversation_history)
+        ? parsed.conversation_history
+        : [],
+    };
   } catch {
     return structuredClone(defaultState);
+  }
+}
+
+function loadSettings() {
+  try {
+    const persisted = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
+    return persisted
+      ? { ...defaultSettings, ...JSON.parse(persisted) }
+      : structuredClone(defaultSettings);
+  } catch {
+    return structuredClone(defaultSettings);
   }
 }
 
 function saveState() {
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state.pipeline));
   renderState();
+}
+
+const setupSteps = [
+  {
+    title: "Choose your audio devices",
+    description: "Select the microphone Granite listens to and the speaker it uses.",
+  },
+  {
+    title: "Make the voice comfortable",
+    description: "Adjust speech pace and volume, then preview the result on this device.",
+  },
+  {
+    title: "Choose how you interact",
+    description: "Tune wake-word sensitivity and decide how each conversation starts.",
+  },
+  {
+    title: "Shape every response",
+    description: "Set your preferred answer length, review the setup, and save it locally.",
+  },
+];
+
+function openSetup() {
+  state.settingsDraft = structuredClone(state.settings);
+  state.setupStep = 0;
+  populateSetupForm(state.settingsDraft);
+  renderSetupStep();
+  if (!elements.setupDialog.open) elements.setupDialog.showModal();
+}
+
+function closeSetup() {
+  if (elements.setupDialog.open) elements.setupDialog.close();
+}
+
+function renderSetupStep() {
+  const step = setupSteps[state.setupStep];
+  document.querySelectorAll("[data-setup-step]").forEach((section) => {
+    section.hidden = Number(section.dataset.setupStep) !== state.setupStep;
+  });
+  document.querySelectorAll("[data-progress-step]").forEach((item) => {
+    const itemStep = Number(item.dataset.progressStep);
+    item.classList.toggle("is-current", itemStep === state.setupStep);
+    item.classList.toggle("is-complete", itemStep < state.setupStep);
+  });
+  elements.setupStepLabel.textContent = `Step ${state.setupStep + 1} of ${setupSteps.length}`;
+  elements.setupTitle.textContent = step.title;
+  elements.setupDescription.textContent = step.description;
+  elements.setupBack.hidden = state.setupStep === 0;
+  elements.setupNext.textContent = state.setupStep === setupSteps.length - 1
+    ? "Save settings"
+    : "Continue";
+  elements.setupSkip.textContent = state.settings.setup_complete ? "Cancel" : "Skip for now";
+  if (state.setupStep === setupSteps.length - 1) updateSetupReview();
+}
+
+function populateSetupForm(settings) {
+  ensureSelectedDeviceOption(
+    elements.microphoneSelect,
+    settings.microphone_id,
+    "Previously selected microphone",
+  );
+  ensureSelectedDeviceOption(
+    elements.speakerSelect,
+    settings.speaker_id,
+    "Previously selected speaker",
+  );
+  elements.microphoneSelect.value = settings.microphone_id;
+  elements.speakerSelect.value = settings.speaker_id;
+  elements.speechRate.value = settings.speech_rate;
+  elements.voiceVolume.value = settings.volume;
+  elements.wakeSensitivity.value = settings.wake_word_sensitivity;
+  const interaction = elements.setupForm.querySelector(
+    `[name="interaction_mode"][value="${settings.interaction_mode}"]`,
+  );
+  if (interaction) interaction.checked = true;
+  const responseLength = elements.setupForm.querySelector(
+    `[name="response_length"][value="${settings.response_length}"]`,
+  );
+  if (responseLength) responseLength.checked = true;
+  elements.setupForm.elements.speak_confirmations.checked = settings.speak_confirmations;
+  updateRangeOutputs();
+}
+
+function ensureSelectedDeviceOption(select, value, label) {
+  if (!value || value === "default") return;
+  const exists = [...select.options].some((option) => option.value === value);
+  if (!exists) select.add(new Option(label, value));
+}
+
+function collectSettingsDraft() {
+  const checkedInteraction = elements.setupForm.querySelector(
+    '[name="interaction_mode"]:checked',
+  );
+  const checkedLength = elements.setupForm.querySelector(
+    '[name="response_length"]:checked',
+  );
+  state.settingsDraft = {
+    ...state.settingsDraft,
+    microphone_id: elements.microphoneSelect.value,
+    speaker_id: elements.speakerSelect.value,
+    speech_rate: Number(elements.speechRate.value),
+    volume: Number(elements.voiceVolume.value),
+    response_length: checkedLength?.value || "normal",
+    wake_word_sensitivity: Number(elements.wakeSensitivity.value),
+    interaction_mode: checkedInteraction?.value || "voice_first",
+    speak_confirmations: elements.setupForm.elements.speak_confirmations.checked,
+  };
+  updateRangeOutputs();
+}
+
+function savePersonalSettings() {
+  collectSettingsDraft();
+  state.settings = {
+    ...state.settingsDraft,
+    version: defaultSettings.version,
+    setup_complete: true,
+  };
+  window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(state.settings));
+  applyPersonalSettings();
+  closeSetup();
+  showToast("Personal settings saved on this device");
+}
+
+function applyPersonalSettings() {
+  const { response_length: responseLength } = state.settings;
+  const interactionLabels = {
+    voice_first: "Wake word + transcript",
+    push_to_talk: "Push to talk",
+    text_first: "Transcript input",
+  };
+  elements.interactionLabel.textContent = interactionLabels[state.settings.interaction_mode];
+  setText(
+    "#inspector-wake-setting",
+    `Web bypass · ${state.settings.wake_word_sensitivity}%`,
+  );
+  elements.settingsButton.classList.toggle("is-configured", state.settings.setup_complete);
+  elements.settingsButton.setAttribute(
+    "aria-label",
+    state.settings.setup_complete
+      ? `Personal settings: ${responseLength} responses, ${interactionLabels[state.settings.interaction_mode]}`
+      : "Open personal setup",
+  );
+  renderState();
+}
+
+function updateRangeOutputs() {
+  const speechRate = Number(elements.speechRate.value);
+  const speechLabel = speechRate < 0.9 ? "Slow" : speechRate > 1.1 ? "Fast" : "Normal";
+  elements.speechRateOutput.textContent = `${speechLabel} · ${speechRate.toFixed(1)}×`;
+  elements.volumeOutput.textContent = `${elements.voiceVolume.value}%`;
+  const sensitivity = Number(elements.wakeSensitivity.value);
+  const sensitivityLabel = sensitivity < 50
+    ? "Conservative"
+    : sensitivity > 70
+      ? "Sensitive"
+      : "Balanced";
+  elements.sensitivityOutput.textContent = `${sensitivityLabel} · ${sensitivity}%`;
+}
+
+function updateSetupReview() {
+  collectSettingsDraft();
+  const microphone = elements.microphoneSelect.selectedOptions[0]?.textContent;
+  const speaker = elements.speakerSelect.selectedOptions[0]?.textContent;
+  const audioLabel = microphone === "System default microphone"
+    && speaker === "System default speaker"
+    ? "System defaults"
+    : "Custom devices";
+  const interactionLabels = {
+    voice_first: "Voice first",
+    push_to_talk: "Push to talk",
+    text_first: "Text first",
+  };
+  setText("#review-audio", audioLabel);
+  setText(
+    "#review-voice",
+    `${Number(state.settingsDraft.speech_rate).toFixed(1)}× · ${state.settingsDraft.volume}%`,
+  );
+  setText("#review-interaction", interactionLabels[state.settingsDraft.interaction_mode]);
+}
+
+async function findAudioDevices() {
+  elements.detectDevices.disabled = true;
+  elements.deviceStatus.textContent = "Checking microphones and speakers…";
+  try {
+    if (!navigator.mediaDevices?.enumerateDevices) {
+      throw new Error("Device selection is unavailable in this browser.");
+    }
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream.getTracks().forEach((track) => track.stop());
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    populateDeviceSelect(
+      elements.microphoneSelect,
+      devices.filter((device) => device.kind === "audioinput"),
+      "System default microphone",
+      "Microphone",
+    );
+    populateDeviceSelect(
+      elements.speakerSelect,
+      devices.filter((device) => device.kind === "audiooutput"),
+      "System default speaker",
+      "Speaker",
+    );
+    const microphones = devices.filter((device) => device.kind === "audioinput").length;
+    const speakers = devices.filter((device) => device.kind === "audiooutput").length;
+    elements.deviceStatus.textContent = `Found ${microphones} microphone${microphones === 1 ? "" : "s"} and ${speakers} speaker${speakers === 1 ? "" : "s"}.`;
+  } catch (error) {
+    elements.deviceStatus.textContent = error.name === "NotAllowedError"
+      ? "Microphone access was not allowed. You can keep the system defaults."
+      : error.message || "Devices could not be listed. System defaults remain available.";
+  } finally {
+    elements.detectDevices.disabled = false;
+  }
+}
+
+function populateDeviceSelect(select, devices, defaultLabel, fallbackLabel) {
+  const selectedValue = select.value;
+  select.replaceChildren(new Option(defaultLabel, "default"));
+  devices.forEach((device, index) => {
+    if (device.deviceId === "default") return;
+    select.add(new Option(device.label || `${fallbackLabel} ${index + 1}`, device.deviceId));
+  });
+  ensureSelectedDeviceOption(select, selectedValue, `Previously selected ${fallbackLabel.toLowerCase()}`);
+  select.value = [...select.options].some((option) => option.value === selectedValue)
+    ? selectedValue
+    : "default";
+}
+
+function speakText(text, settings = state.settings) {
+  if (!("speechSynthesis" in window)) {
+    showToast("Voice preview is unavailable in this browser");
+    return;
+  }
+  stopPlayback();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.rate = Number(settings.speech_rate);
+  utterance.volume = Number(settings.volume) / 100;
+  window.speechSynthesis.speak(utterance);
 }
 
 function syntaxHighlight(value) {
@@ -64,7 +373,7 @@ function syntaxHighlight(value) {
 
 function renderState() {
   elements.stateJson.innerHTML = syntaxHighlight(state.pipeline);
-  elements.modeLabel.textContent = capitalize(state.pipeline.context.mode);
+  elements.modeSelect.value = state.pipeline.context.mode;
   setText("#inspector-mode", state.pipeline.context.mode);
   setText("#inspector-pending-mode", valueOrNull(state.pipeline.context.pending_mode));
   setText("#inspector-memory-scope", state.pipeline.pending_memory_scope || "none");
@@ -137,6 +446,11 @@ function appendMessage(role, text, options = {}) {
         </button>` : ""}
     </div>`;
   elements.conversation.appendChild(article);
+  const speakButton = article.querySelector(".speak-button");
+  if (speakButton) {
+    speakButton.responseAudio = options.audio || null;
+    speakButton.fallbackText = text;
+  }
 
   if (options.confirmation) {
     appendConfirmation(options.confirmation);
@@ -148,6 +462,14 @@ function appendMessage(role, text, options = {}) {
     elements.conversation.appendChild(error);
   }
   article.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function appendPipelineError(message) {
+  const error = document.createElement("div");
+  error.className = "error-card";
+  error.textContent = message;
+  elements.conversation.appendChild(error);
+  error.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 function appendConfirmation(kind) {
@@ -166,188 +488,217 @@ function appendConfirmation(kind) {
   elements.conversation.appendChild(card);
 }
 
-function buildResponse(transcript) {
-  const normalized = transcript.trim().toLowerCase();
-  const previousState = structuredClone(state.pipeline);
-  const response = {
-    state: structuredClone(state.pipeline),
-    transcript: { text: transcript, language: "en", language_probability: 0.98 },
-    spoken_response: "",
-    context: {
-      mode: state.pipeline.context.mode,
-      mode_changed: false,
-      needs_confirmation: false,
-      command_action: detectCommand(normalized),
-      confirmation_prompt: "",
-    },
-    reasoning: null,
-    memory_operation: { attempted: false, succeeded: false, reason: "" },
-    errors: [],
-    audio: null,
-  };
-
-  if (state.pipeline.context.pending_mode) {
-    if (isConfirmation(normalized)) {
-      const target = state.pipeline.context.pending_mode;
-      response.state.context.mode = target;
-      response.state.context.pending_mode = null;
-      response.context.mode = target;
-      response.context.mode_changed = true;
-      response.spoken_response = `${capitalize(target)} mode is now active.`;
-      response.reasoning = reasoning("high");
-      return response;
-    }
-    if (isCancellation(normalized)) {
-      response.state.context.pending_mode = null;
-      response.context.command_action = "cancel";
-      response.spoken_response = "Okay, I’ll stay in home mode.";
-      response.reasoning = reasoning("high");
-      return response;
-    }
+async function requestJson(path, payload) {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  let body = null;
+  try {
+    body = await response.json();
+  } catch {
+    throw new Error("The local pipeline returned an unreadable response.");
   }
-
-  if (state.pipeline.pending_memory_action) {
-    if (isConfirmation(normalized)) {
-      response.memory_operation = { attempted: true, succeeded: true, reason: "stored_successfully" };
-      response.spoken_response = "Done. I’ll remember that preference.";
-      response.state.pending_memory_action = null;
-      response.state.pending_memory_scope = null;
-      response.reasoning = reasoning("high");
-      return response;
-    }
-    if (isCancellation(normalized)) {
-      response.spoken_response = "Okay, I won’t save it.";
-      response.state.pending_memory_action = null;
-      response.state.pending_memory_scope = null;
-      response.context.command_action = "cancel";
-      response.reasoning = reasoning("high");
-      return response;
-    }
+  if (!response.ok) {
+    throw new Error(body?.error?.message || `Pipeline request failed (${response.status}).`);
   }
-
-  const requestedMode = detectMode(normalized);
-  if (requestedMode === "driving" && state.pipeline.context.mode !== "driving") {
-    const prompt = "Driving mode uses very short, safety-aware responses. Please confirm before I switch.";
-    response.spoken_response = prompt;
-    response.context.needs_confirmation = true;
-    response.context.confirmation_prompt = prompt;
-    response.state.context.pending_mode = "driving";
-    response.state.last_spoken_response = prompt;
-    return response;
-  }
-  if (requestedMode && requestedMode !== state.pipeline.context.mode) {
-    response.state.context.mode = requestedMode;
-    response.context.mode = requestedMode;
-    response.context.mode_changed = true;
-    response.spoken_response = `${capitalize(requestedMode)} mode is now active.`;
-    response.reasoning = reasoning("high");
-    return response;
-  }
-
-  if (/(remember|save|keep in mind)/.test(normalized)) {
-    const content = normalized.includes("short")
-      ? "User prefers short answers."
-      : transcript.replace(/^(please\s+)?(remember|save)(\s+that)?\s*/i, "");
-    const action = {
-      action: "store",
-      content,
-      rationale: "User explicitly asked the assistant to remember this preference.",
-      requires_confirmation: true,
-    };
-    response.spoken_response = "I can remember that. Please confirm before I save it.";
-    response.reasoning = reasoning("high", action);
-    response.state.pending_memory_action = action;
-    response.state.pending_memory_scope = "personal_relevant";
-    return response;
-  }
-
-  if (normalized.includes("simulate error")) {
-    response.spoken_response = "I can’t reach local reasoning right now. Please try again.";
-    response.reasoning = reasoning("low");
-    response.errors = ["reasoning_failed"];
-    return response;
-  }
-
-  if (normalized.includes("pasta")) {
-    response.spoken_response = "For a simple pasta, you’ll need pasta, olive oil, garlic, tomatoes, salt, and parmesan. I can turn that into a shopping list.";
-    response.state.context.last_topic = "pasta dinner";
-    response.reasoning = reasoning("high");
-    return response;
-  }
-
-  if (response.context.command_action === "repeat" && previousState.last_spoken_response) {
-    response.spoken_response = previousState.last_spoken_response;
-    response.reasoning = reasoning("high");
-    return response;
-  }
-
-  response.spoken_response = "I’ve understood your request. The app pipeline will pass this transcript, context, and relevant memories to the local Granite model.";
-  response.reasoning = reasoning("medium");
-  return response;
+  return body;
 }
 
-function reasoning(confidence, proposedMemoryAction = null) {
+function turnOptions() {
   return {
-    confidence,
-    needs_confirmation: Boolean(proposedMemoryAction),
-    proposed_memory_action: proposedMemoryAction,
-    mode_suggestion: null,
+    synthesize: Boolean(state.capabilities.voice_output),
+    play: false,
   };
 }
 
-function detectMode(text) {
-  const normalized = text.trim().toLowerCase();
-  const firstWord = normalized.split(/\s+/, 1)[0]?.replace(/[.,!?]+$/g, "") || "";
-  const questionPrefixes = new Set([
-    "what", "why", "how", "when", "where", "who", "which",
-    "is", "are", "do", "does", "did", "can", "could", "would", "should",
-  ]);
-  if (normalized.endsWith("?") || questionPrefixes.has(firstWord)) return null;
-
-  const modes = {
-    cooking: ["cooking", "kitchen"],
-    shopping: ["shopping", "shop"],
-    driving: ["driving", "drive"],
-    home: ["home", "living"],
-  };
-  for (const [mode, aliases] of Object.entries(modes)) {
-    const aliasPattern = aliases.join("|");
-    const target = `(?:${aliasPattern})(?:\\s+mode)?`;
-    const patterns = [
-      `(?:switch|change|go)\\s+(?:me\\s+)?to\\s+(?:the\\s+)?${target}`,
-      `(?:enter|enable|activate|start|use)\\s+(?:the\\s+)?${target}`,
-      `(?:${aliasPattern})\\s+mode`,
-    ];
-    if (patterns.some((pattern) => matchesCommand(normalized, pattern))) return mode;
-  }
-  return null;
+function requestTextTurn(transcript) {
+  return requestJson("/api/turn", {
+    transcript,
+    state: state.pipeline,
+    options: turnOptions(),
+  });
 }
 
-function detectCommand(text) {
-  if (matchesCommand(text, "(?:repeat(?:\\s+(?:that|this|it))?|say\\s+that\\s+again)")) return "repeat";
-  if (matchesCommand(text, "(?:next\\s+step|what(?:'s|\\s+is)\\s+the\\s+next\\s+step)")) return "next_step";
-  if (matchesCommand(text, "stop(?:\\s+(?:speaking|talking|that|this|now|the\\s+response|playback))?")) return "stop";
-  if (matchesCommand(text, "(?:cancel(?:\\s+(?:that|this))?|never\\s+mind|nevermind)")) return "cancel";
-  return null;
-}
-
-function matchesCommand(text, commandPattern) {
-  const pattern = new RegExp(`^(?:please\\s+)?${commandPattern}(?:\\s+please)?[.!]*$`);
-  return pattern.test(text.trim().toLowerCase());
-}
-
-function isConfirmation(text) {
-  return matchesCommand(text, "(?:yes(?:\\s*,?\\s*confirm)?|confirm|okay|ok|go\\s+ahead)");
-}
-
-function isCancellation(text) {
-  return ["cancel", "stop"].includes(detectCommand(text));
+function requestAudioTurn(wavBase64) {
+  return requestJson("/api/audio", {
+    wav_base64: wavBase64,
+    state: state.pipeline,
+    options: turnOptions(),
+  });
 }
 
 function confirmationKind(response) {
   if (response.context.needs_confirmation) return "mode";
   if (response.reasoning?.proposed_memory_action?.requires_confirmation) return "memory";
   return null;
+}
+
+function stopPlayback() {
+  window.speechSynthesis?.cancel();
+  if (!state.playback) return;
+  state.playback.audio.pause();
+  state.playback.audio.currentTime = 0;
+  state.playback.button?.classList.remove("is-playing");
+  if (state.playback.button) state.playback.button.lastChild.textContent = " Play response";
+  URL.revokeObjectURL(state.playback.url);
+  state.playback = null;
+}
+
+async function playResponse(button) {
+  if (state.playback?.button === button) {
+    stopPlayback();
+    return;
+  }
+  stopPlayback();
+  const audioPayload = button.responseAudio;
+  if (!audioPayload?.wav_base64) {
+    speakText(button.fallbackText || "");
+    return;
+  }
+
+  const binary = window.atob(audioPayload.wav_base64);
+  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  const url = URL.createObjectURL(new Blob([bytes], { type: "audio/wav" }));
+  const audio = new Audio(url);
+  audio.volume = Number(state.settings.volume) / 100;
+  audio.playbackRate = Number(state.settings.speech_rate);
+  if (state.settings.speaker_id !== "default" && typeof audio.setSinkId === "function") {
+    try {
+      await audio.setSinkId(state.settings.speaker_id);
+    } catch {
+      showToast("The selected speaker is unavailable; using the system default");
+    }
+  }
+  state.playback = { audio, button, url };
+  button.classList.add("is-playing");
+  button.lastChild.textContent = " Stop response";
+  audio.addEventListener("ended", stopPlayback, { once: true });
+  try {
+    await audio.play();
+  } catch {
+    stopPlayback();
+    speakText(button.fallbackText || "");
+  }
+}
+
+async function startVoiceRecording() {
+  if (!state.capabilities.voice_input) {
+    showToast("Restart the local UI server with --voice-io to enable speech input");
+    return;
+  }
+  const audioConstraint = state.settings.microphone_id === "default"
+    ? true
+    : { deviceId: { exact: state.settings.microphone_id } };
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraint });
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    const context = new AudioContext();
+    const source = context.createMediaStreamSource(stream);
+    const processor = context.createScriptProcessor(4096, 1, 1);
+    const silentGain = context.createGain();
+    silentGain.gain.value = 0;
+    const chunks = [];
+    processor.onaudioprocess = (event) => {
+      chunks.push(new Float32Array(event.inputBuffer.getChannelData(0)));
+    };
+    source.connect(processor);
+    processor.connect(silentGain);
+    silentGain.connect(context.destination);
+    state.recorder = { stream, context, source, processor, silentGain, chunks };
+    elements.microphoneButton.classList.add("is-recording");
+    elements.microphoneButton.setAttribute("aria-label", "Stop and send voice input");
+    elements.microphoneButton.title = "Stop and send";
+    elements.turnStatusLabel.textContent = "Listening";
+    elements.turnStatusDetail.textContent = "Select the microphone again when you finish";
+  } catch (error) {
+    showToast(error.name === "NotAllowedError"
+      ? "Microphone permission was not allowed"
+      : "The selected microphone is unavailable");
+  }
+}
+
+async function stopVoiceRecording() {
+  const recorder = state.recorder;
+  if (!recorder) return;
+  state.recorder = null;
+  recorder.processor.disconnect();
+  recorder.source.disconnect();
+  recorder.silentGain.disconnect();
+  recorder.stream.getTracks().forEach((track) => track.stop());
+  const sourceRate = recorder.context.sampleRate;
+  await recorder.context.close();
+  elements.microphoneButton.classList.remove("is-recording");
+  elements.microphoneButton.setAttribute("aria-label", "Start voice input");
+  elements.microphoneButton.title = "Start voice input";
+
+  const samples = mergeAudioChunks(recorder.chunks);
+  if (samples.length < sourceRate / 5) {
+    showToast("That recording was too short");
+    return;
+  }
+  const resampled = resampleAudio(samples, sourceRate, 16000);
+  await runTurn({ kind: "audio", wavBase64: encodeWavBase64(resampled, 16000) });
+}
+
+function mergeAudioChunks(chunks) {
+  const length = chunks.reduce((total, chunk) => total + chunk.length, 0);
+  const merged = new Float32Array(length);
+  let offset = 0;
+  chunks.forEach((chunk) => {
+    merged.set(chunk, offset);
+    offset += chunk.length;
+  });
+  return merged;
+}
+
+function resampleAudio(samples, sourceRate, targetRate) {
+  if (sourceRate === targetRate) return samples;
+  const targetLength = Math.max(1, Math.round(samples.length * targetRate / sourceRate));
+  const output = new Float32Array(targetLength);
+  const ratio = sourceRate / targetRate;
+  for (let index = 0; index < targetLength; index += 1) {
+    const position = index * ratio;
+    const left = Math.floor(position);
+    const right = Math.min(left + 1, samples.length - 1);
+    const fraction = position - left;
+    output[index] = samples[left] * (1 - fraction) + samples[right] * fraction;
+  }
+  return output;
+}
+
+function encodeWavBase64(samples, sampleRate) {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+  const writeString = (offset, value) => {
+    for (let index = 0; index < value.length; index += 1) {
+      view.setUint8(offset + index, value.charCodeAt(index));
+    }
+  };
+  writeString(0, "RIFF");
+  view.setUint32(4, 36 + samples.length * 2, true);
+  writeString(8, "WAVE");
+  writeString(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeString(36, "data");
+  view.setUint32(40, samples.length * 2, true);
+  samples.forEach((sample, index) => {
+    const clipped = Math.max(-1, Math.min(1, sample));
+    view.setInt16(44 + index * 2, clipped < 0 ? clipped * 0x8000 : clipped * 0x7fff, true);
+  });
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  }
+  return window.btoa(binary);
 }
 
 function updateInspector(response) {
@@ -398,7 +749,7 @@ async function runTurn(transcript) {
     previous = stage;
   }
 
-  const response = buildResponse(transcript);
+  const response = shapeResponseForPreferences(buildResponse(transcript));
   const errorStage = response.errors.includes("reasoning_failed") ? "reasoning" : null;
   if (errorStage) {
     setStage(errorStage, "error", "Error");
@@ -488,7 +839,10 @@ elements.conversation.addEventListener("click", (event) => {
     return;
   }
   const speak = event.target.closest(".speak-button");
-  if (speak) showToast("Browser playback will use audio when the backend returns it.");
+  if (speak) {
+    const text = speak.closest(".message-body")?.querySelector(".bubble")?.textContent;
+    if (text) speakText(text);
+  }
 });
 
 elements.copyState.addEventListener("click", async () => {
@@ -506,5 +860,38 @@ elements.themeButton.addEventListener("click", () => {
   window.localStorage.setItem("granite-theme", next);
 });
 
+elements.settingsButton.addEventListener("click", openSetup);
+elements.setupClose.addEventListener("click", closeSetup);
+elements.setupSkip.addEventListener("click", closeSetup);
+elements.setupBack.addEventListener("click", () => {
+  collectSettingsDraft();
+  state.setupStep = Math.max(0, state.setupStep - 1);
+  renderSetupStep();
+});
+elements.setupNext.addEventListener("click", () => {
+  collectSettingsDraft();
+  if (state.setupStep === setupSteps.length - 1) {
+    savePersonalSettings();
+    return;
+  }
+  state.setupStep += 1;
+  renderSetupStep();
+});
+elements.detectDevices.addEventListener("click", findAudioDevices);
+elements.previewVoice.addEventListener("click", () => {
+  collectSettingsDraft();
+  speakText("Hello. This is how Granite will sound.", state.settingsDraft);
+});
+elements.setupForm.addEventListener("input", () => {
+  collectSettingsDraft();
+  if (state.setupStep === setupSteps.length - 1) updateSetupReview();
+});
+elements.setupDialog.addEventListener("cancel", () => {
+  state.settingsDraft = null;
+});
+
 document.documentElement.dataset.theme = window.localStorage.getItem("granite-theme") || "light";
-renderState();
+applyPersonalSettings();
+if (!state.settings.setup_complete) {
+  window.setTimeout(openSetup, 180);
+}
