@@ -45,6 +45,29 @@ def test_deserialize_rejects_malformed() -> None:
 
 
 @pytest.mark.unit
+def test_deserialize_rejects_wrong_types() -> None:
+    """A non-string name or a non-list steps field is rejected."""
+    assert deserialize_routine(json.dumps({"name": 5, "steps": ["a"]})) is None
+    assert deserialize_routine(json.dumps({"name": "x", "steps": "a"})) is None
+
+
+@pytest.mark.unit
+def test_deserialize_drops_non_string_and_blank_steps() -> None:
+    """Non-string and blank step entries are dropped, not turned into steps."""
+    content = json.dumps({"name": "x", "steps": ["boil", 3, "", "  ", " pour "]})
+    routine = deserialize_routine(content)
+
+    assert routine is not None
+    assert [step.text for step in routine.steps] == ["boil", "pour"]
+
+
+@pytest.mark.unit
+def test_deserialize_returns_none_when_no_valid_steps() -> None:
+    """If every step entry is invalid, the record is treated as malformed."""
+    assert deserialize_routine(json.dumps({"name": "x", "steps": [1, 2, ""]})) is None
+
+
+@pytest.mark.unit
 def test_get_routine_returns_first_match_under_routine_topic() -> None:
     memory = _FakeMemory([_record("pasta")])
     routine = MemoryRoutineProvider(memory).get_routine("pasta")

@@ -62,6 +62,15 @@ class TestPhraseCommandSpotter:
         assert event.command == "stop"
 
     @pytest.mark.unit
+    def test_empty_phrase_commands_is_honored(self) -> None:
+        """An explicit empty map maps nothing (does not fall back to default)."""
+        spotter = PhraseCommandSpotter(
+            FakePhraseRecognizer(["stop"]), phrase_commands={}
+        )
+
+        assert spotter.process(b"frame") is None
+
+    @pytest.mark.unit
     def test_satisfies_command_spotter_protocol(self) -> None:
         """PhraseCommandSpotter satisfies the CommandSpotter protocol."""
         assert isinstance(PhraseCommandSpotter(FakePhraseRecognizer()), CommandSpotter)

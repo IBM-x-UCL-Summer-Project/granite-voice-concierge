@@ -25,7 +25,9 @@ class TranscriptCommandParser:
         *,
         phrase_commands: dict[str, VoiceCommand] | None = None,
     ) -> None:
-        self._phrase_commands = dict(phrase_commands or DEFAULT_PHRASE_COMMANDS)
+        self._phrase_commands = dict(
+            DEFAULT_PHRASE_COMMANDS if phrase_commands is None else phrase_commands
+        )
 
     def parse(self, transcript: str) -> CommandEvent | None:
         """Return a CommandEvent for the first command word found, or None."""

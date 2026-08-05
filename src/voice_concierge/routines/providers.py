@@ -119,13 +119,25 @@ def serialize_routine(routine: Routine) -> str:
 
 
 def deserialize_routine(content: str) -> Routine | None:
-    """Parse a stored routine record, or None if it is malformed or empty."""
+    """Parse a stored routine record, or None if it is malformed or empty.
+
+    Stored records are untrusted, so types are validated: a non-string name or a
+    non-list steps field is rejected, and non-string or blank step entries are
+    dropped rather than turned into non-text steps.
+    """
     try:
         data = json.loads(content)
         name = data["name"]
-        steps = tuple(RoutineStep(text) for text in data["steps"])
+        raw_steps = data["steps"]
     except (json.JSONDecodeError, KeyError, TypeError):
         return None
+    if not isinstance(name, str) or not isinstance(raw_steps, list):
+        return None
+    steps = tuple(
+        RoutineStep(step.strip())
+        for step in raw_steps
+        if isinstance(step, str) and step.strip()
+    )
     if not steps:
         return None
     return Routine(name=name, steps=steps)
