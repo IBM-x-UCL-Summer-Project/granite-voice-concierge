@@ -1,21 +1,19 @@
-"""Manual live test: start and navigate a routine by voice.
+"""Manual live test: start and navigate a routine by voice, with barge-in.
 
-Interaction model (one microphone consumer at a time, uninterruptible playback):
+Interaction model:
 
 * Say "hey jarvis", then a request like "start making tea" to begin a routine,
   or a navigation word ("next", "go back", "repeat", "pause", "continue",
   "stop") to move through the active routine. This is the wake-word command
   path (the parser shares one vocabulary with the KWS spotter).
-* The assistant speaks each step to completion; the wake-word listener resumes
-  between turns.
+* While the assistant is speaking a step, the barge-in KWS listener is live
+  (windowed to playback) so you can cut the speech short with "stop" or hold it
+  with "pause" / "continue".
 
-Barge-in (interrupting speech with "stop") is a separate feature of the
-`command_control` package with its own harness, `demo_live_barge_in.py`. It is
-intentionally left out here: running a second (input) audio stream concurrently
-with playback trips macOS CoreAudio (PaMacCore err -50) and truncates speech, so
-this routines harness keeps playback uninterruptible for a clean run.
-
-Uses the macOS `say` TTS backend (piper is broken on macOS).
+macOS CoreAudio note: the barge-in microphone is opened through sounddevice, the
+same backend as playback, so the input and output streams share one PortAudio
+instance instead of colliding (which previously threw PaMacCore err -50 and
+truncated speech). Uses the macOS `say` TTS backend (piper is broken on macOS).
 
 Run from the repo root in the venv:
     .venv/bin/python scripts/demo_live_routines.py
@@ -41,7 +39,13 @@ from voice_concierge.audio import (  # noqa: E402
     CapturedAudio,
     StreamingAudioPlayer,
 )
-from voice_concierge.command_control import TranscriptCommandParser  # noqa: E402
+from voice_concierge.command_control import (  # noqa: E402
+    CommandDispatcher,
+    CommandListener,
+    TranscriptCommandParser,
+    build_vosk_command_spotter,
+)
+from voice_concierge.command_control.listener import DEFAULT_CHUNK  # noqa: E402
 from voice_concierge.memory import build_memory_manager  # noqa: E402
 from voice_concierge.reasoning.factory import build_reasoning_engine  # noqa: E402
 from voice_concierge.routines import RoutineError, build_routine_adapter  # noqa: E402
@@ -50,6 +54,42 @@ from voice_concierge.voice_output import (  # noqa: E402
     SayTextToSpeech,
     TextToSpeechError,
 )
+
+MIC_RATE = 16000  # Vosk expects 16 kHz mono int16
+
+
+class SoundDeviceMic:
+    """AudioSource over sounddevice, so barge-in input shares the playback backend.
+
+    Opening the microphone through the same audio library as playback keeps both
+    streams under one PortAudio instance, avoiding the macOS CoreAudio (-50)
+    collision that a separate PyAudio input stream caused during playback.
+    """
+
+    def __init__(self, *, samplerate: int = MIC_RATE, channels: int = 1) -> None:
+        self._samplerate = samplerate
+        self._channels = channels
+        self._stream = None
+
+    def open(self) -> None:
+        import sounddevice as sd
+
+        self._stream = sd.RawInputStream(
+            samplerate=self._samplerate, channels=self._channels, dtype="int16"
+        )
+        self._stream.start()
+
+    def read(self, num_samples: int) -> bytes:
+        if self._stream is None:
+            raise AudioDeviceError("Microphone read before open().")
+        data, _overflowed = self._stream.read(num_samples)
+        return bytes(data)
+
+    def close(self) -> None:
+        if self._stream is not None:
+            self._stream.stop()
+            self._stream.close()
+            self._stream = None
 
 
 def main() -> None:
@@ -66,9 +106,24 @@ def main() -> None:
     capturer = build_utterance_capturer(config)
     parser = TranscriptCommandParser()
 
+    # Barge-in: "stop"/"pause"/"continue" act on playback while a step is spoken.
+    # The mic uses sounddevice so it shares the playback backend (no -50 collision).
+    dispatcher = CommandDispatcher(player)
+    barge_in = CommandListener(
+        SoundDeviceMic(),
+        build_vosk_command_spotter(),
+        dispatcher.dispatch,
+        chunk=DEFAULT_CHUNK,
+    )
+
     def speak(text: str) -> None:
-        """Synthesize and play a response to completion (uninterruptible)."""
-        player.play(tts.synthesize(text))
+        """Speak a response; barge-in is live only while it plays (windowed)."""
+        audio = tts.synthesize(text)
+        barge_in.start()
+        try:
+            player.play(audio)  # blocks until finished or "stop" cuts it off
+        finally:
+            barge_in.stop()
 
     active = False
 
