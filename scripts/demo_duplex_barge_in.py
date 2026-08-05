@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from voice_concierge.audio import DuplexAudioPlayer  # noqa: E402
 from voice_concierge.command_control import (  # noqa: E402
     CommandDispatcher,
+    DebouncingCommandSpotter,
     build_vosk_command_spotter,
 )
 from voice_concierge.voice_output import SayTextToSpeech  # noqa: E402
@@ -44,7 +45,10 @@ def main() -> None:
     audio = tts.synthesize(PHRASE)
 
     # One duplex stream = one sample rate; match Vosk to the playback rate.
-    spotter = build_vosk_command_spotter(sample_rate=audio.sample_rate)
+    base_spotter = build_vosk_command_spotter(sample_rate=audio.sample_rate)
+    # Debounce so the mic hearing our own playback does not self-trigger while
+    # there is no echo cancellation yet. Tune confirm/window from the live run.
+    spotter = DebouncingCommandSpotter(base_spotter, confirm=2, window=10)
     dispatcher = CommandDispatcher(player)
 
     def on_frame(frame: bytes) -> None:
