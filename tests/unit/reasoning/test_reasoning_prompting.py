@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import Mock
+
 import pytest
 
 from voice_concierge.reasoning import (
@@ -12,6 +14,12 @@ from voice_concierge.reasoning import (
     ReasoningRequest,
     build_granite_messages,
     load_prompt_template,
+)
+from voice_concierge.reasoning.prompting import (
+    _MAX_SUMMARY_CHARS,
+    _MAX_TRANSCRIPT_CHARS,
+    _format_conversation_summary,
+    _format_transcript,
 )
 
 
@@ -100,3 +108,44 @@ def test_granite_messages_reject_invalid_prompt_version() -> None:
 
     with pytest.raises(PromptTemplateError, match="is invalid"):
         build_granite_messages(request, prompt_version="../outside")
+
+
+def test_transcript_truncation() -> None:
+    """Ensure oversized transcripts are truncated at the end."""
+    # 1. normal length
+    short_text = "Hello, what is the weather?"
+    assert _format_transcript(short_text) == short_text
+
+    # 2. exceed
+    long_text = "A" * (_MAX_TRANSCRIPT_CHARS + 100)
+    result = _format_transcript(long_text)
+
+    assert result.endswith("... [truncated]")
+    assert result.startswith("A" * _MAX_TRANSCRIPT_CHARS)
+    assert len(result) == _MAX_TRANSCRIPT_CHARS + len("... [truncated]")
+
+
+def test_summary_truncation() -> None:
+    """Ensure oversized history summaries are truncated at the beginning."""
+    #  Mock  ReasoningRequest
+    mock_request = Mock()
+
+    #
+    mock_request.conversation_summary = None
+    assert _format_conversation_summary(mock_request) == "No summary supplied."
+
+    #
+    mock_request.conversation_summary = "User asked for weather. Assistant replied."
+    assert (
+        _format_conversation_summary(mock_request)
+        == mock_request.conversation_summary
+    )
+
+    #
+    long_summary = "B" * (_MAX_SUMMARY_CHARS + 100)
+    mock_request.conversation_summary = long_summary
+    result = _format_conversation_summary(mock_request)
+
+    assert result.startswith("... [truncated]\n")
+    assert result.endswith("B" * _MAX_SUMMARY_CHARS)
+    assert len(result) == _MAX_SUMMARY_CHARS + len("... [truncated]\n")

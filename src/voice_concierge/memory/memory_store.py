@@ -58,7 +58,14 @@ class MemoryStore:
         self.con.commit()
         return self.cur.lastrowid
 
-    def get_memories(self, person=None, source_type=None, topic=None):
+    def get_memory_by_id(self, memory_id):
+        """Get a single memory by ID. Returns None if not found."""
+        row = self.cur.execute(
+            "SELECT * FROM memories WHERE id = ?", (memory_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def get_memories(self, person=None, source_type=None, topic=None, layer=None):
         query = "SELECT * FROM memories WHERE 1=1"
         params = []
 
@@ -71,6 +78,9 @@ class MemoryStore:
         if topic is not None:
             query += " AND topic = ?"
             params.append(topic)
+        if layer is not None:
+            query += " AND layer = ?"
+            params.append(layer)
 
         query += " ORDER BY created_at DESC"
         rows = self.cur.execute(query, params).fetchall()

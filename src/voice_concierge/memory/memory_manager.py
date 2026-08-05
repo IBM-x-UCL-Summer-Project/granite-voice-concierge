@@ -35,6 +35,31 @@ class MemoryManager:
         self.validator = validator or MemoryValidator()
         self.retriever = MemoryRetriever(memory_store, vector_store, embedding_service)
 
+    def find_similar_memory(
+        self,
+        content: str,
+        threshold: float = 0.85,
+        top_k: int = 5,
+    ) -> Optional[dict]:
+        """
+        Find semantically similar existing memory.
+
+        Args:
+            content: Memory content to match
+            threshold: Similarity threshold (0-1), higher = more strict
+            top_k: Number of candidates to check
+
+        Returns:
+            Most similar memory dict if found above threshold, else None
+        """
+        try:
+            results = self.retrieve_similar(content, top_k=top_k)
+            if results and results[0].get("distance", 1.0) < (1.0 - threshold):
+                return results[0]
+            return None
+        except Exception:
+            return None
+
     def store_memory(
         self,
         content: str,
@@ -47,9 +72,11 @@ class MemoryManager:
         validate: bool = True,
         auto_classify: bool = True,
         auto_extract: bool = True,
+        check_duplicates: bool = True,
     ) -> Tuple[bool, str, Optional[int]]:
         """
         Store a memory after validation and optional auto-classification.
+        Prevents duplicate/similar memories from being stored.
 
         Args:
             content: Memory content
@@ -60,12 +87,20 @@ class MemoryManager:
             event_time: Event time timestamp (optional, auto-extracted if None)
             strength: Memory strength 1-10 (optional, auto-extracted if None)
             validate: Whether to validate with LLM first
-            auto_classify: Whether to auto-classify memory type (episodic/semantic/etc.)
-            auto_extract: Whether to auto-extract metadata (person, source_type, etc.)
+            auto_classify: Whether to auto-classify memory type
+            auto_extract: Whether to auto-extract metadata
+            check_duplicates: Whether to check for duplicates (default: True)
 
         Returns:
             Tuple of (success: bool, reason: str, memory_id: Optional[int])
         """
+        # Check for duplicates if enabled
+        if check_duplicates:
+            similar = self.find_similar_memory(content, threshold=0.9)
+            if similar:
+                mem_id = similar["id"]
+                return False, f"duplicate_found: memory_id={mem_id}", mem_id
+
         # Validate if enabled
         if validate:
             should_store, reason = self.validator.should_store(content)
@@ -105,8 +140,13 @@ class MemoryManager:
             )
 
             # Generate and store embedding
-            embedding = self.embedding_service.get_embedding(content)
-            self.vector_store.save_vector(memory_id, embedding)
+            try:
+                embedding = self.embedding_service.get_embedding(content)
+                self.vector_store.save_vector(memory_id, embedding)
+            except Exception as e:
+                # Rollback: delete SQL record if vector storage fails
+                self.memory_store.delete_memory(memory_id)
+                return False, f"vector_storage_failed_rolled_back: {str(e)}", None
 
             return True, "stored_successfully", memory_id
 
@@ -157,6 +197,7 @@ class MemoryManager:
     ) -> Tuple[bool, str]:
         """
         Update a memory and regenerate its embedding if content changed.
+        Rolls back SQL changes if embedding generation/storage fails.
 
         Args:
             memory_id: ID of memory to update
@@ -172,6 +213,12 @@ class MemoryManager:
             Tuple of (success: bool, reason: str)
         """
         try:
+            # Save original state for potential rollback
+            original_memory = self.memory_store.get_memory_by_id(memory_id)
+            if not original_memory:
+                return False, "memory_not_found"
+
+            # Update SQL
             success = self.memory_store.update_memory(
                 memory_id=memory_id,
                 content=content,
@@ -188,8 +235,22 @@ class MemoryManager:
 
             # Regenerate embedding if content changed
             if content:
-                embedding = self.embedding_service.get_embedding(content)
-                self.vector_store.save_vector(memory_id, embedding)
+                try:
+                    embedding = self.embedding_service.get_embedding(content)
+                    self.vector_store.save_vector(memory_id, embedding)
+                except Exception as e:
+                    # Rollback SQL changes if embedding fails
+                    self.memory_store.update_memory(
+                        memory_id=memory_id,
+                        content=original_memory.get("content"),
+                        layer=original_memory.get("layer"),
+                        person=original_memory.get("person"),
+                        topic=original_memory.get("topic"),
+                        source_type=original_memory.get("source_type"),
+                        event_time=original_memory.get("event_time"),
+                        strength=original_memory.get("strength"),
+                    )
+                    return False, f"embedding_error_rolled_back: {str(e)}"
 
             return True, "updated_successfully"
 
@@ -210,6 +271,13 @@ class MemoryManager:
             success = self.memory_store.delete_memory(memory_id)
             if not success:
                 return False, "memory_not_found"
+
+            # Also delete the associated vector
+            try:
+                self.vector_store.delete_vector(memory_id)
+            except Exception as e:
+                return False, f"vector_deletion_failed: {str(e)}"
+
             return True, "deleted_successfully"
 
         except Exception as e:

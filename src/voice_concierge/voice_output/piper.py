@@ -38,12 +38,22 @@ def _default_piper_executable() -> str:
 _MODULE_DIR = Path(__file__).resolve().parent
 DEFAULT_MODEL_PATH: str = str(_MODULE_DIR / "en_GB-alan-medium.onnx")
 DEFAULT_CONFIG_PATH: str = str(_MODULE_DIR / "en_GB-alan-medium.onnx.json")
-DEFAULT_LENGTH_SCALE: float = 1.0  # >1 slows speech; 1.2 suits older adults
+DEFAULT_LENGTH_SCALE: float = 1.2  # >1 slows speech; 1.2 suits older adults
+MIN_LENGTH_SCALE: float = 0.5  # fast
+MAX_LENGTH_SCALE: float = 2.5  # slow
 DEFAULT_PIPER_EXECUTABLE: str = _default_piper_executable()
 
 
 class PiperTextToSpeech:
     """TextToSpeech backed by the Piper CLI. Synthesis only; playback is separate."""
+
+    @property
+    def length_scale(self) -> float:
+        return self._length_scale
+
+    @length_scale.setter
+    def length_scale(self, value: float) -> None:
+        self._length_scale = max(MIN_LENGTH_SCALE, min(MAX_LENGTH_SCALE, float(value)))
 
     def __init__(
         self,
@@ -55,11 +65,19 @@ class PiperTextToSpeech:
     ) -> None:
         self._model_path = model_path
         self._config_path = config_path
-        self._length_scale = length_scale
+        self.length_scale = length_scale
         self._executable = executable
 
-    def synthesize(self, text: str) -> CapturedAudio:
+    def synthesize(
+        self,
+        text: str,
+        pace_override: float | None = None,
+    ) -> CapturedAudio:
         """Run Piper to synthesize `text` into an in-memory CapturedAudio."""
+
+        if pace_override is not None:
+            self.length_scale = pace_override
+
         with tempfile.TemporaryDirectory() as tmp_dir:
             output_path = Path(tmp_dir) / "piper_output.wav"
             self._run_piper(text, output_path)

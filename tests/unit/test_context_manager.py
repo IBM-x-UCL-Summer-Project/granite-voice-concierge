@@ -1,3 +1,4 @@
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -12,6 +13,7 @@ from voice_concierge.context import (
     ContextState,
     detect_confirmation_intent,
 )
+from voice_concierge.context.manager import load_context_state, save_context_state
 
 
 class ContextManagerTest(unittest.TestCase):
@@ -149,6 +151,50 @@ class ContextManagerTest(unittest.TestCase):
         )
 
         self.assertEqual(modes[0], "home")
+
+    def test_speaking_pace_persistence(self) -> None:
+        """Regression test for Issue #38: Speaking pace persistence."""
+        decision = self.manager.handle("Answer more slowly", ContextState())
+
+        save_context_state(decision.state)
+
+        loaded_state = load_context_state()
+        self.assertEqual(loaded_state.accessibility.speech_pace, "slow")
+
+        test_file_path = ".voice_concierge_state.json"
+        if os.path.exists(test_file_path):
+            os.remove(test_file_path)
+
+    def test_confirmation_substring_collision_regression(self) -> None:
+        """Regression test for Issue #35: Substring-based confirmation."""
+        from dataclasses import replace
+
+        base_state = ContextState(mode="home")
+        pending_state = replace(base_state, pending_mode="driving")
+
+        # 1.  (Deliberate confirmation)
+        decision = self.manager.handle("yes, please do it", pending_state)
+        self.assertEqual(decision.state.mode, "driving")
+        self.assertIsNone(decision.state.pending_mode)
+        self.assertEqual(decision.confirmation_prompt, "")
+
+        # 2.  (Deliberate cancellation)
+        decision = self.manager.handle("no stop", pending_state)
+        self.assertEqual(decision.state.mode, "home")
+        self.assertIsNone(decision.state.pending_mode)
+        self.assertEqual(decision.confirmation_prompt, "")
+
+        # 3.  (Substring collision for 'yes')
+        decision = self.manager.handle("I mentioned that yesterday", pending_state)
+        self.assertTrue(decision.needs_confirmation)
+        self.assertEqual(decision.confirmation_prompt, "Sorry, was that a yes or a no?")
+        self.assertEqual(decision.state.pending_mode, "driving")
+
+        # 4.  (Substring collision for 'no')
+        decision = self.manager.handle("I know", pending_state)
+        self.assertTrue(decision.needs_confirmation)
+        self.assertEqual(decision.confirmation_prompt, "Sorry, was that a yes or a no?")
+        self.assertEqual(decision.state.pending_mode, "driving")
 
 
 if __name__ == "__main__":
