@@ -47,3 +47,10 @@ class TestTranscriptCommandParser:
 
         assert parser.parse("halt now").command == "stop"
         assert parser.parse("next") is None  # not in the custom vocabulary
+
+    @pytest.mark.unit
+    def test_empty_vocabulary_is_honored(self) -> None:
+        """An explicit empty map recognizes nothing (does not fall back to default)."""
+        parser = TranscriptCommandParser(phrase_commands={})
+
+        assert parser.parse("stop next repeat") is None

@@ -34,7 +34,9 @@ class PhraseCommandSpotter:
         phrase_commands: dict[str, VoiceCommand] | None = None,
     ) -> None:
         self._recognizer = recognizer
-        self._phrase_commands = dict(phrase_commands or DEFAULT_PHRASE_COMMANDS)
+        self._phrase_commands = dict(
+            DEFAULT_PHRASE_COMMANDS if phrase_commands is None else phrase_commands
+        )
 
     def process(self, frame: bytes) -> CommandEvent | None:
         """Recognize a phrase from the frame and map it to a command event."""
