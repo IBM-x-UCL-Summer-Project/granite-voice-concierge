@@ -8,6 +8,7 @@ backend failure to a generic spoken fallback.
 """
 
 # Standard library
+import re
 from typing import cast
 
 # Local
@@ -21,6 +22,7 @@ from voice_concierge.routines.types import Routine, RoutineResponse, StepView
 _NOT_RUNNING = "No routine is running."
 _NOT_FOUND = "I don't have a routine for that."
 _BACKEND_FALLBACK = "I couldn't load that routine right now."
+_UNKNOWN_COMMAND = "Sorry, I didn't catch that."
 _STEP_PREFIX = {
     "paused": "Paused. ",
     "resumed": "Resuming. ",
@@ -54,8 +56,10 @@ class RoutineCommandAdapter:
         if not self._pending:
             return "There's nothing to choose."
         chosen = self._pending[0]  # default: most recent
+        reply_lower = reply.lower()
         for routine in self._pending:
-            if routine.name.lower() in reply.lower():
+            # Whole-word/phrase match so "tea" does not match inside "steak".
+            if re.search(rf"\b{re.escape(routine.name.lower())}\b", reply_lower):
                 chosen = routine
                 break
         self._pending = ()
@@ -71,7 +75,9 @@ class RoutineCommandAdapter:
             "pause": self._session.pause,
             "resume": self._session.resume,
             "stop": self._session.stop,
-        }[event.command]
+        }.get(event.command)
+        if method is None:  # unrecognized command value; do not crash
+            return _UNKNOWN_COMMAND
         return self._speak(method())
 
     def _begin(self, routine: Routine) -> str:

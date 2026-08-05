@@ -77,6 +77,16 @@ class TestStartRoutine:
         said = adapter.resolve_choice("neither of those")
         assert "Step 1 of 2" in said  # defaulted to first (most recent)
 
+    def test_resolve_choice_uses_whole_word_match_not_substring(self) -> None:
+        # "tea" is a substring of "steak"; whole-word matching must not pick it.
+        adapter = RoutineCommandAdapter(
+            _Provider((_routine("coffee", n=1), _routine("tea", n=2)))
+        )
+        adapter.start_routine("drinks")  # two matches -> asks
+        said = adapter.resolve_choice("i want steak")
+        # no whole-word match -> default to most recent (coffee, 1 step), not tea
+        assert "Step 1 of 1" in said
+
     def test_resolve_choice_without_pending_is_noop(self) -> None:
         adapter = RoutineCommandAdapter(_Provider(()))
         assert adapter.resolve_choice("anything") == "There's nothing to choose."
@@ -120,6 +130,14 @@ class TestHandleCommand:
         adapter.start_routine("tea")
         adapter.handle_command(_event("next"))
         assert "Step 2 of 2" in adapter.handle_command(_event("repeat"))
+
+    def test_unknown_command_does_not_crash(self) -> None:
+        adapter = RoutineCommandAdapter(_Provider((_routine(),)))
+        adapter.start_routine("tea")
+        # A runtime-constructed event with an out-of-contract command value must
+        # not raise; it is reported gracefully instead.
+        event = CommandEvent(command="frobnicate", phrase="?")  # type: ignore[arg-type]
+        assert adapter.handle_command(event) == "Sorry, I didn't catch that."
 
     def test_command_after_stop_reports_not_active(self) -> None:
         adapter = RoutineCommandAdapter(_Provider((_routine(),)))
