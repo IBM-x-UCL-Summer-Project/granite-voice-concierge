@@ -1,5 +1,6 @@
 """Event-driven barge-in command control for playback interruption."""
 
+from voice_concierge.command_control.debounce import DebouncingCommandSpotter
 from voice_concierge.command_control.dispatcher import CommandDispatcher
 from voice_concierge.command_control.errors import (
     CommandControlError,
@@ -41,6 +42,7 @@ __all__ = [
     "CommandListener",
     "CommandSpotter",
     "CommandSpotterUnavailableError",
+    "DebouncingCommandSpotter",
     "FakeCommandSpotter",
     "FakePhraseRecognizer",
     "FakePlaybackController",
