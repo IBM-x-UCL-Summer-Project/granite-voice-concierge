@@ -39,6 +39,7 @@ _USER_FIELDS = frozenset(
 _MAX_TRANSCRIPT_CHARS = 1000
 _MAX_SUMMARY_CHARS = 4000
 
+
 class PromptTemplateError(ValueError):
     """Raised when a bundled prompt template is missing or invalid."""
 

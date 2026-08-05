@@ -137,8 +137,7 @@ def test_summary_truncation() -> None:
     #
     mock_request.conversation_summary = "User asked for weather. Assistant replied."
     assert (
-        _format_conversation_summary(mock_request)
-        == mock_request.conversation_summary
+        _format_conversation_summary(mock_request) == mock_request.conversation_summary
     )
 
     #
