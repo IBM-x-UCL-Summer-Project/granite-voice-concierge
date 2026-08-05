@@ -1,16 +1,19 @@
 """Manual live test: start and navigate a routine by voice.
 
-Interaction model (single microphone consumer at any moment):
+Interaction model (one microphone consumer at a time, uninterruptible playback):
 
-* Between turns, only the wake-word listener is live. Say "hey jarvis", then a
-  request like "start making tea" to begin, or a navigation word ("next", "go
-  back", "repeat", "pause", "continue", "stop") to move through an active
-  routine. This is the wake-word command path.
-* While the assistant is speaking a step, the barge-in KWS listener is live
-  (windowed: only from the end of your utterance to the end of playback) and
-  lets you cut the speech short with "stop", or hold it with "pause" /
-  "continue". The wake-word listener is not running during this window, so the
-  two never contend for the microphone.
+* Say "hey jarvis", then a request like "start making tea" to begin a routine,
+  or a navigation word ("next", "go back", "repeat", "pause", "continue",
+  "stop") to move through the active routine. This is the wake-word command
+  path (the parser shares one vocabulary with the KWS spotter).
+* The assistant speaks each step to completion; the wake-word listener resumes
+  between turns.
+
+Barge-in (interrupting speech with "stop") is a separate feature of the
+`command_control` package with its own harness, `demo_live_barge_in.py`. It is
+intentionally left out here: running a second (input) audio stream concurrently
+with playback trips macOS CoreAudio (PaMacCore err -50) and truncates speech, so
+this routines harness keeps playback uninterruptible for a clean run.
 
 Uses the macOS `say` TTS backend (piper is broken on macOS).
 
@@ -33,20 +36,20 @@ from voice_concierge.app.live import (  # noqa: E402
     build_utterance_capturer,
     build_wake_word_listener,
 )
-from voice_concierge.audio import CapturedAudio, StreamingAudioPlayer  # noqa: E402
-from voice_concierge.audio.source import PyAudioSource  # noqa: E402
-from voice_concierge.command_control import (  # noqa: E402
-    CommandDispatcher,
-    CommandListener,
-    TranscriptCommandParser,
-    build_vosk_command_spotter,
+from voice_concierge.audio import (  # noqa: E402
+    AudioDeviceError,
+    CapturedAudio,
+    StreamingAudioPlayer,
 )
-from voice_concierge.command_control.listener import DEFAULT_CHUNK  # noqa: E402
+from voice_concierge.command_control import TranscriptCommandParser  # noqa: E402
 from voice_concierge.memory import build_memory_manager  # noqa: E402
 from voice_concierge.reasoning.factory import build_reasoning_engine  # noqa: E402
-from voice_concierge.routines import build_routine_adapter  # noqa: E402
+from voice_concierge.routines import RoutineError, build_routine_adapter  # noqa: E402
 from voice_concierge.voice_input.stt.factory import build_speech_to_text  # noqa: E402
-from voice_concierge.voice_output import SayTextToSpeech  # noqa: E402
+from voice_concierge.voice_output import (  # noqa: E402
+    SayTextToSpeech,
+    TextToSpeechError,
+)
 
 
 def main() -> None:
@@ -54,6 +57,7 @@ def main() -> None:
     config = LiveAppConfig(download_wake_models=True)
     stt = build_speech_to_text()
     tts = SayTextToSpeech()
+    player = StreamingAudioPlayer()
     adapter = build_routine_adapter(
         memory_manager=build_memory_manager(),
         reasoning_engine=build_reasoning_engine(),
@@ -62,24 +66,9 @@ def main() -> None:
     capturer = build_utterance_capturer(config)
     parser = TranscriptCommandParser()
 
-    # One pausable player is both the speaker and the barge-in controller.
-    player = StreamingAudioPlayer()
-    dispatcher = CommandDispatcher(player)  # stop/pause/resume act on playback
-    barge_in = CommandListener(
-        PyAudioSource(frames_per_buffer=DEFAULT_CHUNK),
-        build_vosk_command_spotter(),
-        dispatcher.dispatch,
-        chunk=DEFAULT_CHUNK,
-    )
-
     def speak(text: str) -> None:
-        """Speak a response; the barge-in KWS listener is live only while it plays."""
-        audio = tts.synthesize(text)
-        barge_in.start()  # window opens (STT done) ...
-        try:
-            player.play(audio)  # blocks until finished or "stop" cuts it off
-        finally:
-            barge_in.stop()  # ... window closes (TTS done)
+        """Synthesize and play a response to completion (uninterruptible)."""
+        player.play(tts.synthesize(text))
 
     active = False
 
@@ -91,14 +80,20 @@ def main() -> None:
             return
         transcript = stt.transcribe(captured[0]).text
         print(f"You: {transcript}")
-        command = parser.parse(transcript)
-        if active and command is not None:
-            response = adapter.handle_command(command)  # navigate the active routine
-        else:
-            response = adapter.start_routine(transcript)  # start a new routine
-            active = True
-        print(f"Assistant: {response}")
-        speak(response)
+        # Fail gracefully: announce what went wrong rather than dropping the turn.
+        try:
+            command = parser.parse(transcript)
+            if active and command is not None:
+                response = adapter.handle_command(command)
+            else:
+                response = adapter.start_routine(transcript)
+                active = True
+            print(f"Assistant: {response}")
+            speak(response)
+        except RoutineError as exc:
+            print(f"Assistant: Sorry, I couldn't load that routine right now. [{exc}]")
+        except (AudioDeviceError, TextToSpeechError) as exc:
+            print(f"Assistant: (I built the response but couldn't speak it: {exc})")
 
     print("Say 'hey jarvis', then e.g. 'start making tea'. Ctrl+C to quit.\n")
     try:
