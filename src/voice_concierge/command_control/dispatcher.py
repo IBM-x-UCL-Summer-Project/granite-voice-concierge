@@ -16,10 +16,11 @@ class CommandDispatcher:
         self._controller = controller
 
     def dispatch(self, event: CommandEvent) -> None:
-        """Apply the event's command to the playback controller."""
+        """Apply a playback command to the controller; ignore routine commands."""
         if event.command == "stop":
             self._controller.stop()
         elif event.command == "pause":
             self._controller.pause()
-        else:  # "resume"
+        elif event.command == "resume":
             self._controller.resume()
+        # next/back/repeat are routine commands and do not affect playback
