@@ -1,3 +1,4 @@
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -6,10 +7,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from voice_concierge.context import (
     CommandAction,
+    ConfirmationIntent,
     ContextManager,
     ContextMode,
     ContextState,
+    detect_confirmation_intent,
 )
+from voice_concierge.context.manager import load_context_state, save_context_state
 
 
 class ContextManagerTest(unittest.TestCase):
@@ -36,6 +40,14 @@ class ContextManagerTest(unittest.TestCase):
         self.assertTrue(decision.mode_changed)
         self.assertEqual(decision.policy.response_style, "step_by_step")
         self.assertEqual(decision.policy.memory_scope, "task_relevant_only")
+
+    def test_switch_back_phrase_selects_mode_despite_trailing_typo(self) -> None:
+        state = ContextState(mode="driving")
+
+        decision = self.manager.handle("Switch back to home mdoe", state)
+
+        self.assertEqual(decision.state.mode, "home")
+        self.assertTrue(decision.mode_changed)
 
     def test_preserves_active_mode_without_new_mode_command(self) -> None:
         state = ContextState(mode="shopping")
@@ -76,6 +88,28 @@ class ContextManagerTest(unittest.TestCase):
         self.assertIsNone(decision.state.pending_mode)
         self.assertEqual(decision.command_action, "cancel")
         self.assertFalse(decision.mode_changed)
+
+    def test_detect_confirmation_intent_returns_confirm_cancel_or_none(self) -> None:
+        examples: dict[str, ConfirmationIntent | None] = {
+            "Yes, go ahead": "confirm",
+            "ok please": "confirm",
+            "Never mind": "cancel",
+            "cancel that": "cancel",
+            "what is next": None,
+        }
+
+        for transcript, expected in examples.items():
+            with self.subTest(transcript=transcript):
+                self.assertEqual(detect_confirmation_intent(transcript), expected)
+
+    def test_pending_mode_uses_shared_confirmation_intent(self) -> None:
+        state = ContextState(mode="home", pending_mode="driving")
+
+        decision = self.manager.handle("ok please", state)
+
+        self.assertEqual(decision.state.mode, "driving")
+        self.assertIsNone(decision.state.pending_mode)
+        self.assertTrue(decision.mode_changed)
 
     def test_recognizes_repeat_next_step_and_stop_commands(self) -> None:
         examples: dict[str, CommandAction] = {
@@ -120,19 +154,12 @@ class ContextManagerTest(unittest.TestCase):
 
     def test_speaking_pace_persistence(self) -> None:
         """Regression test for Issue #38: Speaking pace persistence."""
-        import os
-        from voice_concierge.context.manager import save_context_state, load_context_state
-
-
         decision = self.manager.handle("Answer more slowly", ContextState())
-
 
         save_context_state(decision.state)
 
-
         loaded_state = load_context_state()
         self.assertEqual(loaded_state.accessibility.speech_pace, "slow")
-
 
         test_file_path = ".voice_concierge_state.json"
         if os.path.exists(test_file_path):

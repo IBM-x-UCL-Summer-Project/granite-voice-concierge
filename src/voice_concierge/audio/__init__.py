@@ -11,6 +11,7 @@ from voice_concierge.audio.source import (
     FakeAudioSource,
     PyAudioSource,
 )
+from voice_concierge.audio.streaming_player import StreamingAudioPlayer
 from voice_concierge.audio.types import CapturedAudio
 
 __all__ = [
@@ -23,4 +24,5 @@ __all__ = [
     "FakeAudioSource",
     "PyAudioSource",
     "SoundDevicePlayer",
+    "StreamingAudioPlayer",
 ]

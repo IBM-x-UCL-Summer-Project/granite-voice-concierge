@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import Mock
+
 import pytest
 
 from voice_concierge.reasoning import (
@@ -12,6 +14,12 @@ from voice_concierge.reasoning import (
     ReasoningRequest,
     build_granite_messages,
     load_prompt_template,
+)
+from voice_concierge.reasoning.prompting import (
+    _MAX_SUMMARY_CHARS,
+    _MAX_TRANSCRIPT_CHARS,
+    _format_conversation_summary,
+    _format_transcript,
 )
 
 
@@ -24,9 +32,9 @@ def test_chat_message_serializes_to_runner_dict() -> None:
 def test_default_prompt_template_loads_versioned_resources() -> None:
     prompt = load_prompt_template()
 
-    assert DEFAULT_PROMPT_VERSION == "v1"
+    assert DEFAULT_PROMPT_VERSION == "v2"
     assert prompt.prompt_id == "local-reasoning"
-    assert prompt.version == "v1"
+    assert prompt.version == "v2"
     assert prompt.default_mode == "home"
     assert set(prompt.mode_policies) == {"cooking", "driving", "home", "shopping"}
 
@@ -44,6 +52,9 @@ def test_granite_messages_include_offline_policy() -> None:
     assert [message.role for message in messages] == ["system", "user"]
     system_prompt = messages[0].content
     assert "no internet or cloud service" in system_prompt
+    assert "stable public facts" in system_prompt
+    assert "built-in general knowledge" in system_prompt
+    assert "cannot verify up-to-date information offline" in system_prompt
     assert "Do not claim to browse" in system_prompt
     assert "Ask for explicit confirmation" in system_prompt
     assert "Structured output examples" in system_prompt
@@ -76,6 +87,8 @@ def test_granite_system_prompt_includes_memory_action_examples() -> None:
     messages = build_granite_messages(request)
 
     system_prompt = messages[0].content
+    assert "Who was Anne Frank?" in system_prompt
+    assert "When is the next GTA game coming out?" in system_prompt
     assert '"action":"store"' in system_prompt
     assert '"action":"update"' in system_prompt
     assert "do not invent list items" in system_prompt
@@ -99,11 +112,6 @@ def test_granite_messages_reject_invalid_prompt_version() -> None:
 
 def test_transcript_truncation() -> None:
     """Ensure oversized transcripts are truncated at the end."""
-    from voice_concierge.reasoning.prompting import (
-        _format_transcript,
-        _MAX_TRANSCRIPT_CHARS,
-    )
-
     # 1. normal length
     short_text = "Hello, what is the weather?"
     assert _format_transcript(short_text) == short_text
@@ -119,12 +127,6 @@ def test_transcript_truncation() -> None:
 
 def test_summary_truncation() -> None:
     """Ensure oversized history summaries are truncated at the beginning."""
-    from unittest.mock import Mock
-    from voice_concierge.reasoning.prompting import (
-        _format_conversation_summary,
-        _MAX_SUMMARY_CHARS,
-    )
-
     #  Mock  ReasoningRequest
     mock_request = Mock()
 
@@ -134,7 +136,9 @@ def test_summary_truncation() -> None:
 
     #
     mock_request.conversation_summary = "User asked for weather. Assistant replied."
-    assert _format_conversation_summary(mock_request) == mock_request.conversation_summary
+    assert (
+        _format_conversation_summary(mock_request) == mock_request.conversation_summary
+    )
 
     #
     long_summary = "B" * (_MAX_SUMMARY_CHARS + 100)

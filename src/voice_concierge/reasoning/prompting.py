@@ -17,7 +17,7 @@ from voice_concierge.reasoning.types import ReasoningRequest
 
 Role = Literal["system", "user", "assistant"]
 
-DEFAULT_PROMPT_VERSION = "v1"
+DEFAULT_PROMPT_VERSION = "v2"
 PROMPT_TEMPLATE_SCHEMA_VERSION = 1
 _RESOURCE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _SYSTEM_FIELDS = frozenset(
@@ -38,6 +38,7 @@ _USER_FIELDS = frozenset(
 )
 _MAX_TRANSCRIPT_CHARS = 1000
 _MAX_SUMMARY_CHARS = 4000
+
 
 class PromptTemplateError(ValueError):
     """Raised when a bundled prompt template is missing or invalid."""

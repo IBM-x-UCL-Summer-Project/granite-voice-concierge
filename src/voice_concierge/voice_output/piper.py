@@ -2,7 +2,9 @@
 
 # Standard library
 import logging
+import shutil
 import subprocess
+import sys
 import tempfile
 import wave
 from pathlib import Path
@@ -19,13 +21,27 @@ from voice_concierge.voice_output.errors import (
 
 logger = logging.getLogger(__name__)
 
+
+def _default_piper_executable() -> str:
+    executable = shutil.which("piper")
+    if executable is not None:
+        return executable
+
+    venv_executable = Path(sys.executable).with_name("piper")
+    if venv_executable.is_file():
+        return str(venv_executable)
+
+    return "piper"
+
+
 # Piper defaults tuned for older-adult listeners
-DEFAULT_MODEL_PATH: str = "en_GB-alan-medium.onnx"
-DEFAULT_CONFIG_PATH: str = "en_GB-alan-medium.onnx.json"
+_MODULE_DIR = Path(__file__).resolve().parent
+DEFAULT_MODEL_PATH: str = str(_MODULE_DIR / "en_GB-alan-medium.onnx")
+DEFAULT_CONFIG_PATH: str = str(_MODULE_DIR / "en_GB-alan-medium.onnx.json")
 DEFAULT_LENGTH_SCALE: float = 1.2  # >1 slows speech; 1.2 suits older adults
-MIN_LENGTH_SCALE: float = 0.5      # fast
-MAX_LENGTH_SCALE: float = 2.5      # slow
-DEFAULT_PIPER_EXECUTABLE: str = "piper"
+MIN_LENGTH_SCALE: float = 0.5  # fast
+MAX_LENGTH_SCALE: float = 2.5  # slow
+DEFAULT_PIPER_EXECUTABLE: str = _default_piper_executable()
 
 
 class PiperTextToSpeech:
@@ -38,7 +54,6 @@ class PiperTextToSpeech:
     @length_scale.setter
     def length_scale(self, value: float) -> None:
         self._length_scale = max(MIN_LENGTH_SCALE, min(MAX_LENGTH_SCALE, float(value)))
-
 
     def __init__(
         self,
@@ -53,7 +68,11 @@ class PiperTextToSpeech:
         self.length_scale = length_scale
         self._executable = executable
 
-    def synthesize(self, text: str, pace_override: float | None = None) -> CapturedAudio:
+    def synthesize(
+        self,
+        text: str,
+        pace_override: float | None = None,
+    ) -> CapturedAudio:
         """Run Piper to synthesize `text` into an in-memory CapturedAudio."""
 
         if pace_override is not None:

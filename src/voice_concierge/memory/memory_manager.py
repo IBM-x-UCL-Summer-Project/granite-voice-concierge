@@ -126,6 +126,7 @@ class MemoryManager:
             if memory_type:
                 classified_topic = memory_type.value
 
+        memory_id = None
         try:
             # Store in memory_store
             memory_id = self.memory_store.create_memory(
@@ -150,6 +151,8 @@ class MemoryManager:
             return True, "stored_successfully", memory_id
 
         except Exception as e:
+            if memory_id is not None:
+                self.memory_store.delete_memory(memory_id)
             return False, f"storage_error: {str(e)}", None
 
     def retrieve_similar(
