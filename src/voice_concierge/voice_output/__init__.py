@@ -15,14 +15,20 @@ from voice_concierge.voice_output.piper import (
     DEFAULT_PIPER_EXECUTABLE,
     PiperTextToSpeech,
 )
+from voice_concierge.voice_output.say import (
+    DEFAULT_SAY_EXECUTABLE,
+    SayTextToSpeech,
+)
 
 __all__ = [
     "DEFAULT_CONFIG_PATH",
     "DEFAULT_LENGTH_SCALE",
     "DEFAULT_MODEL_PATH",
     "DEFAULT_PIPER_EXECUTABLE",
+    "DEFAULT_SAY_EXECUTABLE",
     "DeterministicTextToSpeechFake",
     "PiperTextToSpeech",
+    "SayTextToSpeech",
     "TextToSpeech",
     "TextToSpeechBackendUnavailableError",
     "TextToSpeechError",

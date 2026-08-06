@@ -62,6 +62,22 @@ def test_policy_guard_ignores_unrelated_memory_for_shopping_list_read() -> None:
     assert response.metadata["policy_guard"] == "missing_shopping_list_memory"
 
 
+def test_policy_guard_prioritizes_shopping_list_over_today_word() -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(
+            transcript="What is on my shopping list today?",
+            mode="shopping",
+        ),
+        ReasoningResponse(
+            spoken_response="I cannot verify up-to-date information offline.",
+            confidence="medium",
+        ),
+    )
+
+    assert response.spoken_response == "I do not have a saved shopping list yet."
+    assert response.metadata["policy_guard"] == "missing_shopping_list_memory"
+
+
 def test_policy_guard_uses_supplied_shopping_list_memory() -> None:
     response = apply_reasoning_policy_guards(
         ReasoningRequest(
@@ -87,6 +103,37 @@ def test_policy_guard_uses_supplied_shopping_list_memory() -> None:
     assert response.needs_confirmation is False
     assert response.proposed_memory_action is None
     assert response.metadata["policy_guard"] == "supplied_shopping_list_memory"
+
+
+def test_policy_guard_blocks_time_sensitive_info_without_context() -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(transcript="When is the next GTA game coming out?"),
+        ReasoningResponse(
+            spoken_response="It is coming out next month.",
+            confidence="medium",
+        ),
+    )
+
+    assert response.spoken_response == "I cannot verify up-to-date information offline."
+    assert response.needs_confirmation is False
+    assert response.proposed_memory_action is None
+    assert response.metadata["policy_guard"] == "offline_time_sensitive_info"
+
+
+def test_policy_guard_blocks_time_sensitive_info_with_unrelated_memory() -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(
+            transcript="When is the next GTA game coming out?",
+            memories=("User prefers short answers.",),
+        ),
+        ReasoningResponse(
+            spoken_response="Your saved note says the release is tomorrow.",
+            confidence="medium",
+        ),
+    )
+
+    assert response.spoken_response == "I cannot verify up-to-date information offline."
+    assert response.metadata["policy_guard"] == "offline_time_sensitive_info"
 
 
 def test_policy_guard_does_not_treat_bread_as_read_request() -> None:

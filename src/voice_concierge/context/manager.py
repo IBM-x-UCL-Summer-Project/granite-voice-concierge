@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import re
-from dataclasses import replace
+from dataclasses import asdict, replace
+from pathlib import Path
 
 from voice_concierge.context.policies import policy_for_mode
 from voice_concierge.context.types import (
     AccessibilityProfile,
     CommandAction,
+    ConfirmationIntent,
     ContextDecision,
     ContextMode,
     ContextState,
@@ -39,6 +42,9 @@ _QUESTION_PREFIXES = (
     "would",
     "should",
 )
+
+_CONFIRM_WORDS = ("yes", "confirm", "okay", "ok", "go ahead")
+_CANCEL_WORDS = ("no", "cancel", "stop", "never mind", "nevermind")
 
 
 class ContextManager:
@@ -111,7 +117,9 @@ class ContextManager:
         state: ContextState,
         command_action: CommandAction | None,
     ) -> ContextDecision | None:
-        if command_action in ("cancel", "stop"):
+        confirmation_intent = detect_confirmation_intent(normalized)
+
+        if confirmation_intent == "cancel":
             cleared_state = replace(state, pending_mode=None)
             return ContextDecision(
                 state=cleared_state,
@@ -119,7 +127,7 @@ class ContextManager:
                 command_action=command_action or "cancel",
             )
 
-        if _is_confirmation(normalized):
+        if confirmation_intent == "confirm":
             target_mode = state.pending_mode
             switched_state = replace(state, mode=target_mode, pending_mode=None)
             return ContextDecision(
@@ -129,11 +137,38 @@ class ContextManager:
                 command_action=command_action,
             )
 
-        return None
+        # "I mentioned that yesterday"
+        return ContextDecision(
+            state=state,
+            policy=policy_for_mode(state.mode, state.accessibility),
+            command_action=command_action,
+            needs_confirmation=True,
+            pending_mode=state.pending_mode,
+            confirmation_prompt="Sorry, was that a yes or a no?",
+        )
 
 
 def _normalize(transcript: str) -> str:
     return " ".join(transcript.lower().strip().split())
+
+
+def detect_confirmation_intent(transcript: str) -> ConfirmationIntent | None:
+    """Return an explicit confirmation intent from a user transcript."""
+
+    normalized = _normalize(transcript)
+    if _contains_any(normalized, _CANCEL_WORDS):
+        return "cancel"
+    if _contains_any(normalized, _CONFIRM_WORDS):
+        return "confirm"
+    return None
+
+
+def _contains_any(text: str, phrases: tuple[str, ...]) -> bool:
+    for phrase in phrases:
+        pattern = rf"\b{re.escape(phrase)}\b"
+        if re.search(pattern, text, re.IGNORECASE):
+            return True
+    return False
 
 
 def _detect_requested_mode(transcript: str) -> ContextMode | None:
@@ -142,9 +177,11 @@ def _detect_requested_mode(transcript: str) -> ContextMode | None:
 
     for mode, aliases in _MODE_ALIASES:
         alias_pattern = "|".join(re.escape(alias) for alias in aliases)
-        target = rf"(?:{alias_pattern})(?:\s+mode)?"
+        target = rf"(?:{alias_pattern})(?:\s+(?:mode|mdoe))?"
         patterns = (
-            rf"^(?:please\s+)?(?:switch|change|go)\s+(?:me\s+)?to\s+"
+            rf"^(?:please\s+)?(?:switch|change)(?:\s+back)?\s+(?:me\s+)?to\s+"
+            rf"(?:the\s+)?{target}(?:\s+please)?[.!]*$",
+            rf"^(?:please\s+)?go\s+(?:me\s+)?to\s+"
             rf"(?:the\s+)?{target}(?:\s+please)?[.!]*$",
             rf"^(?:please\s+)?(?:enter|enable|activate|start|use)\s+"
             rf"(?:the\s+)?{target}(?:\s+please)?[.!]*$",
@@ -196,15 +233,6 @@ def _is_question(transcript: str) -> bool:
     return first_word in _QUESTION_PREFIXES
 
 
-def _is_confirmation(transcript: str) -> bool:
-    """Accept an explicit affirmative while rejecting negated confirmations."""
-
-    return _matches_command(
-        transcript,
-        r"(?:yes(?:\s*,?\s*confirm)?|confirm|okay|ok|go\s+ahead)",
-    )
-
-
 def _apply_accessibility_preferences(
     transcript: str,
     accessibility: AccessibilityProfile,
@@ -217,3 +245,48 @@ def _apply_accessibility_preferences(
         updated = replace(updated, speech_pace="slow")
 
     return updated
+
+
+# ==========================================
+# Persistence & Restoration
+# ==========================================
+
+DEFAULT_STATE_FILE = Path(".voice_concierge_state.json")
+
+
+def save_context_state(state: ContextState, path: Path = DEFAULT_STATE_FILE) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(asdict(state), f, indent=2)
+
+
+def load_context_state(path: Path = DEFAULT_STATE_FILE) -> ContextState:
+    if not path.exists():
+        return ContextState()
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        acc_data = data.get("accessibility", {})
+        accessibility = AccessibilityProfile(
+            verbosity=acc_data.get("verbosity", "normal"),
+            speech_pace=acc_data.get("speech_pace", "normal"),
+        )
+
+        return ContextState(
+            mode=data.get("mode", "home"),
+            pending_mode=data.get("pending_mode"),
+            last_topic=data.get("last_topic"),
+            accessibility=accessibility,
+        )
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return ContextState()
+
+
+def get_length_scale_from_pace(pace: str) -> float:
+    """Map a persisted speech pace to a Piper length scale."""
+    mapping = {
+        "normal": 1.2,
+        "slow": 1.6,
+    }
+    return mapping.get(pace, 1.2)

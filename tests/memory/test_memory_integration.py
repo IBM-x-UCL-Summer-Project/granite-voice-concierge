@@ -191,6 +191,67 @@ class TestMemoryRetrieval:
         assert len(results) == 1
         assert "pizza" in results[0]["content"]
 
+    def test_retrieve_by_layer(self, memory_manager):
+        """Test filtering memories by layer."""
+        memory_manager.store_memory("Milk and eggs", "shopping-list", validate=False)
+        memory_manager.store_memory(
+            "Prefers coffee in the morning", "profile", validate=False
+        )
+
+        shopping_memories = memory_manager.retriever.retrieve_by_layer("shopping-list")
+        assert len(shopping_memories) == 1
+        assert "Milk and eggs" in shopping_memories[0]["content"]
+
+    def test_layer_and_source_type_separate(self, memory_manager):
+        """Test that layer and source_type filters are independent."""
+        memory_manager.store_memory(
+            "Buy groceries",
+            "shopping-list",
+            source_type="user_input",
+            validate=False,
+            check_duplicates=False,
+        )
+        memory_manager.store_memory(
+            "User likes hiking",
+            "profile",
+            source_type="inference",
+            validate=False,
+            check_duplicates=False,
+        )
+
+        # Filter by layer should not be affected by source_type
+        shopping = memory_manager.retriever.retrieve_by_layer("shopping-list")
+        assert len(shopping) == 1
+        assert shopping[0]["layer"] == "shopping-list"
+
+        profile = memory_manager.retriever.retrieve_by_layer("profile")
+        assert len(profile) == 1
+        assert profile[0]["layer"] == "profile"
+
+    def test_metadata_filtering_with_layer(self, memory_manager):
+        """Test metadata filtering including layer."""
+        memory_manager.store_memory(
+            "Milk",
+            "shopping-list",
+            person="Kenny",
+            topic="groceries",
+            validate=False,
+        )
+        memory_manager.store_memory(
+            "Bread",
+            "shopping-list",
+            person="Alice",
+            topic="groceries",
+            validate=False,
+        )
+
+        results = memory_manager.retriever.retrieve_by_metadata(
+            person="Kenny", layer="shopping-list"
+        )
+        assert len(results) == 1
+        assert results[0]["person"] == "Kenny"
+        assert results[0]["layer"] == "shopping-list"
+
 
 class TestMemoryValidation:
     """Test memory validation."""
@@ -227,6 +288,78 @@ class TestMemoryValidation:
         assert success is True
 
 
+class TestDuplicatePrevention:
+    """Test duplicate memory prevention."""
+
+    def test_duplicate_count_stays_same(self, memory_manager):
+        """Adding same memory twice should keep count at 1."""
+        content = "I prefer tea"
+
+        # Store first time
+        success1, reason1, id1 = memory_manager.store_memory(
+            content=content,
+            layer="profile",
+            validate=False,
+            check_duplicates=False,  # First one, no check
+        )
+        assert success1 is True
+
+        all_memories = memory_manager.get_all_memories()
+        assert len(all_memories) == 1
+
+        # Store second time (same content)
+        success2, reason2, id2 = memory_manager.store_memory(
+            content=content,
+            layer="profile",
+            validate=False,
+            check_duplicates=True,  # Check for duplicates
+        )
+
+        # Should reject as duplicate
+        assert success2 is False
+        assert "duplicate" in reason2.lower()
+
+        # Count should still be 1 (not 2)
+        all_memories = memory_manager.get_all_memories()
+        assert len(all_memories) == 1
+
+    @pytest.mark.skip(reason="Requires real embeddings for semantic similarity")
+    def test_store_different_increases_count(self, memory_manager):
+        """Adding different memory should increase count."""
+        # This test requires actual vector embeddings to distinguish different content
+        # With fake_embedding_service (all zeros), all memories appear identical
+        pass
+
+    def test_disable_duplicate_check_allows_duplicates(self, memory_manager):
+        """Disabling check allows storing duplicates."""
+        content = "I prefer tea"
+
+        # Store first time
+        success1, _, id1 = memory_manager.store_memory(
+            content=content,
+            layer="profile",
+            validate=False,
+            check_duplicates=False,
+        )
+        assert success1 is True
+        assert len(memory_manager.get_all_memories()) == 1
+
+        # Store duplicate with check disabled
+        success2, _, id2 = memory_manager.store_memory(
+            content=content,
+            layer="profile",
+            validate=False,
+            check_duplicates=False,  # Disable check
+        )
+
+        # Should allow it
+        assert success2 is True
+        assert id1 != id2
+
+        # Count should be 2 (both stored)
+        assert len(memory_manager.get_all_memories()) == 2
+
+
 class TestContextMemories:
     """Test retrieving memories for context."""
 
@@ -256,3 +389,136 @@ class TestContextMemories:
 
         assert len(context) <= 2
         assert all(isinstance(m, str) for m in context)
+
+
+class TestSQLVectorConsistency:
+    """Test SQL and vector store consistency."""
+
+    def test_store_creates_both_sql_and_vector(self, memory_manager):
+        """Storing a memory should create both SQL record and vector."""
+        success, reason, memory_id = memory_manager.store_memory(
+            content="I like coffee",
+            layer="profile",
+            validate=False,
+        )
+
+        assert success is True
+        assert memory_id is not None
+
+        # Verify SQL record exists
+        memory = memory_manager.memory_store.get_memory_by_id(memory_id)
+        assert memory is not None
+        assert memory["content"] == "I like coffee"
+
+        # Verify vector exists (by checking if search finds it)
+        results = memory_manager.retrieve_similar("coffee", top_k=5)
+        assert any(r["id"] == memory_id for r in results)
+
+    def test_delete_removes_both_sql_and_vector(self, memory_manager):
+        """Deleting a memory should remove both SQL record and vector."""
+        # Create a memory
+        success, reason, memory_id = memory_manager.store_memory(
+            content="Remember this",
+            layer="profile",
+            validate=False,
+        )
+        assert success is True
+
+        # Delete it
+        success, reason = memory_manager.delete_memory(memory_id)
+        assert success is True
+
+        # Verify SQL record is deleted
+        memory = memory_manager.memory_store.get_memory_by_id(memory_id)
+        assert memory is None
+
+        # Verify vector is deleted (search should not find it)
+        results = memory_manager.retrieve_similar("Remember this", top_k=10)
+        assert not any(r["id"] == memory_id for r in results)
+
+    def test_update_keeps_sql_and_vector_in_sync(self, memory_manager):
+        """Updating a memory should update both SQL and vector."""
+        # Create a memory
+        success, reason, memory_id = memory_manager.store_memory(
+            content="I prefer tea",
+            layer="profile",
+            validate=False,
+        )
+        assert success is True
+
+        # Update the content
+        success, reason = memory_manager.update_memory(
+            memory_id=memory_id,
+            content="I prefer coffee",
+        )
+        assert success is True
+
+        # Verify SQL record is updated
+        memory = memory_manager.memory_store.get_memory_by_id(memory_id)
+        assert memory["content"] == "I prefer coffee"
+
+        # Verify vector still exists (by checking we can retrieve it)
+        results = memory_manager.retrieve_similar("I prefer", top_k=10)
+        assert any(r["id"] == memory_id for r in results)
+        assert results[0]["content"] == "I prefer coffee"
+
+    def test_store_rollback_on_vector_failure(self, memory_manager, monkeypatch):
+        """If vector storage fails, SQL record should be deleted."""
+
+        # Mock embedding service to fail
+        def failing_save_vector(memory_id, embedding):
+            raise RuntimeError("Vector storage failed")
+
+        monkeypatch.setattr(
+            memory_manager.vector_store, "save_vector", failing_save_vector
+        )
+
+        # Try to store a memory
+        success, reason, memory_id = memory_manager.store_memory(
+            content="This should fail",
+            layer="profile",
+            validate=False,
+        )
+
+        # Should fail
+        assert success is False
+        assert "vector" in reason.lower()
+
+        # Verify no SQL record was left behind
+        if memory_id:
+            memory = memory_manager.memory_store.get_memory_by_id(memory_id)
+            assert memory is None
+
+    def test_update_rollback_on_vector_failure(self, memory_manager, monkeypatch):
+        """If vector update fails, SQL record should be reverted."""
+        # Create a memory
+        success, reason, memory_id = memory_manager.store_memory(
+            content="Original content",
+            layer="profile",
+            validate=False,
+        )
+        assert success is True
+
+        # Mock vector_store to fail on save
+        def failing_save_vector(memory_id, embedding):
+            raise RuntimeError("Vector storage failed")
+
+        monkeypatch.setattr(
+            memory_manager.vector_store,
+            "save_vector",
+            failing_save_vector,
+        )
+
+        # Try to update the memory with new content
+        success, reason = memory_manager.update_memory(
+            memory_id=memory_id,
+            content="New content",
+        )
+
+        # Should fail due to vector storage error
+        assert success is False
+        assert "embedding" in reason.lower() or "vector" in reason.lower()
+
+        # Verify SQL record was reverted to original content
+        memory = memory_manager.memory_store.get_memory_by_id(memory_id)
+        assert memory["content"] == "Original content"

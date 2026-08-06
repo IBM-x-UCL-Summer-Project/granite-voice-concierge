@@ -1,10 +1,15 @@
 """faster-whisper speech-to-text backend."""
 
+from __future__ import annotations
+
 # Standard library
 import logging
 
 # Third-party
-from faster_whisper import WhisperModel
+try:
+    from faster_whisper import WhisperModel
+except ImportError:
+    WhisperModel = None
 
 # Local
 from voice_concierge.audio import CapturedAudio
@@ -42,6 +47,10 @@ class WhisperSpeechToText:
         if model is not None:
             self._model = model
             return
+        if WhisperModel is None:
+            raise SpeechToTextBackendUnavailableError(
+                "faster-whisper is required for speech-to-text model loading."
+            )
         try:
             self._model = WhisperModel(
                 model_size, device=device, compute_type=compute_type

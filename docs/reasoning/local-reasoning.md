@@ -181,14 +181,14 @@ Use direct `--engine ollama` runs for model experiments and explicit local-model
 checks. Use `--engine selected` for the configured application runtime smoke
 path.
 
-Ollama runs use the bundled `v1` runtime prompt by default. Select another
+Ollama runs use the bundled `v2` runtime prompt by default. Select another
 bundled version explicitly when testing a prompt revision:
 
 ```bash
 .venv/bin/python -m benchmarks.reasoning.benchmark \
   run \
   --engine ollama \
-  --prompt-version v2
+  --prompt-version v1
 ```
 
 The selected prompt ID and version are recorded in each Ollama response's

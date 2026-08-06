@@ -6,6 +6,11 @@ import pytest
 
 # Local
 from voice_concierge.voice_output import build_text_to_speech
+from voice_concierge.voice_output.piper import (
+    DEFAULT_CONFIG_PATH,
+    DEFAULT_LENGTH_SCALE,
+    DEFAULT_MODEL_PATH,
+)
 
 
 class TestBuildTextToSpeech:
@@ -18,9 +23,9 @@ class TestBuildTextToSpeech:
         engine = build_text_to_speech()
 
         mock_piper.assert_called_once_with(
-            "en_GB-alan-medium.onnx",
-            "en_GB-alan-medium.onnx.json",
-            length_scale=1.2,
+            DEFAULT_MODEL_PATH,
+            DEFAULT_CONFIG_PATH,
+            length_scale=DEFAULT_LENGTH_SCALE,
         )
         assert engine is mock_piper.return_value
 

@@ -44,7 +44,7 @@ def test_benchmark_cli_runs_fake(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     report = json.loads(output_path.read_text(encoding="utf-8"))
     assert report["engine"] == "DeterministicReasoningFake"
-    assert report["total_cases"] == 13
+    assert report["total_cases"] == 15
 
 
 def test_benchmark_cli_compare_requires_two_models() -> None:

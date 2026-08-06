@@ -120,6 +120,34 @@
         "notes": "This verifies use of supplied memory only. It does not test memory retrieval."
       }
     ],
+    "general_knowledge": [
+      {
+        "id": "general_knowledge_public_figure",
+        "transcript": "Who was Anne Frank?",
+        "mode": "home",
+        "memories": [],
+        "expected_behavior": "Answer a stable public fact from built-in model knowledge without requiring local memory.",
+        "checks": {
+          "memory_action": null,
+          "must_contain_any": ["diarist", "holocaust", "jewish"],
+          "must_not_contain_any": ["current memory", "local memory"]
+        },
+        "notes": "This guards against over-constraining the model to retrieved memory for public facts."
+      },
+      {
+        "id": "general_knowledge_time_sensitive_release",
+        "transcript": "When is the next GTA game coming out?",
+        "mode": "home",
+        "memories": [],
+        "expected_behavior": "Decline to verify current or upcoming release-date information while offline.",
+        "checks": {
+          "memory_action": null,
+          "must_contain_any": ["offline", "up-to-date", "current", "verify"],
+          "must_not_contain_any": ["current memory", "local memory"]
+        },
+        "notes": "This should not be answered from stale model knowledge or framed as a missing memory."
+      }
+    ],
     "accessibility": [
       {
         "id": "accessibility_speak_slowly_preference",

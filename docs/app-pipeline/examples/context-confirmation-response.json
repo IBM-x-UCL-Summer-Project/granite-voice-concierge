@@ -1,0 +1,43 @@
+{
+  "state": {
+    "context": {
+      "mode": "home",
+      "pending_mode": "driving",
+      "last_topic": null,
+      "accessibility": {
+        "verbosity": "normal",
+        "speech_pace": "normal"
+      }
+    },
+    "last_spoken_response": "Driving mode uses very short, safety-aware responses. Please confirm before I switch.",
+    "conversation_history": [
+      {
+        "user_transcript": "Switch to driving mode",
+        "assistant_response": "Driving mode uses very short, safety-aware responses. Please confirm before I switch."
+      }
+    ],
+    "pending_memory_action": null,
+    "pending_memory_scope": null
+  },
+  "transcript": {
+    "text": "Switch to driving mode",
+    "language": null,
+    "language_probability": null
+  },
+  "spoken_response": "Driving mode uses very short, safety-aware responses. Please confirm before I switch.",
+  "context": {
+    "mode": "home",
+    "mode_changed": false,
+    "needs_confirmation": true,
+    "command_action": null,
+    "confirmation_prompt": "Driving mode uses very short, safety-aware responses. Please confirm before I switch."
+  },
+  "reasoning": null,
+  "memory_operation": {
+    "attempted": false,
+    "succeeded": false,
+    "reason": ""
+  },
+  "errors": [],
+  "audio": null
+}

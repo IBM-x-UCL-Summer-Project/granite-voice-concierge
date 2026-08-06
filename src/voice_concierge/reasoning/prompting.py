@@ -17,7 +17,7 @@ from voice_concierge.reasoning.types import ReasoningRequest
 
 Role = Literal["system", "user", "assistant"]
 
-DEFAULT_PROMPT_VERSION = "v1"
+DEFAULT_PROMPT_VERSION = "v2"
 PROMPT_TEMPLATE_SCHEMA_VERSION = 1
 _RESOURCE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _SYSTEM_FIELDS = frozenset(
@@ -36,6 +36,8 @@ _USER_FIELDS = frozenset(
         "transcript",
     }
 )
+_MAX_TRANSCRIPT_CHARS = 1000
+_MAX_SUMMARY_CHARS = 4000
 
 
 class PromptTemplateError(ValueError):
@@ -143,7 +145,8 @@ def build_granite_messages(
         conversation_summary=_format_conversation_summary(request),
         memories=_format_memories(request.memories),
         mode=request.mode,
-        transcript=request.transcript,
+        #  transcript  _format_transcript
+        transcript=_format_transcript(request.transcript),
     )
     return (
         ChatMessage(role="system", content=system_content),
@@ -237,9 +240,20 @@ def _validate_resource_name(value: str, *, label: str) -> None:
         raise PromptTemplateError(f"{label} {value!r} is invalid.")
 
 
+def _format_transcript(transcript: str) -> str:
+    if len(transcript) > _MAX_TRANSCRIPT_CHARS:
+
+        return transcript[:_MAX_TRANSCRIPT_CHARS] + "... [truncated]"
+    return transcript
+
+
 def _format_conversation_summary(request: ReasoningRequest) -> str:
     if request.conversation_summary:
-        return request.conversation_summary
+        summary = request.conversation_summary
+        if len(summary) > _MAX_SUMMARY_CHARS:
+
+            return "... [truncated]\n" + summary[-_MAX_SUMMARY_CHARS:]
+        return summary
     return "No summary supplied."
 
 

@@ -1,9 +1,10 @@
 """Context management for mode-specific assistant behavior."""
 
-from voice_concierge.context.manager import ContextManager
+from voice_concierge.context.manager import ContextManager, detect_confirmation_intent
 from voice_concierge.context.types import (
     AccessibilityProfile,
     CommandAction,
+    ConfirmationIntent,
     ContextDecision,
     ContextMode,
     ContextState,
@@ -17,6 +18,7 @@ from voice_concierge.context.types import (
 __all__ = [
     "AccessibilityProfile",
     "CommandAction",
+    "ConfirmationIntent",
     "ContextDecision",
     "ContextManager",
     "ContextMode",
@@ -26,4 +28,5 @@ __all__ = [
     "ResponseStyle",
     "SpeechPace",
     "Verbosity",
+    "detect_confirmation_intent",
 ]

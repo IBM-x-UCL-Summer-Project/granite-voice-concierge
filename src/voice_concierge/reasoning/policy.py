@@ -41,6 +41,16 @@ def apply_reasoning_policy_guards(
             guard="supplied_shopping_list_memory",
         )
 
+    if _time_sensitive_info_requested(text):
+        return _replace_response(
+            response,
+            spoken_response="I cannot verify up-to-date information offline.",
+            needs_confirmation=False,
+            proposed_memory_action=None,
+            confidence="high",
+            guard="offline_time_sensitive_info",
+        )
+
     if _memory_recall_requested(text) and request.memories:
         if response.proposed_memory_action is None and not response.needs_confirmation:
             return response
@@ -241,6 +251,25 @@ def _shopping_list_read_requested(text: str) -> bool:
             r"\b(what|read)\b|\btell me\b|\bwhat's\b|\bwhat is\b",
             text,
         )
+    )
+
+
+def _time_sensitive_info_requested(text: str) -> bool:
+    if re.search(
+        r"\b(today|current|currently|latest|newest|recent|now|live|weather|news)\b",
+        text,
+    ):
+        return True
+
+    if re.search(r"\b(upcoming|next)\b", text) and re.search(
+        r"\b(release|released|coming out|launch|available|date|game|movie|show)\b",
+        text,
+    ):
+        return True
+
+    return bool(
+        re.search(r"\b(when|what date)\b", text)
+        and re.search(r"\b(release|released|coming out|launch)\b", text)
     )
 
 
