@@ -1,36 +1,59 @@
-# Pipeline UI prototype
+# Pipeline-connected web UI
 
 This dependency-free web prototype visualises the current Granite Voice
 Concierge pipeline and follows the shapes in
 `docs/app-pipeline-ui-contract.md`.
 
-Run it from the repository root:
+Run it from the repository root with the local application pipeline:
 
 ```bash
-python -m http.server 4173 --directory web
+python -m voice_concierge.app.web
 ```
 
 Then open `http://localhost:4173`.
 
+Enable browser microphone transcription and pipeline-generated response audio:
+
+```bash
+python -m voice_concierge.app.web --voice-io
+```
+
+Persistent local memory remains opt-in:
+
+```bash
+python -m voice_concierge.app.web --voice-io --memory
+```
+
+For UI review without Ollama or audio models, use the deterministic pipeline
+adapters while keeping the same HTTP, serialization, state, and component flow:
+
+```bash
+python -m voice_concierge.app.web --demo
+```
+
 ## Integration boundary
 
-`app.js` currently uses a deterministic in-browser demo adapter so the turn
-flow, confirmations, error fallback, and persistent state can be reviewed before
-the app pipeline exists. Replace `buildResponse(transcript)` with a backend call
-that sends:
+The server exposes same-origin `POST /api/turn` and `POST /api/audio` endpoints.
+Both paths run through `VoiceConciergePipeline`, return the same serialized turn
+result, and round-trip the complete pipeline state. The browser never applies
+context, memory, confirmation, response-shaping, or error fallback rules itself.
+
+Text turns send:
 
 ```js
 {
   transcript,
   state: state.pipeline,
-  options: { synthesize: false, play: false }
+  options: { synthesize: voiceOutputEnabled, play: false }
 }
 ```
 
-The UI intentionally stores and returns the complete `response.state` object on
-every turn. Wake word and VAD are shown as bypassed for web transcript input;
-they remain visible in the inspector because they are part of the complete
-voice pipeline.
+Audio turns send a browser-recorded mono PCM WAV as `wav_base64`; the backend
+decodes it and calls `pipeline.process_audio(...)`. Playback stays browser-
+controlled so the selected output device, pace, volume, replay, and stop controls
+remain responsive without asking the server to use its own speakers. The
+pipeline's persisted `context.accessibility.speech_pace` is applied as the base
+playback pace, with the personal device setting acting as a local multiplier.
 
 ## Guided personal setup
 

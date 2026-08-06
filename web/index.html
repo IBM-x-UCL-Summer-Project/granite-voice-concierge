@@ -27,7 +27,7 @@
           <span class="status-dot" id="runtime-dot" aria-hidden="true"></span>
           <span id="runtime-label">Connecting…</span>
           <span class="runtime-divider" aria-hidden="true"></span>
-          <span class="mono">granite3.2:8b</span>
+          <span class="mono" id="runtime-model">—</span>
         </div>
 
         <div class="topbar-actions">
@@ -74,7 +74,7 @@
           <div class="conversation" id="conversation" aria-live="polite">
             <div class="date-rule"><span>Today · local session</span></div>
 
-            <article class="message message-assistant">
+            <article class="message message-assistant" data-welcome>
               <div class="avatar" aria-hidden="true">G</div>
               <div class="message-body">
                 <div class="message-meta"><strong>Granite</strong><span>Now</span></div>
@@ -184,6 +184,8 @@
                   <dl class="data-list">
                     <div><dt>Mode</dt><dd id="inspector-mode">home</dd></div>
                     <div><dt>Pending</dt><dd id="inspector-pending-mode">null</dd></div>
+                    <div><dt>Verbosity</dt><dd id="inspector-verbosity">normal</dd></div>
+                    <div><dt>Speech pace</dt><dd id="inspector-speech-pace">normal</dd></div>
                     <div><dt>Command</dt><dd id="inspector-command">null</dd></div>
                     <div><dt>Confirmation</dt><dd id="inspector-confirmation">false</dd></div>
                   </dl>

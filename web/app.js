@@ -51,6 +51,7 @@ const elements = {
   microphoneButton: document.querySelector("#mic-button"),
   runtimeLabel: document.querySelector("#runtime-label"),
   runtimeDot: document.querySelector("#runtime-dot"),
+  runtimeModel: document.querySelector("#runtime-model"),
   pipelineList: document.querySelector("#pipeline-list"),
   turnCounter: document.querySelector("#turn-counter"),
   statusOrb: document.querySelector("#status-orb"),
@@ -352,14 +353,26 @@ function populateDeviceSelect(select, devices, defaultLabel, fallbackLabel) {
     : "default";
 }
 
-function speakText(text, settings = state.settings) {
+function effectiveSpeechRate(settings, includePipelinePace = true) {
+  const pipelineFactor = includePipelinePace
+    && state.pipeline.context.accessibility.speech_pace === "slow"
+    ? 0.8
+    : 1;
+  return Number(settings.speech_rate) * pipelineFactor;
+}
+
+function speakText(
+  text,
+  settings = state.settings,
+  includePipelinePace = settings === state.settings,
+) {
   if (!("speechSynthesis" in window)) {
     showToast("Voice preview is unavailable in this browser");
     return;
   }
   stopPlayback();
   const utterance = new SpeechSynthesisUtterance(text);
-  utterance.rate = Number(settings.speech_rate);
+  utterance.rate = effectiveSpeechRate(settings, includePipelinePace);
   utterance.volume = Number(settings.volume) / 100;
   window.speechSynthesis.speak(utterance);
 }
@@ -376,6 +389,8 @@ function renderState() {
   elements.modeSelect.value = state.pipeline.context.mode;
   setText("#inspector-mode", state.pipeline.context.mode);
   setText("#inspector-pending-mode", valueOrNull(state.pipeline.context.pending_mode));
+  setText("#inspector-verbosity", state.pipeline.context.accessibility.verbosity);
+  setText("#inspector-speech-pace", state.pipeline.context.accessibility.speech_pace);
   setText("#inspector-memory-scope", state.pipeline.pending_memory_scope || "none");
   setText(
     "#inspector-memory-action",
@@ -563,7 +578,7 @@ async function playResponse(button) {
   const url = URL.createObjectURL(new Blob([bytes], { type: "audio/wav" }));
   const audio = new Audio(url);
   audio.volume = Number(state.settings.volume) / 100;
-  audio.playbackRate = Number(state.settings.speech_rate);
+  audio.playbackRate = effectiveSpeechRate(state.settings);
   if (state.settings.speaker_id !== "default" && typeof audio.setSinkId === "function") {
     try {
       await audio.setSinkId(state.settings.speaker_id);
@@ -705,6 +720,8 @@ function updateInspector(response) {
   setText("#inspector-transcript", response.transcript?.text || "—");
   setText("#inspector-mode", response.context.mode);
   setText("#inspector-pending-mode", valueOrNull(response.state.context.pending_mode));
+  setText("#inspector-verbosity", response.state.context.accessibility.verbosity);
+  setText("#inspector-speech-pace", response.state.context.accessibility.speech_pace);
   setText("#inspector-command", valueOrNull(response.context.command_action));
   setText("#inspector-confirmation", response.context.needs_confirmation);
   setText("#inspector-memory-scope", response.state.pending_memory_scope || "none");
@@ -717,67 +734,97 @@ function updateInspector(response) {
   setText("#inspector-audio", response.audio ? "available" : "null");
 }
 
-async function runTurn(transcript) {
-  if (!transcript.trim() || state.running) return;
+async function runTurn(input) {
+  if (state.running) return;
+  const isAudio = typeof input === "object" && input.kind === "audio";
+  const transcript = isAudio ? "" : String(input || "").trim();
+  if (!isAudio && !transcript) return;
+
   state.running = true;
   state.turn += 1;
+  const startedAt = performance.now();
   elements.turnCounter.textContent = `TURN ${String(state.turn).padStart(2, "0")}`;
-  elements.input.value = "";
-  autoSizeInput();
+  if (!isAudio) {
+    elements.input.value = "";
+    autoSizeInput();
+    appendMessage("user", transcript);
+  }
   updateSendState();
-  appendMessage("user", transcript);
   resetStages();
+  setStage("input", "running", isAudio ? "Audio" : "Text");
+  ["context", "memory", "reasoning", "output"].forEach((stageName) => {
+    setStage(stageName, "running", "Queued");
+  });
+  openStage("input");
   elements.statusOrb.className = "status-orb is-running";
-  elements.turnStatusLabel.textContent = "Processing turn";
-  elements.turnStatusDetail.textContent = "Transcript received";
+  elements.turnStatusLabel.textContent = isAudio ? "Transcribing voice input" : "Processing turn";
+  elements.turnStatusDetail.textContent = isAudio
+    ? "Recorded WAV sent to the application pipeline"
+    : "Transcript sent with the complete pipeline state";
   elements.turnLatency.textContent = "…";
 
-  const timeline = [
-    ["input", "Transcript accepted", 180],
-    ["context", "Applying context policy", 260],
-    ["memory", "Retrieving relevant memory", 300],
-    ["reasoning", "Generating locally", 520],
-    ["output", "Preparing spoken response", 240],
-  ];
-  let previous = null;
-  for (const [stage, detail, duration] of timeline) {
-    if (previous) setStage(previous, "complete", "Done");
-    setStage(stage, "running", "Running");
-    openStage(stage);
-    elements.turnStatusDetail.textContent = detail;
-    await delay(duration);
-    previous = stage;
-  }
+  try {
+    const response = isAudio
+      ? await requestAudioTurn(input.wavBase64)
+      : await requestTextTurn(transcript);
+    if (!response?.state || !response?.context || !Array.isArray(response.errors)) {
+      throw new Error("The local pipeline returned an incomplete response.");
+    }
 
-  const response = shapeResponseForPreferences(buildResponse(transcript));
-  const errorStage = response.errors.includes("reasoning_failed") ? "reasoning" : null;
-  if (errorStage) {
-    setStage(errorStage, "error", "Error");
-    setStage("output", "complete", "Fallback");
-  } else {
-    setStage("output", "complete", response.audio ? "Audio" : "Text");
-  }
-  if (!response.reasoning) setStage("reasoning", "skipped", "Bypass");
-  state.pipeline = response.state;
-  state.pipeline.last_spoken_response = response.spoken_response;
-  saveState();
-  updateInspector(response);
-  appendMessage("assistant", response.spoken_response, {
-    confirmation: confirmationKind(response),
-    errors: response.errors,
-  });
+    if (response.context.command_action === "stop") stopPlayback();
 
-  const elapsed = timeline.reduce((total, item) => total + item[2], 0);
-  elements.statusOrb.className = response.errors.length ? "status-orb is-error" : "status-orb is-complete";
-  elements.turnStatusLabel.textContent = response.errors.length ? "Completed with fallback" : "Turn complete";
-  elements.turnStatusDetail.textContent = response.errors.length
-    ? response.errors.join(", ")
-    : response.context.needs_confirmation || response.reasoning?.needs_confirmation
-      ? "Waiting for confirmation"
-      : "State persisted for next turn";
-  elements.turnLatency.textContent = `${elapsed} ms`;
-  state.running = false;
-  updateSendState();
+    state.pipeline = response.state;
+    saveState();
+    updateInspector(response);
+
+    const errors = new Set(response.errors);
+    setStage("input", errors.has("stt_failed") ? "error" : "complete", response.transcript ? "Done" : "No transcript");
+    setStage("context", "complete", response.context.mode_changed ? "Changed" : "Done");
+    setStage(
+      "memory",
+      errors.has("memory_retrieval_failed") || errors.has("memory_action_failed") ? "error" : "complete",
+      response.memory_operation.attempted ? (response.memory_operation.succeeded ? "Saved" : "Failed") : "Done",
+    );
+    setStage(
+      "reasoning",
+      response.reasoning ? (errors.has("reasoning_failed") ? "error" : "complete") : "skipped",
+      response.reasoning ? (errors.has("reasoning_failed") ? "Fallback" : "Done") : "Bypass",
+    );
+    setStage(
+      "output",
+      errors.has("tts_failed") || errors.has("playback_failed") ? "error" : "complete",
+      response.audio?.wav_base64 ? "Audio" : "Text",
+    );
+
+    renderConversationHistory(response);
+
+    const waiting = response.context.needs_confirmation
+      || response.reasoning?.needs_confirmation;
+    elements.statusOrb.className = response.errors.length
+      ? "status-orb is-error"
+      : "status-orb is-complete";
+    elements.turnStatusLabel.textContent = response.errors.length
+      ? "Completed with fallback"
+      : "Turn complete";
+    elements.turnStatusDetail.textContent = response.errors.length
+      ? response.errors.join(", ")
+      : waiting
+        ? "Waiting for confirmation"
+        : "Pipeline state and conversation history persisted";
+  } catch (error) {
+    setStage("input", "error", "Failed");
+    ["context", "memory", "reasoning", "output"].forEach((stageName) => {
+      setStage(stageName, "skipped", "Unavailable");
+    });
+    elements.statusOrb.className = "status-orb is-error";
+    elements.turnStatusLabel.textContent = "Pipeline unavailable";
+    elements.turnStatusDetail.textContent = error.message;
+    appendPipelineError(error.message);
+  } finally {
+    elements.turnLatency.textContent = `${Math.round(performance.now() - startedAt)} ms`;
+    state.running = false;
+    updateSendState();
+  }
 }
 
 function autoSizeInput() {
@@ -786,7 +833,79 @@ function autoSizeInput() {
 }
 
 function updateSendState() {
-  elements.send.disabled = state.running || !elements.input.value.trim();
+  elements.send.disabled = state.running
+    || Boolean(state.recorder)
+    || !state.capabilities.text_input
+    || !elements.input.value.trim();
+  elements.modeSelect.disabled = state.running
+    || Boolean(state.recorder)
+    || !state.capabilities.text_input;
+  elements.microphoneButton.disabled = state.running || !state.capabilities.voice_input;
+}
+
+function renderConversationHistory(response = null) {
+  elements.conversation
+    .querySelectorAll(":scope > :not(.date-rule):not([data-welcome])")
+    .forEach((node) => node.remove());
+  state.pipeline.conversation_history.forEach((turn) => {
+    appendMessage("user", turn.user_transcript);
+    const isCurrent = response
+      && turn === state.pipeline.conversation_history.at(-1)
+      && turn.assistant_response === response.spoken_response;
+    appendMessage("assistant", turn.assistant_response, isCurrent ? {
+      confirmation: confirmationKind(response),
+      errors: response.errors,
+      audio: response.audio,
+    } : {});
+  });
+  const responseWasRecorded = response
+    && state.pipeline.conversation_history.at(-1)?.assistant_response
+      === response.spoken_response;
+  if (response?.spoken_response && !responseWasRecorded) {
+    appendMessage("assistant", response.spoken_response, {
+      confirmation: confirmationKind(response),
+      errors: response.errors,
+      audio: response.audio,
+    });
+  } else if (response?.errors.length && !responseWasRecorded) {
+    appendPipelineError(`Recoverable pipeline error: ${response.errors.join(", ")}.`);
+  }
+  if (!response) {
+    if (state.pipeline.context.pending_mode) appendConfirmation("mode");
+    else if (state.pipeline.pending_memory_action) appendConfirmation("memory");
+  }
+}
+
+function restoreConversationHistory() {
+  renderConversationHistory();
+  state.turn = state.pipeline.conversation_history.length;
+  elements.turnCounter.textContent = `TURN ${String(state.turn).padStart(2, "0")}`;
+}
+
+async function connectPipeline() {
+  try {
+    const response = await fetch("/api/health", { cache: "no-store" });
+    if (!response.ok) throw new Error("not ready");
+    const health = await response.json();
+    state.capabilities = { ...state.capabilities, ...health.capabilities };
+    elements.runtimeLabel.textContent = "Local pipeline";
+    elements.runtimeModel.textContent = health.runtime?.model || "configured model";
+    elements.runtimeDot.classList.remove("is-offline");
+    elements.interactionLabel.textContent = state.capabilities.voice_input
+      ? "Transcript or voice input"
+      : "Transcript input · voice I/O disabled";
+    elements.microphoneButton.title = state.capabilities.voice_input
+      ? "Start voice input"
+      : "Run the server with --voice-io to enable voice input";
+  } catch {
+    state.capabilities = { text_input: false, voice_input: false, voice_output: false };
+    elements.runtimeLabel.textContent = "Pipeline offline";
+    elements.runtimeModel.textContent = "unavailable";
+    elements.runtimeDot.classList.add("is-offline");
+    elements.turnStatusLabel.textContent = "Pipeline offline";
+    elements.turnStatusDetail.textContent = "Start with python -m voice_concierge.app.web";
+  }
+  updateSendState();
 }
 
 function showToast(message) {
@@ -840,8 +959,22 @@ elements.conversation.addEventListener("click", (event) => {
   }
   const speak = event.target.closest(".speak-button");
   if (speak) {
-    const text = speak.closest(".message-body")?.querySelector(".bubble")?.textContent;
-    if (text) speakText(text);
+    playResponse(speak);
+  }
+});
+
+elements.modeSelect.addEventListener("change", () => {
+  const requestedMode = elements.modeSelect.value;
+  if (requestedMode === state.pipeline.context.mode) return;
+  runTurn(`Switch to ${requestedMode} mode`);
+});
+
+elements.microphoneButton.addEventListener("click", async () => {
+  if (state.recorder) {
+    await stopVoiceRecording();
+  } else {
+    await startVoiceRecording();
+    updateSendState();
   }
 });
 
@@ -892,6 +1025,8 @@ elements.setupDialog.addEventListener("cancel", () => {
 
 document.documentElement.dataset.theme = window.localStorage.getItem("granite-theme") || "light";
 applyPersonalSettings();
+restoreConversationHistory();
+connectPipeline();
 if (!state.settings.setup_complete) {
   window.setTimeout(openSetup, 180);
 }

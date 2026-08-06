@@ -128,6 +128,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 
 .runtime-status .mono { color: var(--ink); }
 .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #66b82f; box-shadow: 0 0 0 3px color-mix(in srgb, #66b82f 17%, transparent); }
+.status-dot.is-offline { background: var(--orange); box-shadow: 0 0 0 3px color-mix(in srgb, var(--orange) 17%, transparent); }
 .runtime-divider { width: 1px; height: 12px; background: var(--line); }
 
 .icon-button {

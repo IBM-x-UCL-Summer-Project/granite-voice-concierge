@@ -38,6 +38,16 @@ python -m voice_concierge.app.live --device-index <index>
 python -m voice_concierge.app.live --no-memory --no-playback
 ```
 
+Run the pipeline-connected browser UI:
+
+```bash
+python -m voice_concierge.app.web
+```
+
+Add `--voice-io` for browser recording/STT and response TTS, `--memory` for
+persistent local memory, or `--demo` to review the UI without Ollama and audio
+models. See [the web UI guide](web/README.md) for details.
+
 ## Project Documentation
 
 - [Repository Structure Guide](docs/repository-structure.md)

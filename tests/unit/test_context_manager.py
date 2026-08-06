@@ -77,6 +77,7 @@ class ContextManagerTest(unittest.TestCase):
                 self.assertIsNone(decision.state.pending_mode)
                 self.assertFalse(decision.mode_changed)
                 self.assertFalse(decision.needs_confirmation)
+
     def test_switch_back_phrase_selects_mode_despite_trailing_typo(self) -> None:
         state = ContextState(mode="driving")
 
