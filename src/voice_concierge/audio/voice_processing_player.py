@@ -16,10 +16,12 @@ command control.
 """
 
 # Standard library
+import contextlib
+import os
 import queue
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any
 
 # Third-party
@@ -138,7 +140,9 @@ class VoiceProcessingAudioPlayer:
 
         ok, err = input_node.setVoiceProcessingEnabled_error_(True, None)
         if not ok:
-            raise AudioDeviceError(f"could not enable voice processing: {err}")
+            raise AudioDeviceError(
+                f"could not enable macOS echo cancellation: {_format_error(err)}"
+            )
 
         play_format = output_node.inputFormatForBus_(0)
         play_rate = int(play_format.sampleRate())
@@ -168,8 +172,11 @@ class VoiceProcessingAudioPlayer:
 
         ok, err = engine.startAndReturnError_(None)
         if not ok:
-            input_node.removeTapOnBus_(0)
-            raise AudioDeviceError(f"could not start the audio engine: {err}")
+            _teardown(engine, input_node, player)
+            raise AudioDeviceError(
+                f"could not start the echo-cancelled audio engine: "
+                f"{_format_error(err)}"
+            )
 
         done = threading.Event()
         player.scheduleBuffer_completionHandler_(buffer, lambda: done.set())
@@ -188,8 +195,70 @@ class VoiceProcessingAudioPlayer:
                     remaining -= now - last
                 last = now
         finally:
-            input_node.removeTapOnBus_(0)
-            engine.stop()
+            _teardown(engine, input_node, player)
+
+
+def _format_error(err: Any) -> str:
+    """Describe an AVFoundation NSError for logs and raised exceptions.
+
+    Robust to None (no detail was provided) and to plain objects, so an audio
+    failure surfaces a debuggable message instead of a bare object repr.
+    """
+    if err is None:
+        return "no error detail provided by CoreAudio"
+    code = getattr(err, "code", None)
+    description = getattr(err, "localizedDescription", None)
+    parts = []
+    if callable(code):
+        parts.append(f"code {code()}")
+    if callable(description):
+        parts.append(str(description()))
+    return "; ".join(parts) if parts else str(err)
+
+
+@contextlib.contextmanager
+def _suppress_native_stderr() -> (  # pragma: no cover - os-level fd redirection
+    Iterator[None]
+):
+    """Silence C-level writes to stderr (fd 2), e.g. CoreAudio's HAL chatter.
+
+    Python's redirect_stderr only affects sys.stderr; CoreAudio writes straight
+    to file descriptor 2, so the fd itself is redirected and then restored.
+    """
+    saved_fd = os.dup(2)
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull, 2)
+        yield
+    finally:
+        os.dup2(saved_fd, 2)
+        os.close(devnull)
+        os.close(saved_fd)
+
+
+def _teardown(  # pragma: no cover - native CoreAudio device release
+    engine: Any, input_node: Any, player: Any
+) -> None:
+    """Release the audio device fully so the next play() can claim it again.
+
+    Every step runs even if an earlier one fails, and CoreAudio's "PaMacCore ...
+    Unknown Error" shutdown chatter is muted. Leaving voice processing enabled or
+    the engine running keeps the microphone claimed, which makes the next step's
+    engine fail to start, so this must always complete.
+    """
+    with _suppress_native_stderr():
+        for step in (
+            player.stop,
+            lambda: input_node.removeTapOnBus_(0),
+            engine.stop,
+            lambda: input_node.setVoiceProcessingEnabled_error_(False, None),
+            engine.reset,
+            lambda: engine.detachNode_(player),
+        ):
+            try:
+                step()
+            except Exception:  # best-effort release; keep freeing the device
+                pass
 
 
 def _load_avfoundation() -> Any:  # pragma: no cover - macOS native

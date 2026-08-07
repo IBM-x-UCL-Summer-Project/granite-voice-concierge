@@ -6,9 +6,41 @@ import pytest
 from voice_concierge.audio.player import AudioPlayer
 from voice_concierge.audio.voice_processing_player import (
     VoiceProcessingAudioPlayer,
+    _format_error,
     mic_to_command_bytes,
     resample_int16_to_float,
 )
+
+
+class _FakeNSError:
+    """Stand-in for an AVFoundation NSError with pyobjc-style accessors."""
+
+    def __init__(self, code: int, description: str) -> None:
+        self._code = code
+        self._description = description
+
+    def code(self) -> int:
+        return self._code
+
+    def localizedDescription(self) -> str:
+        return self._description
+
+
+class TestFormatError:
+    """Unit tests for turning an NSError into a debuggable string."""
+
+    @pytest.mark.unit
+    def test_none_reports_missing_detail(self) -> None:
+        assert "no error detail" in _format_error(None)
+
+    @pytest.mark.unit
+    def test_nserror_includes_code_and_description(self) -> None:
+        out = _format_error(_FakeNSError(-10875, "engine init failed"))
+        assert out == "code -10875; engine init failed"
+
+    @pytest.mark.unit
+    def test_plain_object_falls_back_to_str(self) -> None:
+        assert _format_error("raw message") == "raw message"
 
 
 class _FakePlayerNode:
