@@ -14,6 +14,7 @@ from voice_concierge.audio.source import (
 )
 from voice_concierge.audio.streaming_player import StreamingAudioPlayer
 from voice_concierge.audio.types import CapturedAudio
+from voice_concierge.audio.voice_processing_player import VoiceProcessingAudioPlayer
 
 __all__ = [
     "AudioDeviceError",
@@ -27,4 +28,5 @@ __all__ = [
     "PyAudioSource",
     "SoundDevicePlayer",
     "StreamingAudioPlayer",
+    "VoiceProcessingAudioPlayer",
 ]
