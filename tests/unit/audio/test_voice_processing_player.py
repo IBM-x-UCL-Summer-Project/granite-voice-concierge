@@ -101,10 +101,13 @@ class TestPlaybackControlQueue:
         player = VoiceProcessingAudioPlayer()
         node = _FakePlayerNode()
 
+        assert player.is_paused is False
         player.pause()
         assert player._pump_once(node, None) is False
+        assert player.is_paused is True  # pause holds the deadline open
         player.resume()
         assert player._pump_once(node, None) is False
+        assert player.is_paused is False  # resume lets it count down again
 
         assert node.calls == ["pause", "play"]
 

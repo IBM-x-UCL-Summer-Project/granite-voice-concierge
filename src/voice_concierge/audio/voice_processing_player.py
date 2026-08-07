@@ -65,6 +65,7 @@ class VoiceProcessingAudioPlayer:
         self._pending: str | None = None
         self._lock = threading.Lock()
         self._input_queue: queue.Queue[bytes] = queue.Queue()
+        self._paused = False
 
     def stop(self) -> None:
         """Request that playback stop (applied on the play() thread)."""
@@ -87,6 +88,11 @@ class VoiceProcessingAudioPlayer:
             command, self._pending = self._pending, None
             return command
 
+    @property
+    def is_paused(self) -> bool:
+        """Whether playback is currently held by a pause command."""
+        return self._paused
+
     def _drain_input(self) -> None:
         while not self._input_queue.empty():
             self._input_queue.get_nowait()
@@ -107,8 +113,10 @@ class VoiceProcessingAudioPlayer:
             player.stop()
             return True
         if command == "pause":
+            self._paused = True
             player.pause()
         elif command == "resume":
+            self._paused = False
             player.play()
         return False
 
@@ -122,6 +130,7 @@ class VoiceProcessingAudioPlayer:
 
         Blocks until the audio finishes or stop() is requested. macOS only.
         """
+        self._paused = False
         av = _load_avfoundation()
         engine = av.AVAudioEngine.alloc().init()
         input_node = engine.inputNode()
@@ -165,11 +174,19 @@ class VoiceProcessingAudioPlayer:
         done = threading.Event()
         player.scheduleBuffer_completionHandler_(buffer, lambda: done.set())
         player.play()
-        deadline = time.monotonic() + len(floats) / play_rate + 1.0
+        # Safety timeout in case the completion handler never fires. Count it
+        # down only while actually playing, so a pause holds the audio open
+        # instead of ending it at the original duration.
+        remaining = len(floats) / play_rate + 1.0
+        last = time.monotonic()
         try:
-            while not done.is_set() and time.monotonic() < deadline:
+            while not done.is_set() and remaining > 0:
                 if self._pump_once(player, on_input_frame):
                     break
+                now = time.monotonic()
+                if not self._paused:
+                    remaining -= now - last
+                last = now
         finally:
             input_node.removeTapOnBus_(0)
             engine.stop()
