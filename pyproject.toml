@@ -46,6 +46,12 @@ dev = [
     "pytest>=9,<10",
     "pytest-cov>=7,<8",
 ]
+# macOS-only acoustic echo cancellation for barge-in during playback
+# (VoiceProcessingAudioPlayer). Optional; the sounddevice players are the
+# cross-platform default.
+macos-aec = [
+    "pyobjc-framework-AVFoundation>=10; sys_platform == 'darwin'",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
