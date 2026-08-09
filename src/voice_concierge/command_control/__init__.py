@@ -31,6 +31,7 @@ from voice_concierge.command_control.spotter import (
     DEFAULT_PHRASE_COMMANDS,
     PhraseCommandSpotter,
 )
+from voice_concierge.command_control.stabilizer import StableCommandSpotter
 from voice_concierge.command_control.transcript_parser import TranscriptCommandParser
 from voice_concierge.command_control.types import (
     CommandEvent,
@@ -59,6 +60,7 @@ __all__ = [
     "PlaybackController",
     "RoutineCommand",
     "SoundDevicePlaybackController",
+    "StableCommandSpotter",
     "TranscriptCommandParser",
     "VoiceCommand",
     "VoskPhraseRecognizer",
