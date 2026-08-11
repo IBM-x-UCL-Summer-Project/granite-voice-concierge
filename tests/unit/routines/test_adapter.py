@@ -178,3 +178,23 @@ def test_new_start_request_clears_stale_pending() -> None:
     assert adapter.start_routine("y") == "I don't have a routine for that."
     # the old pending was cleared, so there is nothing left to resolve
     assert adapter.resolve_choice("a") == "There's nothing to choose."
+
+
+@pytest.mark.unit
+class TestStatus:
+    def test_none_before_a_routine_starts(self) -> None:
+        adapter = RoutineCommandAdapter(_Provider(()))
+        assert adapter.status is None
+
+    def test_running_after_start(self) -> None:
+        adapter = RoutineCommandAdapter(_Provider((_routine(),)))
+        adapter.start_routine("make tea")
+        assert adapter.status == "running"
+
+    def test_reflects_pause_and_stop(self) -> None:
+        adapter = RoutineCommandAdapter(_Provider((_routine(),)))
+        adapter.start_routine("make tea")
+        adapter.handle_command(_event("pause"))
+        assert adapter.status == "paused"
+        adapter.handle_command(_event("stop"))
+        assert adapter.status == "stopped"

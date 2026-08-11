@@ -17,7 +17,12 @@ from voice_concierge.routines.errors import RoutineError
 from voice_concierge.routines.interfaces import RoutineProvider
 from voice_concierge.routines.providers import provider_candidates
 from voice_concierge.routines.session import RoutineSession
-from voice_concierge.routines.types import Routine, RoutineResponse, StepView
+from voice_concierge.routines.types import (
+    Routine,
+    RoutineResponse,
+    RoutineStatus,
+    StepView,
+)
 
 _NOT_RUNNING = "No routine is running."
 _NOT_FOUND = "I don't have a routine for that."
@@ -37,6 +42,15 @@ class RoutineCommandAdapter:
         self._provider = provider
         self._session: RoutineSession | None = None
         self._pending: tuple[Routine, ...] = ()
+
+    @property
+    def status(self) -> RoutineStatus | None:
+        """The running routine's status, or None when none is active.
+
+        Lets a caller decide flow (auto-advance, pause, finish) without parsing
+        the spoken text this adapter produces.
+        """
+        return self._session.status if self._session is not None else None
 
     def start_routine(self, request: str) -> str:
         self._pending = ()  # a new start-request abandons any pending disambiguation
