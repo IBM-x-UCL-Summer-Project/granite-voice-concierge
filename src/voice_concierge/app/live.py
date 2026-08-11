@@ -111,19 +111,14 @@ def run_live_app(
         nonlocal state
         # A guided routine takes over the conversation for many turns, so it is
         # routed before reasoning; everything else is an ordinary turn.
-        transcript = _routine_transcript(runtime_config, pipeline, audio)
-        if transcript is not None:
+        gate = _gate_turn(runtime_config, pipeline, audio)
+        if gate.is_routine and gate.transcript is not None:
             handler = get_routines()
             if handler is not None:
-                print(f"You: {transcript}", file=stdout)
-                print(handler.run(transcript), file=stdout)
+                print(f"You: {gate.transcript}", file=stdout)
+                print(handler.run(gate.transcript), file=stdout)
                 return
-        result = pipeline.process_audio(
-            audio,
-            state,
-            synthesize=runtime_config.synthesize,
-            play=runtime_config.play,
-        )
+        result = _process_turn(pipeline, audio, gate, state, runtime_config)
         state = result.state
         _print_turn_result(result, stdout=stdout)
 
@@ -170,32 +165,69 @@ def build_live_app_pipeline(config: LiveAppConfig) -> VoiceConciergePipeline:
     )
 
 
-def _routine_transcript(
+@dataclass(frozen=True)
+class _GatedTurn:
+    """What the guided-routine gate learned about one captured turn."""
+
+    #: The transcript, or None when speech recognition gave nothing usable.
+    transcript: str | None
+    #: True when the transcript is asking to be walked through something.
+    is_routine: bool
+
+
+def _gate_turn(
     config: LiveAppConfig,
     pipeline: VoiceConciergePipeline,
     audio: CapturedAudio,
-) -> str | None:
-    """Return the transcript when this turn is asking to be guided, else None.
+) -> _GatedTurn:
+    """Transcribe the turn and decide whether it should run as a routine.
 
-    Deciding this costs only the transcription the turn needs anyway plus a
-    phrase match, so no model is loaded to answer it. None covers routines being
-    switched off and speech recognition being absent or failing: in each case
-    the ordinary turn runs and reports for itself, so a failure here never
-    costs the user their turn.
+    Deciding this costs the transcription the turn needs anyway plus a phrase
+    match, so no model is loaded to answer it, and the transcript is handed back
+    so the ordinary path can reuse it rather than transcribing a second time.
+    A missing or failing recognizer yields no transcript, which sends the turn
+    down the ordinary path where the pipeline reports the failure itself.
     """
     if not config.guided_routines:
-        return None
+        return _GatedTurn(None, False)
     # getattr: callers may inject a pipeline stand-in without this attribute.
     speech_to_text = getattr(pipeline, "speech_to_text", None)
     if speech_to_text is None:
-        return None
+        return _GatedTurn(None, False)
     try:
         transcript = speech_to_text.transcribe(audio).text.strip()
     except Exception:
-        return None
-    if not transcript or not is_routine_request(transcript):
-        return None
-    return transcript
+        return _GatedTurn(None, False)
+    if not transcript:
+        return _GatedTurn(None, False)
+    return _GatedTurn(transcript, is_routine_request(transcript))
+
+
+def _process_turn(
+    pipeline: VoiceConciergePipeline,
+    audio: CapturedAudio,
+    gate: _GatedTurn,
+    state: AppPipelineState,
+    config: LiveAppConfig,
+) -> AppTurnResult:
+    """Run one ordinary turn, reusing a transcript the gate already produced.
+
+    Transcription is the most expensive step of a turn, so when the gate has
+    already run it the text goes straight to the pipeline. Falls back to
+    process_audio when the gate produced nothing, and when a caller injected a
+    pipeline stand-in that has no process_transcript.
+    """
+    process_transcript = getattr(pipeline, "process_transcript", None)
+    if gate.transcript is not None and process_transcript is not None:
+        return process_transcript(
+            gate.transcript,
+            state,
+            synthesize=config.synthesize,
+            play=config.play,
+        )
+    return pipeline.process_audio(
+        audio, state, synthesize=config.synthesize, play=config.play
+    )
 
 
 def build_routine_turn_handler(  # pragma: no cover - builds models and devices
@@ -213,6 +245,7 @@ def build_routine_turn_handler(  # pragma: no cover - builds models and devices
     )
     from voice_concierge.audio.voice_processing_player import (
         VoiceProcessingAudioPlayer,
+        echo_cancellation_available,
     )
     from voice_concierge.command_control import (
         StableCommandSpotter,
@@ -223,6 +256,10 @@ def build_routine_turn_handler(  # pragma: no cover - builds models and devices
     from voice_concierge.routines import RoutineRunner, build_routine_adapter
     from voice_concierge.voice_output.factory import build_text_to_speech
 
+    if not echo_cancellation_available():
+        # Without echo cancellation the assistant hears its own speech as a
+        # command, so a guided routine would fight itself. Answer normally.
+        return None
     try:
         adapter = build_routine_adapter(
             memory_manager=build_memory_manager(),

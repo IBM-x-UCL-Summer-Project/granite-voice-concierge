@@ -339,3 +339,59 @@ def test_guided_routines_are_on_by_default() -> None:
     config = live._config_from_args(live._build_parser().parse_args([]))
 
     assert config.guided_routines is True
+
+
+class _CountingStt(_FakeStt):
+    """Records how many times a turn was transcribed."""
+
+    def __init__(self, text: str = "") -> None:
+        super().__init__(text)
+        self.calls = 0
+
+    def transcribe(self, audio: CapturedAudio):
+        self.calls += 1
+        return super().transcribe(audio)
+
+
+class _FullPipeline(_RoutinePipeline):
+    """Pipeline exposing process_transcript, as the real one does."""
+
+    def __init__(self, stt=None) -> None:
+        super().__init__(stt)
+        self.transcript_calls: list[str] = []
+
+    def process_transcript(
+        self, transcript, state=None, *, synthesize=False, play=False
+    ):
+        self.transcript_calls.append(transcript)
+        return self.process_audio(_audio(), state, synthesize=synthesize, play=play)
+
+
+def test_ordinary_turn_reuses_the_gate_transcript() -> None:
+    """Speech is transcribed once per turn, not once per code path."""
+    stt = _CountingStt("what is the weather")
+    pipeline = _FullPipeline(stt)
+
+    _run_one_turn(pipeline, None, io.StringIO())
+
+    assert stt.calls == 1  # not transcribed a second time by the pipeline
+    assert pipeline.transcript_calls == ["what is the weather"]
+
+
+def test_falls_back_to_process_audio_without_process_transcript() -> None:
+    """A pipeline stand-in lacking process_transcript still works."""
+    pipeline = _RoutinePipeline(_FakeStt("what is the weather"))
+
+    _run_one_turn(pipeline, None, io.StringIO())
+
+    assert len(pipeline.calls) == 1
+
+
+def test_unusable_transcript_falls_back_to_process_audio() -> None:
+    """With no transcript to reuse, the pipeline handles the raw audio."""
+    pipeline = _FullPipeline(_FakeStt(fail=True))
+
+    _run_one_turn(pipeline, None, io.StringIO())
+
+    assert pipeline.transcript_calls == []
+    assert len(pipeline.calls) == 1
