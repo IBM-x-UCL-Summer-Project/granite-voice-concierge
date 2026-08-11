@@ -5,6 +5,7 @@ import pytest
 
 # Local
 from voice_concierge.app.routines import (
+    AUDIO_FAILED_PHRASE,
     EchoCancelledStepSpeaker,
     ListeningPlayer,
     MicCommandWaiter,
@@ -138,11 +139,39 @@ class TestStepSpeaker:
         assert speaker.speak("step one") is None
         assert player.calls == ["play", "resume"]
 
-    def test_audio_failure_is_reported_as_no_interruption(self) -> None:
-        """A dead device must not kill the routine; the session keeps its place."""
+    def test_audio_failure_is_reported_as_a_stop(self) -> None:
+        """A dead device must end the routine, not silently advance through it."""
         speaker = EchoCancelledStepSpeaker(_Tts(), _Player(fail=True), _Spotter())
 
-        assert speaker.speak("step one") is None
+        event = speaker.speak("step one")
+
+        assert event is not None
+        assert event.command == "stop"
+        assert event.phrase == AUDIO_FAILED_PHRASE  # nobody actually said it
+
+    def test_audio_failure_reaches_the_observer(self) -> None:
+        seen: list[CommandEvent] = []
+        speaker = EchoCancelledStepSpeaker(
+            _Tts(), _Player(fail=True), _Spotter(), on_event=seen.append
+        )
+
+        speaker.speak("step one")
+
+        assert [event.phrase for event in seen] == [AUDIO_FAILED_PHRASE]
+
+    def test_audio_failure_ends_a_running_routine(self) -> None:
+        """End to end: a dead device stops rather than reading to nobody."""
+        routine = Routine(
+            name="tea", steps=tuple(RoutineStep(f"step {i}") for i in range(1, 6))
+        )
+        adapter = RoutineCommandAdapter(StaticRoutineProvider({"tea": routine}))
+        speaker = EchoCancelledStepSpeaker(_Tts(), _Player(fail=True), _Spotter())
+        waiter = MicCommandWaiter(_Source(), _Spotter(), clock=_Clock())
+        opening = adapter.start_routine("tea")
+
+        RoutineRunner(adapter, speaker, waiter).run(opening)
+
+        assert adapter.status == "stopped"  # did not walk through all 5 steps
 
     def test_observer_sees_recognized_commands(self) -> None:
         seen: list[CommandEvent] = []

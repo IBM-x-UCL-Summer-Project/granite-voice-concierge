@@ -36,6 +36,11 @@ from voice_concierge.routines.runner import RoutineRunner
 #: Words that act on the speech itself rather than moving through the routine.
 PLAYBACK_HOLD = frozenset({"pause", "resume"})
 
+#: Phrase reported when playback failed rather than a command being spoken. It
+#: stands in for a spoken "stop" so the runner ends the routine, and is distinct
+#: so a log makes clear nobody actually said it.
+AUDIO_FAILED_PHRASE = "(audio unavailable)"
+
 
 @runtime_checkable
 class StepSynthesizer(Protocol):
@@ -85,7 +90,11 @@ class EchoCancelledStepSpeaker:
         self._on_event = on_event
 
     def speak(self, text: str) -> CommandEvent | None:
-        """Speak the text; return a navigation command that interrupted it."""
+        """Speak the text; return a command that should drive the routine next.
+
+        None means the step was spoken to the end (or was only paused and
+        resumed), so the caller decides what happens next.
+        """
         interrupt: list[CommandEvent] = []
         audio = self._text_to_speech.synthesize(text)
         try:
@@ -93,9 +102,14 @@ class EchoCancelledStepSpeaker:
                 audio, on_input_frame=lambda frame: self._route(frame, interrupt)
             )
         except AudioDeviceError:
-            # Speaking failed, but the routine still holds its place, so the
-            # user can say "repeat" rather than losing the whole routine.
-            return None
+            # Report the failure as a stop rather than as a completed step. A
+            # completed step would auto-advance, silently reading a whole
+            # routine to a user who can hear none of it, and a device-level
+            # audio failure rarely clears itself mid-routine.
+            event = CommandEvent(command="stop", phrase=AUDIO_FAILED_PHRASE)
+            if self._on_event is not None:
+                self._on_event(event)
+            return event
         return interrupt[0] if interrupt else None
 
     def _route(self, frame: bytes, interrupt: list[CommandEvent]) -> None:
