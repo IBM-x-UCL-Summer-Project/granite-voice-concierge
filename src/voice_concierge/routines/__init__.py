@@ -5,7 +5,11 @@ from voice_concierge.routines.adapter import RoutineCommandAdapter
 from voice_concierge.routines.errors import RoutineError
 from voice_concierge.routines.factory import build_routine_adapter
 from voice_concierge.routines.fakes import StaticRoutineProvider
-from voice_concierge.routines.interfaces import RoutineProvider
+from voice_concierge.routines.interfaces import (
+    CommandWaiter,
+    RoutineProvider,
+    StepSpeaker,
+)
 from voice_concierge.routines.providers import (
     ChainedRoutineProvider,
     LLMRoutineProvider,
@@ -14,6 +18,7 @@ from voice_concierge.routines.providers import (
     parse_numbered_steps,
     serialize_routine,
 )
+from voice_concierge.routines.runner import RoutineRunner
 from voice_concierge.routines.session import RoutineSession
 from voice_concierge.routines.types import (
     Routine,
@@ -24,6 +29,7 @@ from voice_concierge.routines.types import (
 
 __all__ = [
     "ChainedRoutineProvider",
+    "CommandWaiter",
     "LLMRoutineProvider",
     "MemoryRoutineProvider",
     "Routine",
@@ -31,9 +37,11 @@ __all__ = [
     "RoutineError",
     "RoutineProvider",
     "RoutineResponse",
+    "RoutineRunner",
     "RoutineSession",
     "RoutineStep",
     "StaticRoutineProvider",
+    "StepSpeaker",
     "StepView",
     "build_routine_adapter",
     "deserialize_routine",
