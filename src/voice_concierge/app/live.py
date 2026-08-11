@@ -10,8 +10,10 @@ from typing import TextIO
 
 from voice_concierge.app.factory import build_voice_concierge_pipeline
 from voice_concierge.app.pipeline import VoiceConciergePipeline
+from voice_concierge.app.routines import RoutineTurnHandler
 from voice_concierge.app.types import AppPipelineState, AppTurnResult
 from voice_concierge.audio import CapturedAudio, PyAudioSource
+from voice_concierge.routines.intent import is_routine_request
 from voice_concierge.voice_input.interfaces import UtteranceCapturer, WakeWordListener
 from voice_concierge.voice_input.voice_activity_detector import (
     DEFAULT_CHUNK as DEFAULT_VAD_CHUNK,
@@ -48,6 +50,7 @@ class LiveAppConfig:
     wake_word_threshold: float = DEFAULT_WAKE_WORD_THRESHOLD
     download_wake_models: bool = False
     vad_max_wait_s: int = DEFAULT_MAX_WAIT_S
+    guided_routines: bool = True
 
     def __post_init__(self) -> None:
         if self.wake_word_threshold < 0:
@@ -78,6 +81,7 @@ def run_live_app(
     app_pipeline: VoiceConciergePipeline | None = None,
     wake_word_listener: WakeWordListener | None = None,
     utterance_capturer: UtteranceCapturer | None = None,
+    routine_handler: RoutineTurnHandler | None = None,
     stdout: TextIO = sys.stdout,
 ) -> AppPipelineState:
     """Run the live voice loop and return the final in-process app state."""
@@ -87,9 +91,33 @@ def run_live_app(
     owns_pipeline = app_pipeline is None
     capturer = utterance_capturer or build_utterance_capturer(runtime_config)
     state = AppPipelineState()
+    routines = routine_handler
+    resolved_routines = routines is not None
+
+    def get_routines() -> RoutineTurnHandler | None:
+        """Build the routine stack on first use, then reuse it.
+
+        Deferred because it loads a recognizer and a reasoning backend: a user
+        who never asks to be walked through anything should never pay for them,
+        and neither should a caller embedding this runner.
+        """
+        nonlocal routines, resolved_routines
+        if not resolved_routines:
+            routines = build_routine_turn_handler(runtime_config)
+            resolved_routines = True
+        return routines
 
     def handle_audio(audio: CapturedAudio) -> None:
         nonlocal state
+        # A guided routine takes over the conversation for many turns, so it is
+        # routed before reasoning; everything else is an ordinary turn.
+        transcript = _routine_transcript(runtime_config, pipeline, audio)
+        if transcript is not None:
+            handler = get_routines()
+            if handler is not None:
+                print(f"You: {transcript}", file=stdout)
+                print(handler.run(transcript), file=stdout)
+                return
         result = pipeline.process_audio(
             audio,
             state,
@@ -140,6 +168,78 @@ def build_live_app_pipeline(config: LiveAppConfig) -> VoiceConciergePipeline:
         audio_player=audio_player,
         load_memory=config.load_memory,
     )
+
+
+def _routine_transcript(
+    config: LiveAppConfig,
+    pipeline: VoiceConciergePipeline,
+    audio: CapturedAudio,
+) -> str | None:
+    """Return the transcript when this turn is asking to be guided, else None.
+
+    Deciding this costs only the transcription the turn needs anyway plus a
+    phrase match, so no model is loaded to answer it. None covers routines being
+    switched off and speech recognition being absent or failing: in each case
+    the ordinary turn runs and reports for itself, so a failure here never
+    costs the user their turn.
+    """
+    if not config.guided_routines:
+        return None
+    # getattr: callers may inject a pipeline stand-in without this attribute.
+    speech_to_text = getattr(pipeline, "speech_to_text", None)
+    if speech_to_text is None:
+        return None
+    try:
+        transcript = speech_to_text.transcribe(audio).text.strip()
+    except Exception:
+        return None
+    if not transcript or not is_routine_request(transcript):
+        return None
+    return transcript
+
+
+def build_routine_turn_handler(  # pragma: no cover - builds models and devices
+    config: LiveAppConfig,
+) -> RoutineTurnHandler | None:
+    """Assemble the guided-routine handler, or None if it cannot be built.
+
+    Guided routines need echo-cancelled playback (macOS only today) and the
+    reasoning backend. When either is missing this returns None rather than
+    raising, so the app still starts and simply answers normally.
+    """
+    from voice_concierge.app.routines import (
+        EchoCancelledStepSpeaker,
+        MicCommandWaiter,
+    )
+    from voice_concierge.audio.voice_processing_player import (
+        VoiceProcessingAudioPlayer,
+    )
+    from voice_concierge.command_control import (
+        StableCommandSpotter,
+        build_vosk_command_spotter,
+    )
+    from voice_concierge.memory import build_memory_manager
+    from voice_concierge.reasoning.factory import build_reasoning_engine
+    from voice_concierge.routines import RoutineRunner, build_routine_adapter
+    from voice_concierge.voice_output.factory import build_text_to_speech
+
+    try:
+        adapter = build_routine_adapter(
+            memory_manager=build_memory_manager(),
+            reasoning_engine=build_reasoning_engine(),
+        )
+        # One shared vocabulary spots playback and routine words; the stabilizer
+        # keeps a partial-result recognizer from firing twice or on noise.
+        spotter = StableCommandSpotter(build_vosk_command_spotter())
+        player = VoiceProcessingAudioPlayer()
+        speaker = EchoCancelledStepSpeaker(build_text_to_speech(), player, spotter)
+        waiter = MicCommandWaiter(
+            PyAudioSource(rate=DEFAULT_RATE, input_device_index=config.device_index),
+            spotter,
+        )
+    except Exception:
+        return None
+    return RoutineTurnHandler(adapter, RoutineRunner(adapter, speaker, waiter))
 
 
 def build_wake_word_listener(config: LiveAppConfig) -> WakeWordListener:
@@ -269,6 +369,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Handle one wake/capture attempt and exit.",
     )
+    parser.add_argument(
+        "--no-guided-routines",
+        action="store_true",
+        help="Answer step-by-step requests normally instead of guiding them.",
+    )
     return parser
 
 
@@ -286,6 +391,7 @@ def _config_from_args(args: argparse.Namespace) -> LiveAppConfig:
         wake_word_threshold=args.threshold,
         download_wake_models=args.download_wake_models,
         vad_max_wait_s=args.vad_max_wait_s,
+        guided_routines=not args.no_guided_routines,
     )
 
 
