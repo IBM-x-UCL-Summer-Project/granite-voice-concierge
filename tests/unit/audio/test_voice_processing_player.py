@@ -173,3 +173,26 @@ class TestPlaybackControlQueue:
         player._input_queue.put_nowait(b"b")
         player._drain_input()
         assert player._input_queue.empty()
+
+
+class TestEchoCancellationAvailability:
+    """The probe callers use before assembling a barge-in stack."""
+
+    @pytest.mark.unit
+    def test_reports_true_when_the_bindings_are_importable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import voice_concierge.audio.voice_processing_player as module
+
+        monkeypatch.setattr(module.importlib.util, "find_spec", lambda name: object())
+        assert module.echo_cancellation_available() is True
+
+    @pytest.mark.unit
+    def test_reports_false_when_the_bindings_are_missing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A caller must be able to fall back before it starts speaking."""
+        import voice_concierge.audio.voice_processing_player as module
+
+        monkeypatch.setattr(module.importlib.util, "find_spec", lambda name: None)
+        assert module.echo_cancellation_available() is False

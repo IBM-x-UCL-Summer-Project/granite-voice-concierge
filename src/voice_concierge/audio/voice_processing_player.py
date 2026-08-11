@@ -17,6 +17,7 @@ command control.
 
 # Standard library
 import contextlib
+import importlib.util
 import os
 import queue
 import threading
@@ -158,7 +159,15 @@ class VoiceProcessingAudioPlayer:
         in_rate = int(tap_format.sampleRate())
         self._drain_input()
 
+        capturing = on_input_frame is not None
+
         def tap(pcm_buffer: Any, when: Any) -> None:
+            # The tap stays installed either way, so voice processing keeps its
+            # microphone reference for echo cancellation, but with no consumer
+            # there is no point converting a block or queueing one that nothing
+            # would ever drain.
+            if not capturing:
+                return
             frames = int(pcm_buffer.frameLength())
             channel_data = pcm_buffer.floatChannelData()
             if frames == 0 or channel_data is None:
@@ -196,6 +205,17 @@ class VoiceProcessingAudioPlayer:
                 last = now
         finally:
             _teardown(engine, input_node, player)
+
+
+def echo_cancellation_available() -> bool:
+    """True when the macOS voice-processing bindings can be imported.
+
+    Callers assembling a barge-in stack should check this first. The player
+    itself only touches AVFoundation inside play(), so constructing one proves
+    nothing, and a caller that skipped this check would appear to build a
+    working stack and then fail on the first spoken word.
+    """
+    return importlib.util.find_spec("AVFoundation") is not None
 
 
 def _format_error(err: Any) -> str:
