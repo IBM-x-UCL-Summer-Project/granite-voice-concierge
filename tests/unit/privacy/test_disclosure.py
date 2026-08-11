@@ -159,3 +159,18 @@ class TestFactory:
 
         assert memory_db.name.endswith(".sqlite3")
         assert vector_db.name.endswith(".sqlite3")
+
+
+@pytest.mark.unit
+class TestLayerCoverage:
+    """Every layer the system writes must be explained, not just named."""
+
+    @pytest.mark.parametrize(
+        "layer",
+        ["episodic", "semantic", "procedural", "emotional", "reflective", "profile"],
+    )
+    def test_every_written_layer_has_a_plain_english_description(
+        self, layer: str
+    ) -> None:
+        assert layer in LAYER_DESCRIPTIONS
+        assert StoredMemory(1, "a", layer).layer_description != f"Stored as '{layer}'."

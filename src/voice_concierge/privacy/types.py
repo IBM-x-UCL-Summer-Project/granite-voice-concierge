@@ -4,11 +4,17 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-#: Layers the memory system stores, with what each one means in plain English.
+#: Every layer the memory system writes, with what each means in plain English.
+#: Covers the five classifications the memory validator assigns plus "profile",
+#: which the app layer writes for personally relevant details. An unlisted layer
+#: is still shown by name rather than hidden, so nothing stored is undisclosed.
 LAYER_DESCRIPTIONS: dict[str, str] = {
-    "episodic": "Things that happened, such as something you did or said.",
-    "semantic": "Facts about you, such as a preference or a name.",
-    "procedural": "How you like things done, such as the steps of a routine.",
+    "episodic": "Something that happened, with a time or a place.",
+    "semantic": "A fact or preference, such as a food you like.",
+    "procedural": "How something is done, such as the steps of a routine.",
+    "emotional": "How you felt about something.",
+    "reflective": "A thought or conclusion drawn from a conversation.",
+    "profile": "A personal detail about you, such as a list you keep.",
 }
 
 
