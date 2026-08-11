@@ -395,3 +395,102 @@ def test_unusable_transcript_falls_back_to_process_audio() -> None:
 
     assert pipeline.transcript_calls == []
     assert len(pipeline.calls) == 1
+
+
+class _FakeReminders:
+    """Reminder handler stub recording what it was asked to run."""
+
+    def __init__(self, *, handles: bool = True) -> None:
+        self._handles = handles
+        self.ran: list[str] = []
+
+    def handles(self, transcript: str) -> bool:
+        return self._handles
+
+    def run(self, transcript: str) -> str:
+        self.ran.append(transcript)
+        return "Timer set for 10 minutes."
+
+
+def _run_reminder_turn(pipeline, reminders, stdout, *, config=None):
+    return live.run_live_app(
+        config
+        or live.LiveAppConfig(
+            use_wake_word=False, one_shot=True, synthesize=False, play=False
+        ),
+        app_pipeline=pipeline,
+        utterance_capturer=FakeUtteranceCapturer(),
+        reminder_handler=reminders,
+        stdout=stdout,
+    )
+
+
+def test_a_reminder_request_is_routed_to_the_reminder_handler() -> None:
+    pipeline = _RoutinePipeline(_FakeStt("remind me to stretch in 10 minutes"))
+    reminders = _FakeReminders()
+    stdout = io.StringIO()
+
+    _run_reminder_turn(pipeline, reminders, stdout)
+
+    assert reminders.ran == ["remind me to stretch in 10 minutes"]
+    assert pipeline.calls == []  # the ordinary reasoning turn was skipped
+    assert "Timer set for 10 minutes." in stdout.getvalue()
+
+
+def test_an_ordinary_turn_is_not_routed_to_reminders() -> None:
+    pipeline = _RoutinePipeline(_FakeStt("what is the weather"))
+    reminders = _FakeReminders()
+
+    _run_reminder_turn(pipeline, reminders, io.StringIO())
+
+    assert reminders.ran == []
+    assert len(pipeline.calls) == 1
+
+
+def test_an_unavailable_reminder_stack_falls_back_to_a_normal_turn(
+    monkeypatch,
+) -> None:
+    """A reminder store that cannot open must not cost the user their turn."""
+    monkeypatch.setattr(live, "build_reminder_turn_handler", lambda config: None)
+    monkeypatch.setattr(live, "_start_reminder_runner", lambda *a, **k: None)
+    pipeline = _RoutinePipeline(_FakeStt("remind me to stretch in 10 minutes"))
+
+    _run_reminder_turn(pipeline, None, io.StringIO())
+
+    assert len(pipeline.calls) == 1
+
+
+def test_disabling_reminders_leaves_the_turn_ordinary(monkeypatch) -> None:
+    builds: list[str] = []
+    monkeypatch.setattr(
+        live, "build_reminder_turn_handler", lambda config: builds.append("x")
+    )
+    monkeypatch.setattr(live, "_start_reminder_runner", lambda *a, **k: None)
+    pipeline = _RoutinePipeline(_FakeStt("remind me to stretch in 10 minutes"))
+
+    _run_reminder_turn(
+        pipeline,
+        None,
+        io.StringIO(),
+        config=live.LiveAppConfig(
+            use_wake_word=False,
+            one_shot=True,
+            synthesize=False,
+            play=False,
+            reminders=False,
+            guided_routines=False,
+        ),
+    )
+
+    assert builds == []
+    assert len(pipeline.calls) == 1
+
+
+def test_reminders_can_be_disabled_from_the_command_line() -> None:
+    config = live._config_from_args(live._build_parser().parse_args(["--no-reminders"]))
+
+    assert config.reminders is False
+
+
+def test_reminders_are_on_by_default() -> None:
+    assert live._config_from_args(live._build_parser().parse_args([])).reminders is True
