@@ -48,19 +48,23 @@ class RoutineRunner:
         """Speak the opening response, then run the routine to completion.
 
         Returns the last thing said, so a caller can display or log it. Returns
-        as soon as the routine ends (finished or stopped) or a paused routine is
-        left idle long enough that the user has plainly walked away.
+        as soon as there is no active routine left to steer, which covers three
+        cases: the routine finished or was stopped, it never started at all (an
+        unknown request or a backend failure, where the opening line is an
+        apology), and a paused routine left idle long enough that the user has
+        plainly walked away.
         """
         while True:
             event = self._speaker.speak(response)
+            if self._adapter.status not in _ACTIVE:
+                # Nothing to steer, so do not hold the microphone open waiting
+                # for a command that could not act on anything.
+                return response
             if event is None:
                 event = self._await_next()
                 if event is None:
                     return response  # idle: hand control back to the caller
             response = self._adapter.handle_command(event)
-            if self._adapter.status not in _ACTIVE:
-                self._speaker.speak(response)  # say the closing line, then stop
-                return response
 
     def _await_next(self) -> CommandEvent | None:
         """Listen after a step; fall back to advancing when nothing is said."""

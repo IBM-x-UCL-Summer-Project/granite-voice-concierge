@@ -5,6 +5,7 @@ import pytest
 # Local
 from voice_concierge.command_control.types import CommandEvent
 from voice_concierge.routines.adapter import RoutineCommandAdapter
+from voice_concierge.routines.errors import RoutineError
 from voice_concierge.routines.fakes import StaticRoutineProvider
 from voice_concierge.routines.interfaces import CommandWaiter, StepSpeaker
 from voice_concierge.routines.runner import RoutineRunner
@@ -167,3 +168,32 @@ class TestConformance:
         RoutineRunner(adapter, speaker, waiter).run(adapter.start_routine("tea"))
 
         assert waiter.timeouts[0] == 6.0  # DEFAULT_AUTO_ADVANCE_DELAY
+
+
+@pytest.mark.unit
+class TestNoActiveRoutine:
+    """A run that never started must not hold the microphone open."""
+
+    def test_unknown_routine_returns_without_listening(self) -> None:
+        adapter = RoutineCommandAdapter(StaticRoutineProvider({}))
+        speaker, waiter = _Speaker(), _Waiter()
+        opening = adapter.start_routine("something we do not have")
+
+        last = _runner(adapter, speaker, waiter).run(opening)
+
+        assert last == "I don't have a routine for that."
+        assert speaker.said == [last]  # the apology was spoken once
+        assert waiter.timeouts == []  # and nothing waited for a command
+
+    def test_backend_failure_returns_without_listening(self) -> None:
+        class _Failing:
+            def get_routine(self, request: str):
+                raise RoutineError("backend down")
+
+        adapter = RoutineCommandAdapter(_Failing())
+        speaker, waiter = _Speaker(), _Waiter()
+
+        last = _runner(adapter, speaker, waiter).run(adapter.start_routine("tea"))
+
+        assert last == "I couldn't load that routine right now."
+        assert waiter.timeouts == []
