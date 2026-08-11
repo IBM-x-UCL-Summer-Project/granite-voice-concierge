@@ -21,8 +21,27 @@ Approach B — a **voice-free core** plus a **thin voice adapter**:
   `command_control` `CommandEvent` onto session calls, owns ask-then-default
   disambiguation, and degrades a backend failure to a generic spoken line.
 
+- `RoutineRunner` (`runner.py`) — decides *when* the next command happens.
+  Reads a step, allows a short window to steer, and auto-advances on silence; a
+  paused routine waits instead. Audio sits behind the `StepSpeaker` and
+  `CommandWaiter` protocols, so the whole policy is tested with fakes.
+- `is_routine_request` (`intent.py`) — the gate deciding which turns become
+  routines. An explicit phrase list, not a model call: `LLMRoutineProvider` will
+  produce steps for *any* request, so routing every turn through it would take
+  over the assistant.
+
 Ownership: `command_control` = *hear a command*; `routines` = *what a routine
-means*; `app/` = *wire them together*.
+means and when it moves*; `app/` = *wire them to real audio*.
+
+## In the app
+
+`app/routines.py` supplies the two audio-facing pieces and is what
+`voice_concierge.app.live` builds: `EchoCancelledStepSpeaker` (speaks a step
+through the echo-cancelled player with the mic live, so a command can barge in)
+and `MicCommandWaiter` (listens in the quiet gap between steps, where a plain
+input stream is safe). `RoutineTurnHandler` joins the gate to the runner. The
+stack is built lazily on the first guided request, so a user who never asks for
+one never loads the recognizer or the reasoning backend.
 
 ## Usage
 
