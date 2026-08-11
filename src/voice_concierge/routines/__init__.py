@@ -5,6 +5,7 @@ from voice_concierge.routines.adapter import RoutineCommandAdapter
 from voice_concierge.routines.errors import RoutineError
 from voice_concierge.routines.factory import build_routine_adapter
 from voice_concierge.routines.fakes import StaticRoutineProvider
+from voice_concierge.routines.intent import ROUTINE_TRIGGERS, is_routine_request
 from voice_concierge.routines.interfaces import (
     CommandWaiter,
     RoutineProvider,
@@ -28,6 +29,7 @@ from voice_concierge.routines.types import (
 )
 
 __all__ = [
+    "ROUTINE_TRIGGERS",
     "ChainedRoutineProvider",
     "CommandWaiter",
     "LLMRoutineProvider",
@@ -45,6 +47,7 @@ __all__ = [
     "StepView",
     "build_routine_adapter",
     "deserialize_routine",
+    "is_routine_request",
     "parse_numbered_steps",
     "serialize_routine",
 ]
