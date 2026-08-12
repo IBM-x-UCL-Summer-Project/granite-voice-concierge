@@ -35,6 +35,7 @@ from voice_concierge.command_control.stabilizer import StableCommandSpotter
 from voice_concierge.command_control.transcript_parser import TranscriptCommandParser
 from voice_concierge.command_control.types import (
     CommandEvent,
+    PacingCommand,
     PlaybackCommand,
     RoutineCommand,
     VoiceCommand,
@@ -53,6 +54,7 @@ __all__ = [
     "FakeCommandSpotter",
     "FakePhraseRecognizer",
     "FakePlaybackController",
+    "PacingCommand",
     "PhraseCommandSpotter",
     "PhraseRecognizer",
     "PlaybackCommand",

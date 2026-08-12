@@ -10,8 +10,13 @@ PlaybackCommand = Literal["stop", "pause", "resume"]
 # Routine navigation commands a spotted voice command may also carry.
 RoutineCommand = Literal["next", "back", "repeat"]
 
+# Delivery commands that change how speech is spoken rather than what is said.
+PacingCommand = Literal["slower", "faster"]
+
 # Any command a spotted voice event can represent.
-VoiceCommand = Literal["stop", "pause", "resume", "next", "back", "repeat"]
+VoiceCommand = Literal[
+    "stop", "pause", "resume", "next", "back", "repeat", "slower", "faster"
+]
 
 
 @dataclass(frozen=True)
