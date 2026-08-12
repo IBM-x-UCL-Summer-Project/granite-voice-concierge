@@ -59,6 +59,21 @@ cancellation, so the assistant does not hear its own speech as a command. It
 needs the `macos-aec` extra; without it the app falls back to answering
 normally. Use `--no-guided-routines` to switch the behaviour off.
 
+### Browser UI
+
+Run the pipeline-connected browser UI:
+
+```bash
+source .venv/bin/activate
+python -m voice_concierge.app.web
+```
+
+Add `--voice-io` for browser recording/STT and response TTS, `--memory` for
+persistent local memory, or `--demo` to review the UI without Ollama and audio
+models. If the virtual environment has not been installed yet, run
+`python -m pip install -e .` after activating it. See
+[the web UI guide](web/README.md) for details.
+
 ## Project Documentation
 
 - [Repository Structure Guide](docs/repository-structure.md)

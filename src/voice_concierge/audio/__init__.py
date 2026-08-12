@@ -1,20 +1,11 @@
 """Shared audio primitives for the voice pipeline."""
 
-from voice_concierge.audio.duplex_player import DuplexAudioPlayer
+from __future__ import annotations
+
+from typing import Any
+
 from voice_concierge.audio.errors import AudioDeviceError, AudioError
-from voice_concierge.audio.player import (
-    AudioPlayer,
-    FakeAudioPlayer,
-    SoundDevicePlayer,
-)
-from voice_concierge.audio.source import (
-    AudioSource,
-    FakeAudioSource,
-    PyAudioSource,
-)
-from voice_concierge.audio.streaming_player import StreamingAudioPlayer
 from voice_concierge.audio.types import CapturedAudio
-from voice_concierge.audio.voice_processing_player import VoiceProcessingAudioPlayer
 
 __all__ = [
     "AudioDeviceError",
@@ -30,3 +21,27 @@ __all__ = [
     "StreamingAudioPlayer",
     "VoiceProcessingAudioPlayer",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    modules = {
+        "AudioPlayer": "voice_concierge.audio.player",
+        "DuplexAudioPlayer": "voice_concierge.audio.duplex_player",
+        "FakeAudioPlayer": "voice_concierge.audio.player",
+        "SoundDevicePlayer": "voice_concierge.audio.player",
+        "AudioSource": "voice_concierge.audio.source",
+        "FakeAudioSource": "voice_concierge.audio.source",
+        "PyAudioSource": "voice_concierge.audio.source",
+        "StreamingAudioPlayer": "voice_concierge.audio.streaming_player",
+        "VoiceProcessingAudioPlayer": (
+            "voice_concierge.audio.voice_processing_player"
+        ),
+    }
+    module_name = modules.get(name)
+    if module_name is None:
+        raise AttributeError(name)
+    from importlib import import_module
+
+    value = getattr(import_module(module_name), name)
+    globals()[name] = value
+    return value
