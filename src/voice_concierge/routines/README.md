@@ -66,3 +66,18 @@ defaulting to the most recent if the reply does not name one.
   the provider chain).
 - **Deferred:** creating/editing routines by voice; timers inside a step (issue #42);
   a GUI.
+
+
+## Changing the speaking pace
+
+Saying **"slower"** or **"faster"** while a step is being read changes the
+speaking rate and reads the step again at the new speed. The audio for a step is
+rendered before playback starts, so its speed cannot be altered mid-sentence;
+re-reading is both the only way to apply the new rate and what someone asking to
+hear it slower actually wants.
+
+The rate moves along a fixed ladder (`voice_output/pacing.py`) rather than
+scaling freely, so each step is noticeable but not jarring and the voice can
+never become unintelligible. At either end the assistant says so ("That's as
+slow as I can go") rather than staying silent, which would read as the command
+not having been heard.
