@@ -7,7 +7,8 @@ two things RoutineRunner needs, both of which listen while a routine is running:
   player, so the microphone stays live during playback and the assistant does
   not hear itself. A playback word (pause/continue) is applied to the speech, a
   navigation word (next/back/repeat/stop) cuts the speech short and is handed
-  back to the runner.
+  back to the runner, and a pacing word (slower/faster) changes the rate and
+  has the step read again at the new speed.
 * MicCommandWaiter listens in the quiet gap after a step. Nothing is playing
   there, so a plain input stream is safe; the concurrent-stream CoreAudio -50
   only bites while output is open.
@@ -36,6 +37,14 @@ from voice_concierge.routines.runner import RoutineRunner
 #: Words that act on the speech itself rather than moving through the routine.
 PLAYBACK_HOLD = frozenset({"pause", "resume"})
 
+#: Words that change how the step is spoken rather than which step is spoken.
+PACING = frozenset({"slower", "faster"})
+
+#: Phrase reported when a pacing word re-reads the step at the new speed. It
+#: stands in for a spoken "repeat" so the routine holds its place, and is
+#: distinct so a log shows the reading was restarted, not requested again.
+PACE_CHANGED_PHRASE = "(pace changed)"
+
 #: Phrase reported when playback failed rather than a command being spoken. It
 #: stands in for a spoken "stop" so the runner ends the routine, and is distinct
 #: so a log makes clear nobody actually said it.
@@ -48,6 +57,17 @@ class StepSynthesizer(Protocol):
 
     def synthesize(self, text: str) -> CapturedAudio:
         """Render the text to audio."""
+
+
+@runtime_checkable
+class PaceControl(Protocol):
+    """The slice of a paced voice needed to step the speaking rate."""
+
+    def slower(self) -> str:
+        """Speak more slowly from now on; returns what to say about it."""
+
+    def faster(self) -> str:
+        """Speak faster from now on; returns what to say about it."""
 
 
 @runtime_checkable
@@ -81,12 +101,14 @@ class EchoCancelledStepSpeaker:
         player: ListeningPlayer,
         spotter: CommandSpotter,
         *,
+        pace: PaceControl | None = None,
         on_event: Callable[[CommandEvent], None] | None = None,
     ) -> None:
         self._text_to_speech = text_to_speech
         self._player = player
         self._spotter = spotter
         self._dispatcher = CommandDispatcher(player)
+        self._pace = pace
         self._on_event = on_event
 
     def speak(self, text: str) -> CommandEvent | None:
@@ -122,8 +144,27 @@ class EchoCancelledStepSpeaker:
         if event.command in PLAYBACK_HOLD:
             self._dispatcher.dispatch(event)  # hold or resume the speech
             return
+        if event.command in PACING:
+            interrupt.append(self._change_pace(event))
+            self._player.stop()
+            return
         interrupt.append(event)
         self._player.stop()
+
+    def _change_pace(self, event: CommandEvent) -> CommandEvent:
+        """Apply a pacing word and ask for the step to be read again.
+
+        The audio for this step was rendered before playback began, so its speed
+        cannot be changed mid-sentence. Re-reading the same step is both the only
+        way to apply the new rate and what the user is asking for: they want to
+        hear it again, slower.
+        """
+        if self._pace is not None:
+            if event.command == "slower":
+                self._pace.slower()
+            else:
+                self._pace.faster()
+        return CommandEvent(command="repeat", phrase=PACE_CHANGED_PHRASE)
 
 
 class MicCommandWaiter:

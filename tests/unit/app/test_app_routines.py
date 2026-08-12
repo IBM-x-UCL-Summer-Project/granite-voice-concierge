@@ -6,9 +6,11 @@ import pytest
 # Local
 from voice_concierge.app.routines import (
     AUDIO_FAILED_PHRASE,
+    PACE_CHANGED_PHRASE,
     EchoCancelledStepSpeaker,
     ListeningPlayer,
     MicCommandWaiter,
+    PaceControl,
     RoutineTurnHandler,
     StepSynthesizer,
 )
@@ -280,3 +282,108 @@ class TestProtocolConformance:
         assert isinstance(_Tts(), StepSynthesizer)
         assert isinstance(_Player(), ListeningPlayer)
         assert isinstance(_Source(), AudioSource)
+
+
+class _Pace:
+    """Records pace changes, standing in for a PacedTextToSpeech."""
+
+    def __init__(self) -> None:
+        self.moves: list[str] = []
+
+    def slower(self) -> str:
+        self.moves.append("slower")
+        return "Speaking more slowly."
+
+    def faster(self) -> str:
+        self.moves.append("faster")
+        return "Speaking faster."
+
+
+@pytest.mark.unit
+class TestPacing:
+    """Saying "slower" or "faster" changes the rate and re-reads the step."""
+
+    def test_slower_changes_the_rate(self) -> None:
+        pace = _Pace()
+        speaker = EchoCancelledStepSpeaker(
+            _Tts(), _Player(frames=1), _Spotter([_event("slower")]), pace=pace
+        )
+
+        speaker.speak("step one")
+
+        assert pace.moves == ["slower"]
+
+    def test_faster_changes_the_rate(self) -> None:
+        pace = _Pace()
+        speaker = EchoCancelledStepSpeaker(
+            _Tts(), _Player(frames=1), _Spotter([_event("faster")]), pace=pace
+        )
+
+        speaker.speak("step one")
+
+        assert pace.moves == ["faster"]
+
+    def test_a_pacing_word_asks_for_the_step_again(self) -> None:
+        """Rendered audio cannot change speed, so the step is re-read."""
+        speaker = EchoCancelledStepSpeaker(
+            _Tts(), _Player(frames=1), _Spotter([_event("slower")]), pace=_Pace()
+        )
+
+        event = speaker.speak("step one")
+
+        assert event is not None
+        assert event.command == "repeat"
+        assert event.phrase == PACE_CHANGED_PHRASE  # nobody said "repeat"
+
+    def test_a_pacing_word_cuts_the_current_reading(self) -> None:
+        player = _Player(frames=1)
+        speaker = EchoCancelledStepSpeaker(
+            _Tts(), player, _Spotter([_event("slower")]), pace=_Pace()
+        )
+
+        speaker.speak("step one")
+
+        assert "stop" in player.calls
+
+    def test_pacing_does_not_move_through_the_routine(self) -> None:
+        """ "Slower" must re-read the same step, not advance past it."""
+        routine = Routine(
+            name="tea", steps=(RoutineStep("step one"), RoutineStep("step two"))
+        )
+        adapter = RoutineCommandAdapter(StaticRoutineProvider({"tea": routine}))
+        speaker = EchoCancelledStepSpeaker(
+            _Tts(), _Player(frames=1), _Spotter([_event("slower")]), pace=_Pace()
+        )
+        opening = adapter.start_routine("tea")
+
+        said = adapter.handle_command(speaker.speak(opening))
+
+        assert "Step 1 of 2" in said  # still on the first step
+
+    def test_pacing_without_a_pace_control_still_re_reads(self) -> None:
+        """A speaker built without pacing must not crash on the word."""
+        speaker = EchoCancelledStepSpeaker(
+            _Tts(), _Player(frames=1), _Spotter([_event("slower")])
+        )
+
+        event = speaker.speak("step one")
+
+        assert event is not None
+        assert event.command == "repeat"
+
+    def test_a_pacing_word_reaches_the_observer(self) -> None:
+        seen: list[CommandEvent] = []
+        speaker = EchoCancelledStepSpeaker(
+            _Tts(),
+            _Player(frames=1),
+            _Spotter([_event("faster")]),
+            pace=_Pace(),
+            on_event=seen.append,
+        )
+
+        speaker.speak("step one")
+
+        assert [event.command for event in seen] == ["faster"]  # as it was heard
+
+    def test_the_pace_fake_matches_the_protocol(self) -> None:
+        assert isinstance(_Pace(), PaceControl)
