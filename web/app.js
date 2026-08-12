@@ -35,7 +35,6 @@ const state = {
   settings: loadSettings(),
   settingsDraft: null,
   setupStep: 0,
-  turn: 0,
   running: false,
   capabilities: { text_input: false, voice_input: false, voice_output: false },
   recorder: null,
@@ -52,14 +51,6 @@ const elements = {
   runtimeLabel: document.querySelector("#runtime-label"),
   runtimeDot: document.querySelector("#runtime-dot"),
   runtimeModel: document.querySelector("#runtime-model"),
-  pipelineList: document.querySelector("#pipeline-list"),
-  turnCounter: document.querySelector("#turn-counter"),
-  statusOrb: document.querySelector("#status-orb"),
-  turnStatusLabel: document.querySelector("#turn-status-label"),
-  turnStatusDetail: document.querySelector("#turn-status-detail"),
-  turnLatency: document.querySelector("#turn-latency"),
-  stateJson: document.querySelector("#state-json"),
-  copyState: document.querySelector("#copy-state"),
   toast: document.querySelector("#toast"),
   themeButton: document.querySelector("#theme-button"),
   settingsButton: document.querySelector("#settings-button"),
@@ -257,10 +248,6 @@ function applyPersonalSettings() {
     text_first: "Transcript input",
   };
   elements.interactionLabel.textContent = interactionLabels[state.settings.interaction_mode];
-  setText(
-    "#inspector-wake-setting",
-    `Web bypass · ${state.settings.wake_word_sensitivity}%`,
-  );
   elements.settingsButton.classList.toggle("is-configured", state.settings.setup_complete);
   elements.settingsButton.setAttribute(
     "aria-label",
@@ -377,34 +364,13 @@ function speakText(
   window.speechSynthesis.speak(utterance);
 }
 
-function syntaxHighlight(value) {
-  return escapeHtml(JSON.stringify(value, null, 2))
-    .replace(/(&quot;.*?&quot;)(?=\s*:)/g, '<span class="json-key">$1</span>')
-    .replace(/:\s*(&quot;.*?&quot;)/g, ': <span class="json-string">$1</span>')
-    .replace(/\bnull\b/g, '<span class="json-null">null</span>');
-}
-
 function renderState() {
-  elements.stateJson.innerHTML = syntaxHighlight(state.pipeline);
   elements.modeSelect.value = state.pipeline.context.mode;
-  setText("#inspector-mode", state.pipeline.context.mode);
-  setText("#inspector-pending-mode", valueOrNull(state.pipeline.context.pending_mode));
-  setText("#inspector-verbosity", state.pipeline.context.accessibility.verbosity);
-  setText("#inspector-speech-pace", state.pipeline.context.accessibility.speech_pace);
-  setText("#inspector-memory-scope", state.pipeline.pending_memory_scope || "none");
-  setText(
-    "#inspector-memory-action",
-    state.pipeline.pending_memory_action?.action || "null",
-  );
 }
 
 function setText(selector, value) {
   const node = document.querySelector(selector);
   if (node) node.textContent = String(value);
-}
-
-function valueOrNull(value) {
-  return value === null || value === undefined || value === "" ? "null" : value;
 }
 
 function escapeHtml(value) {
@@ -414,35 +380,6 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
-}
-
-function capitalize(value) {
-  return value.charAt(0).toUpperCase() + value.slice(1);
-}
-
-function setStage(stageName, status, label) {
-  const stage = document.querySelector(`[data-stage="${stageName}"]`);
-  stage.classList.remove("is-idle", "is-running", "is-complete", "is-error", "is-skipped");
-  stage.classList.add(`is-${status}`);
-  stage.querySelector(".stage-state").textContent = label || capitalize(status);
-}
-
-function resetStages() {
-  document.querySelectorAll(".pipeline-stage").forEach((stage) => {
-    stage.classList.remove("is-running", "is-complete", "is-error", "is-skipped");
-    stage.classList.add("is-idle");
-    stage.querySelector(".stage-state").textContent = "Idle";
-  });
-}
-
-function openStage(stageName) {
-  document.querySelectorAll(".pipeline-stage").forEach((stage) => {
-    const button = stage.querySelector(":scope > button");
-    const detail = stage.querySelector(":scope > .stage-detail");
-    const expanded = stage.dataset.stage === stageName;
-    button.setAttribute("aria-expanded", String(expanded));
-    detail.hidden = !expanded;
-  });
 }
 
 function appendMessage(role, text, options = {}) {
@@ -625,8 +562,6 @@ async function startVoiceRecording() {
     elements.microphoneButton.classList.add("is-recording");
     elements.microphoneButton.setAttribute("aria-label", "Stop and send voice input");
     elements.microphoneButton.title = "Stop and send";
-    elements.turnStatusLabel.textContent = "Listening";
-    elements.turnStatusDetail.textContent = "Select the microphone again when you finish";
   } catch (error) {
     showToast(error.name === "NotAllowedError"
       ? "Microphone permission was not allowed"
@@ -716,24 +651,6 @@ function encodeWavBase64(samples, sampleRate) {
   return window.btoa(binary);
 }
 
-function updateInspector(response) {
-  setText("#inspector-transcript", response.transcript?.text || "—");
-  setText("#inspector-mode", response.context.mode);
-  setText("#inspector-pending-mode", valueOrNull(response.state.context.pending_mode));
-  setText("#inspector-verbosity", response.state.context.accessibility.verbosity);
-  setText("#inspector-speech-pace", response.state.context.accessibility.speech_pace);
-  setText("#inspector-command", valueOrNull(response.context.command_action));
-  setText("#inspector-confirmation", response.context.needs_confirmation);
-  setText("#inspector-memory-scope", response.state.pending_memory_scope || "none");
-  setText("#inspector-memory-action", response.state.pending_memory_action?.action || "null");
-  setText("#inspector-memory-attempted", response.memory_operation.attempted);
-  setText("#inspector-memory-result", response.memory_operation.reason || "—");
-  setText("#inspector-confidence", response.reasoning?.confidence || "not invoked");
-  setText("#inspector-reasoning-confirmation", response.reasoning?.needs_confirmation ?? "—");
-  setText("#inspector-mode-suggestion", valueOrNull(response.reasoning?.mode_suggestion));
-  setText("#inspector-audio", response.audio ? "available" : "null");
-}
-
 async function runTurn(input) {
   if (state.running) return;
   const isAudio = typeof input === "object" && input.kind === "audio";
@@ -741,27 +658,12 @@ async function runTurn(input) {
   if (!isAudio && !transcript) return;
 
   state.running = true;
-  state.turn += 1;
-  const startedAt = performance.now();
-  elements.turnCounter.textContent = `TURN ${String(state.turn).padStart(2, "0")}`;
   if (!isAudio) {
     elements.input.value = "";
     autoSizeInput();
     appendMessage("user", transcript);
   }
   updateSendState();
-  resetStages();
-  setStage("input", "running", isAudio ? "Audio" : "Text");
-  ["context", "memory", "reasoning", "output"].forEach((stageName) => {
-    setStage(stageName, "running", "Queued");
-  });
-  openStage("input");
-  elements.statusOrb.className = "status-orb is-running";
-  elements.turnStatusLabel.textContent = isAudio ? "Transcribing voice input" : "Processing turn";
-  elements.turnStatusDetail.textContent = isAudio
-    ? "Recorded WAV sent to the application pipeline"
-    : "Transcript sent with the complete pipeline state";
-  elements.turnLatency.textContent = "…";
 
   try {
     const response = isAudio
@@ -775,53 +677,11 @@ async function runTurn(input) {
 
     state.pipeline = response.state;
     saveState();
-    updateInspector(response);
-
-    const errors = new Set(response.errors);
-    setStage("input", errors.has("stt_failed") ? "error" : "complete", response.transcript ? "Done" : "No transcript");
-    setStage("context", "complete", response.context.mode_changed ? "Changed" : "Done");
-    setStage(
-      "memory",
-      errors.has("memory_retrieval_failed") || errors.has("memory_action_failed") ? "error" : "complete",
-      response.memory_operation.attempted ? (response.memory_operation.succeeded ? "Saved" : "Failed") : "Done",
-    );
-    setStage(
-      "reasoning",
-      response.reasoning ? (errors.has("reasoning_failed") ? "error" : "complete") : "skipped",
-      response.reasoning ? (errors.has("reasoning_failed") ? "Fallback" : "Done") : "Bypass",
-    );
-    setStage(
-      "output",
-      errors.has("tts_failed") || errors.has("playback_failed") ? "error" : "complete",
-      response.audio?.wav_base64 ? "Audio" : "Text",
-    );
 
     renderConversationHistory(response);
-
-    const waiting = response.context.needs_confirmation
-      || response.reasoning?.needs_confirmation;
-    elements.statusOrb.className = response.errors.length
-      ? "status-orb is-error"
-      : "status-orb is-complete";
-    elements.turnStatusLabel.textContent = response.errors.length
-      ? "Completed with fallback"
-      : "Turn complete";
-    elements.turnStatusDetail.textContent = response.errors.length
-      ? response.errors.join(", ")
-      : waiting
-        ? "Waiting for confirmation"
-        : "Pipeline state and conversation history persisted";
   } catch (error) {
-    setStage("input", "error", "Failed");
-    ["context", "memory", "reasoning", "output"].forEach((stageName) => {
-      setStage(stageName, "skipped", "Unavailable");
-    });
-    elements.statusOrb.className = "status-orb is-error";
-    elements.turnStatusLabel.textContent = "Pipeline unavailable";
-    elements.turnStatusDetail.textContent = error.message;
     appendPipelineError(error.message);
   } finally {
-    elements.turnLatency.textContent = `${Math.round(performance.now() - startedAt)} ms`;
     state.running = false;
     updateSendState();
   }
@@ -878,8 +738,6 @@ function renderConversationHistory(response = null) {
 
 function restoreConversationHistory() {
   renderConversationHistory();
-  state.turn = state.pipeline.conversation_history.length;
-  elements.turnCounter.textContent = `TURN ${String(state.turn).padStart(2, "0")}`;
 }
 
 async function connectPipeline() {
@@ -902,8 +760,6 @@ async function connectPipeline() {
     elements.runtimeLabel.textContent = "Pipeline offline";
     elements.runtimeModel.textContent = "unavailable";
     elements.runtimeDot.classList.add("is-offline");
-    elements.turnStatusLabel.textContent = "Pipeline offline";
-    elements.turnStatusDetail.textContent = "Start with python -m voice_concierge.app.web";
   }
   updateSendState();
 }
@@ -940,15 +796,6 @@ document.querySelectorAll("[data-prompt]").forEach((button) => {
   });
 });
 
-elements.pipelineList.addEventListener("click", (event) => {
-  const button = event.target.closest(".pipeline-stage > button");
-  if (!button) return;
-  const detail = button.nextElementSibling;
-  const expanded = button.getAttribute("aria-expanded") === "true";
-  button.setAttribute("aria-expanded", String(!expanded));
-  detail.hidden = expanded;
-});
-
 elements.conversation.addEventListener("click", (event) => {
   const action = event.target.closest("[data-confirm]");
   if (action) {
@@ -975,15 +822,6 @@ elements.microphoneButton.addEventListener("click", async () => {
   } else {
     await startVoiceRecording();
     updateSendState();
-  }
-});
-
-elements.copyState.addEventListener("click", async () => {
-  try {
-    await navigator.clipboard.writeText(JSON.stringify(state.pipeline, null, 2));
-    showToast("Pipeline state copied");
-  } catch {
-    showToast("Copy is unavailable in this browser");
   }
 });
 

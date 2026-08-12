@@ -75,6 +75,13 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
             return
         super().do_GET()
 
+    def end_headers(self) -> None:
+        """Prevent stale HTML, JavaScript, and CSS from being mixed in development."""
+
+        if not self.path.startswith("/api/"):
+            self.send_header("Cache-Control", "no-store")
+        super().end_headers()
+
     def do_POST(self) -> None:  # noqa: N802
         handlers = {
             "/api/turn": handle_turn,
@@ -196,11 +203,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.demo
         else load_model_selection(DEFAULT_MODEL_SELECTION_PATH).model
     )
-    pipeline = build_web_pipeline(
-        load_memory=args.memory,
-        load_voice_io=voice_io_enabled,
-        demo=args.demo,
-    )
+    try:
+        pipeline = build_web_pipeline(
+            load_memory=args.memory,
+            load_voice_io=voice_io_enabled,
+            demo=args.demo,
+        )
+    except ModuleNotFoundError as exc:
+        if exc.name != "ollama":
+            raise
+        parser.error(
+            "the real pipeline requires the 'ollama' Python package; activate "
+            "the project virtual environment or run 'python -m pip install -e .'. "
+            "Use '--demo' to start without Ollama."
+        )
     server = PipelineWebServer(
         (args.host, args.port),
         pipeline,

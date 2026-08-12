@@ -1,4 +1,14 @@
-"""Public interfaces and implementations for local reasoning."""
+"""Public interfaces and implementations for local reasoning.
+
+The Ollama-backed implementation is loaded lazily so callers that only use the
+backend-neutral contracts or deterministic test pipeline do not need the
+optional runtime client at import time.
+"""
+
+from __future__ import annotations
+
+from importlib import import_module
+from typing import Any
 
 from voice_concierge.reasoning.engine import (
     DeterministicReasoningFake,
@@ -14,7 +24,6 @@ from voice_concierge.reasoning.errors import (
     ReasoningRequestError,
     ReasoningTimeoutError,
 )
-from voice_concierge.reasoning.factory import build_reasoning_engine
 from voice_concierge.reasoning.models import (
     DEFAULT_FALLBACK_MODEL,
     DEFAULT_MODEL_BACKEND,
@@ -29,18 +38,6 @@ from voice_concierge.reasoning.models import (
     default_model_selection,
     load_model_selection,
     save_model_selection,
-)
-from voice_concierge.reasoning.ollama import (
-    OllamaBackendUnavailableError,
-    OllamaConfig,
-    OllamaGenerationError,
-    OllamaModelManagementError,
-    OllamaModelManager,
-    OllamaModelManagerConfig,
-    OllamaModelUnavailableError,
-    OllamaReasoningEngine,
-    OllamaReasoningError,
-    OllamaTimeoutError,
 )
 from voice_concierge.reasoning.output import apply_spoken_word_limit
 from voice_concierge.reasoning.prompting import (
@@ -109,3 +106,16 @@ __all__ = [
     "save_model_selection",
     "validate_reasoning_request",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    if name == "build_reasoning_engine":
+        module_name = "voice_concierge.reasoning.factory"
+    elif name.startswith("Ollama"):
+        module_name = "voice_concierge.reasoning.ollama"
+    else:
+        raise AttributeError(name)
+
+    value = getattr(import_module(module_name), name)
+    globals()[name] = value
+    return value

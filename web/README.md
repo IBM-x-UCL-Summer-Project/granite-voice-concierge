@@ -1,16 +1,23 @@
 # Pipeline-connected web UI
 
-This dependency-free web prototype visualises the current Granite Voice
-Concierge pipeline and follows the shapes in
-`docs/app-pipeline-ui-contract.md`.
+This dependency-free web client provides the conversation experience for the
+current Granite Voice Concierge pipeline and follows the shapes in
+`docs/app-pipeline-ui-contract.md`. Pipeline state remains internal to the
+application flow and is not exposed as an inspector in the user interface.
 
 Run it from the repository root with the local application pipeline:
 
 ```bash
+source .venv/bin/activate
 python -m voice_concierge.app.web
 ```
 
 Then open `http://localhost:4173`.
+
+The real pipeline requires the project dependencies, including the Ollama
+Python client. If they have not been installed in this virtual environment,
+run `python -m pip install -e .`. The `--demo` mode does not import or require
+the Ollama client.
 
 Enable browser microphone transcription and pipeline-generated response audio:
 

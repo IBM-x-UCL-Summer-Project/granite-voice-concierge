@@ -41,12 +41,15 @@ python -m voice_concierge.app.live --no-memory --no-playback
 Run the pipeline-connected browser UI:
 
 ```bash
+source .venv/bin/activate
 python -m voice_concierge.app.web
 ```
 
 Add `--voice-io` for browser recording/STT and response TTS, `--memory` for
 persistent local memory, or `--demo` to review the UI without Ollama and audio
-models. See [the web UI guide](web/README.md) for details.
+models. If the virtual environment has not been installed yet, run
+`python -m pip install -e .` after activating it. See
+[the web UI guide](web/README.md) for details.
 
 ## Project Documentation
 
