@@ -7,6 +7,9 @@ current prototype.
 
 Keep `granite3.3:2b` as the lower-resource fallback. The selected model should
 remain configurable so users can later choose another compatible local model.
+The default `startup_missing_primary` policy uses that fallback only when the
+primary is not installed at application startup. It does not switch models
+mid-turn or download either model.
 
 ## Why 8B Is Recommended
 

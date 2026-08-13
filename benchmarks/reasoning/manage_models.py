@@ -11,6 +11,7 @@ from pathlib import Path
 from voice_concierge.reasoning import (
     DEFAULT_FALLBACK_MODEL,
     DEFAULT_MODEL_BACKEND,
+    DEFAULT_MODEL_FALLBACK_POLICY,
     DEFAULT_MODEL_SELECTION_PATH,
     DEFAULT_OLLAMA_HOST,
     OllamaModelManagementError,
@@ -67,7 +68,16 @@ def parse_args() -> argparse.Namespace:
     select_parser.add_argument(
         "--fallback-model",
         default=DEFAULT_FALLBACK_MODEL,
-        help="Fallback model to use on constrained hardware or failure.",
+        help="Already-installed model eligible for startup fallback.",
+    )
+    select_parser.add_argument(
+        "--fallback-policy",
+        choices=("disabled", "startup_missing_primary"),
+        default=DEFAULT_MODEL_FALLBACK_POLICY,
+        help=(
+            "Use the fallback only when the primary is absent at startup, or "
+            "disable automatic fallback."
+        ),
     )
     select_parser.add_argument(
         "--backend",
@@ -109,6 +119,7 @@ def main() -> int:
                 backend=args.backend,
                 model=args.model,
                 fallback_model=args.fallback_model,
+                fallback_policy=args.fallback_policy,
                 host=args.host,
             )
             save_model_selection(selection, args.config)

@@ -95,6 +95,7 @@ def _engine_with_response(
         ("keep_alive", "", "keep_alive"),
         ("keep_alive", 0, "keep_alive"),
         ("keep_alive", True, "keep_alive"),
+        ("model_role", "emergency", "model_role"),
     ),
 )
 def test_ollama_config_rejects_invalid_values(
@@ -180,6 +181,7 @@ def test_ollama_engine_sends_chat_messages_and_generated_schema() -> None:
     assert response.proposed_memory_action is None
     assert response.metadata["backend"] == "ollama"
     assert response.metadata["model"] == "granite-local-test"
+    assert response.metadata["model_role"] == "primary"
     assert response.metadata["output_format"] == "structured_json"
     assert response.metadata["prompt_id"] == "local-reasoning"
     assert response.metadata["prompt_version"] == "v2"

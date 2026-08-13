@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
+from typing import Literal
 
 from ollama import ResponseError
 
@@ -16,6 +18,7 @@ from voice_concierge.reasoning.models import (
     DEFAULT_MODEL_SELECTION_PATH,
     DEFAULT_OLLAMA_HOST,
     ModelManager,
+    ReasoningModelSelection,
     load_model_selection,
 )
 from voice_concierge.reasoning.ollama import (
@@ -60,7 +63,7 @@ def build_reasoning_engine(
             f"Invalid reasoning prompt version: {prompt_version!r}."
         ) from exc
 
-    config = OllamaConfig(
+    primary_config = OllamaConfig(
         model=selection.model,
         host=selection.host or DEFAULT_OLLAMA_HOST,
         timeout_s=timeout_s,
@@ -69,24 +72,65 @@ def build_reasoning_engine(
 
     manager = model_manager or OllamaModelManager(
         OllamaModelManagerConfig(
-            host=config.host,
+            host=primary_config.host,
             timeout_s=timeout_s,
         )
     )
-    try:
-        manager.show_model(selection.model)
-    except OllamaModelManagementError as exc:
-        if _missing_selected_model(exc):
-            raise ReasoningModelUnavailableError(
-                f"Selected reasoning model is not available locally: "
-                f"{selection.model!r}."
-            ) from exc
-
-        raise ReasoningBackendUnavailableError(
-            f"Could not verify local reasoning backend at {config.host}: {exc}"
-        ) from exc
+    runtime_model, model_role = _select_runtime_model(
+        selection,
+        manager,
+        host=primary_config.host,
+    )
+    config = replace(
+        primary_config,
+        model=runtime_model,
+        model_role=model_role,
+    )
 
     return OllamaReasoningEngine(config)
+
+
+def _select_runtime_model(
+    selection: ReasoningModelSelection,
+    manager: ModelManager,
+    *,
+    host: str,
+) -> tuple[str, Literal["primary", "fallback"]]:
+    """Select an already-installed startup model under the persisted policy."""
+
+    if _model_is_available(selection.model, manager, host=host):
+        return selection.model, "primary"
+
+    if selection.fallback_policy == "disabled":
+        raise ReasoningModelUnavailableError(
+            f"Selected reasoning model is not available locally: "
+            f"{selection.model!r}. Fallback is disabled."
+        )
+
+    fallback_model = selection.fallback_model
+    assert fallback_model is not None
+    if _model_is_available(fallback_model, manager, host=host):
+        return fallback_model, "fallback"
+
+    raise ReasoningModelUnavailableError(
+        "Neither the selected reasoning model nor its configured fallback is "
+        f"available locally: {selection.model!r}, {fallback_model!r}."
+    )
+
+
+def _model_is_available(model: str, manager: ModelManager, *, host: str) -> bool:
+    """Check one installed model and preserve backend-vs-model failure semantics."""
+
+    try:
+        manager.show_model(model)
+    except OllamaModelManagementError as exc:
+        if _missing_selected_model(exc):
+            return False
+
+        raise ReasoningBackendUnavailableError(
+            f"Could not verify local reasoning model {model!r} at {host}: {exc}"
+        ) from exc
+    return True
 
 
 def _missing_selected_model(exc: OllamaModelManagementError) -> bool:

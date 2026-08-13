@@ -12,6 +12,7 @@ from ollama import ListResponse, ProgressResponse, ShowResponse
 from voice_concierge.reasoning import (
     DEFAULT_FALLBACK_MODEL,
     DEFAULT_MODEL_BACKEND,
+    DEFAULT_MODEL_FALLBACK_POLICY,
     DEFAULT_MODEL_SELECTION_PATH,
     DEFAULT_OLLAMA_HOST,
     DEFAULT_REASONING_MODEL,
@@ -31,6 +32,7 @@ def test_default_model_selection_uses_granite_4_1_8b() -> None:
     assert selection.model == DEFAULT_REASONING_MODEL
     assert selection.model == "granite4.1:8b"
     assert selection.fallback_model == DEFAULT_FALLBACK_MODEL
+    assert selection.fallback_policy == DEFAULT_MODEL_FALLBACK_POLICY
     assert selection.host == DEFAULT_OLLAMA_HOST
     assert DEFAULT_MODEL_SELECTION_PATH == Path(".local/reasoning-model-selection.json")
 
@@ -41,6 +43,7 @@ def test_model_selection_round_trips_to_json(tmp_path: Path) -> None:
         backend="ollama",
         model="granite4.1:8b",
         fallback_model="granite3.3:2b",
+        fallback_policy="startup_missing_primary",
         host="http://localhost:11434",
     )
 
@@ -48,7 +51,49 @@ def test_model_selection_round_trips_to_json(tmp_path: Path) -> None:
 
     assert load_model_selection(path) == selection
     payload = json.loads(path.read_text(encoding="utf-8"))
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
+
+
+def test_legacy_model_selection_preserves_disabled_fallback(tmp_path: Path) -> None:
+    path = tmp_path / "legacy-model-selection.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "backend": "ollama",
+                "model": "granite-primary:latest",
+                "fallback_model": "granite-fallback:latest",
+                "host": "http://localhost:11434",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    selection = load_model_selection(path)
+
+    assert selection.fallback_policy == "disabled"
+
+
+@pytest.mark.parametrize(
+    "selection",
+    (
+        {
+            "fallback_model": None,
+            "fallback_policy": "startup_missing_primary",
+        },
+        {
+            "model": "same-model",
+            "fallback_model": "same-model",
+            "fallback_policy": "startup_missing_primary",
+        },
+        {"fallback_policy": "always"},
+    ),
+)
+def test_model_selection_rejects_invalid_fallback_configuration(
+    selection: dict[str, object],
+) -> None:
+    with pytest.raises(ValueError, match="fallback"):
+        ReasoningModelSelection(**selection)
 
 
 def test_model_selection_loads_defaults_when_missing(tmp_path: Path) -> None:
@@ -63,6 +108,21 @@ def test_model_selection_rejects_empty_fields(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="non-empty strings"):
+        load_model_selection(path)
+
+
+@pytest.mark.parametrize("version", (True, "2", [], {}))
+def test_model_selection_rejects_invalid_schema_version(
+    tmp_path: Path,
+    version: object,
+) -> None:
+    path = tmp_path / "model-selection.json"
+    path.write_text(
+        json.dumps({"schema_version": version}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="schema version"):
         load_model_selection(path)
 
 

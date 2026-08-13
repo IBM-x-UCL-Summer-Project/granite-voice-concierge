@@ -12,6 +12,11 @@ from voice_concierge.app.types import AppPipelineState, AppTranscript, AppTurnRe
 from voice_concierge.audio import CapturedAudio
 from voice_concierge.context.policies import policy_for_mode
 from voice_concierge.context.types import ContextDecision
+from voice_concierge.reasoning import (
+    ReasoningBackendUnavailableError,
+    ReasoningConfigurationError,
+    ReasoningModelUnavailableError,
+)
 
 
 class FakePipeline:
@@ -166,6 +171,44 @@ def test_config_from_args_no_tts_disables_playback() -> None:
 def test_config_rejects_play_without_synthesis() -> None:
     with pytest.raises(ValueError, match="play requires synthesize"):
         live.LiveAppConfig(synthesize=False, play=True)
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_code", "expected_message"),
+    (
+        (
+            ReasoningConfigurationError("bad selection"),
+            2,
+            "reasoning configuration error",
+        ),
+        (
+            ReasoningBackendUnavailableError("runner unavailable"),
+            1,
+            "reasoning unavailable",
+        ),
+        (
+            ReasoningModelUnavailableError("model unavailable"),
+            1,
+            "reasoning unavailable",
+        ),
+    ),
+)
+def test_main_maps_reasoning_startup_failures(
+    monkeypatch,
+    capsys,
+    error: Exception,
+    expected_code: int,
+    expected_message: str,
+) -> None:
+    def fail_startup(config) -> None:
+        raise error
+
+    monkeypatch.setattr(live, "run_live_app", fail_startup)
+
+    result = live.main(["--one-shot"])
+
+    assert result == expected_code
+    assert expected_message in capsys.readouterr().err
 
 
 def _audio() -> CapturedAudio:

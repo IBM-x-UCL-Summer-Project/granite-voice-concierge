@@ -187,6 +187,7 @@ def test_selected_runtime_bounds_generation_and_exposes_metadata(
     assert manager.pull_calls == []
     assert client_constructions == [{"host": "http://localhost:11434", "timeout": 9.0}]
     assert len(client.chat_calls) == 1
+    assert response.metadata["model_role"] == "primary"
 
     call = client.chat_calls[0]
     assert call["model"] == "granite-smoke:latest"
@@ -304,5 +305,8 @@ def test_selected_runtime_maps_missing_model_at_startup(
             model_manager=manager,
         )
 
-    assert manager.show_calls == ["granite-smoke:latest"]
+    assert manager.show_calls == [
+        "granite-smoke:latest",
+        "granite-fallback:latest",
+    ]
     assert client.chat_calls == []

@@ -293,9 +293,14 @@ class OllamaConfig:
     max_predict_tokens: int = 512
     keep_alive: str | float = "5m"
     prompt_version: str = DEFAULT_PROMPT_VERSION
+    model_role: Literal["primary", "fallback"] = "primary"
 
     def __post_init__(self) -> None:
         _validate_config_string(self.model, "model")
+        if self.model_role not in ("primary", "fallback"):
+            raise ReasoningConfigurationError(
+                "Ollama config model_role must be 'primary' or 'fallback'."
+            )
         _validate_config_string(self.host, "host")
         _validate_config_string(self.prompt_version, "prompt_version")
         _validate_positive_number(self.timeout_s, "timeout_s")
@@ -357,6 +362,7 @@ class OllamaReasoningEngine:
         metadata = {
             "backend": "ollama",
             "model": self.config.model,
+            "model_role": self.config.model_role,
             "output_format": "structured_json",
             "prompt_id": self._prompt_template.prompt_id,
             "prompt_version": self._prompt_template.version,

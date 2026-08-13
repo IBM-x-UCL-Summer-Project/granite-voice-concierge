@@ -12,6 +12,11 @@ from voice_concierge.app.factory import build_voice_concierge_pipeline
 from voice_concierge.app.pipeline import VoiceConciergePipeline
 from voice_concierge.app.types import AppPipelineState, AppTurnResult
 from voice_concierge.audio import CapturedAudio, PyAudioSource
+from voice_concierge.reasoning import (
+    ReasoningBackendUnavailableError,
+    ReasoningConfigurationError,
+    ReasoningModelUnavailableError,
+)
 from voice_concierge.voice_input.interfaces import UtteranceCapturer, WakeWordListener
 from voice_concierge.voice_input.voice_activity_detector import (
     DEFAULT_CHUNK as DEFAULT_VAD_CHUNK,
@@ -68,7 +73,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ValueError as exc:
         parser.error(str(exc))
 
-    run_live_app(config)
+    try:
+        run_live_app(config)
+    except ReasoningConfigurationError as exc:
+        print(f"Live app reasoning configuration error: {exc}", file=sys.stderr)
+        return 2
+    except (ReasoningBackendUnavailableError, ReasoningModelUnavailableError) as exc:
+        print(f"Live app reasoning unavailable: {exc}", file=sys.stderr)
+        return 1
     return 0
 
 

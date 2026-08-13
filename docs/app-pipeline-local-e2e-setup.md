@@ -64,8 +64,8 @@ The app uses Ollama locally only. It should not require cloud credentials.
 
 ### Reasoning Model
 
-The default reasoning model is `granite4.1:8b`. The lower-resource fallback used
-in docs and model selection is `granite3.3:2b`.
+The default reasoning model is `granite4.1:8b`. The lower-resource startup
+fallback is `granite3.3:2b`.
 
 Pull the default model:
 
@@ -73,11 +73,21 @@ Pull the default model:
 ollama pull granite4.1:8b
 ```
 
+Pull the fallback as well if you want the default
+`startup_missing_primary` policy to recover when the primary is absent:
+
+```bash
+ollama pull granite3.3:2b
+```
+
 Optionally select a different local model for the app-facing reasoning factory:
 
 ```bash
 python -m benchmarks.reasoning.manage_models select granite4.1:8b
 ```
+
+Use `--fallback-policy disabled` when absence of the selected primary should be
+a startup error instead. Neither policy downloads a model automatically.
 
 The selected model is stored in:
 

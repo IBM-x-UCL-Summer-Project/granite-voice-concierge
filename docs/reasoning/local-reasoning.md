@@ -121,9 +121,17 @@ backend is currently `ollama`.
 
 Startup validation is deliberate. The factory validates the prompt version,
 checks the selected primary model with Ollama model metadata, and returns an
-`OllamaReasoningEngine` only when the local runtime setup is usable. It does not
-pull or download models, activate `fallback_model`, benchmark candidates, contact
-cloud services, or import unfinished voice, context, memory, STT, or TTS modules.
+`OllamaReasoningEngine` only when the local runtime setup is usable. Model
+selection schema version 2 makes fallback behavior explicit. The
+`startup_missing_primary` policy selects an already-installed fallback only when
+the primary is absent during startup; `disabled` fails immediately. Legacy
+schema-version-1 selections load with fallback disabled, preserving their prior
+behavior. Backend failures never trigger fallback because both models use the
+same backend. The factory does not pull or download models, retry another model
+during a turn, benchmark candidates, or contact cloud services.
+
+The active engine records `model_role` as `primary` or `fallback` in reasoning
+response metadata, so fallback selection is observable rather than inferred.
 
 Project-owned factory errors are:
 
@@ -131,8 +139,8 @@ Project-owned factory errors are:
   invalid prompt version, or invalid Ollama config;
 - `ReasoningBackendUnavailableError`: the selected local backend cannot be
   reached or verified;
-- `ReasoningModelUnavailableError`: the selected primary model is not available
-  locally.
+- `ReasoningModelUnavailableError`: no model allowed by the configured startup
+  fallback policy is available locally.
 
 Lower-level `OllamaReasoningError` and `OllamaModelManagementError` remain
 available for adapter-specific callers and compatibility.
@@ -206,11 +214,11 @@ through `build_reasoning_engine(...)`:
   --output benchmarks/reasoning/results/selected-runtime-smoke.json
 ```
 
-This mode loads the selected primary model and host from
-`.local/reasoning-model-selection.json`, validates the configured local runtime,
-and then runs the prompt suite. It intentionally rejects direct `--model` and
-`--host` overrides. Use this mode when checking whether the application-facing
-runtime wiring works.
+This mode loads the model selection and host from
+`.local/reasoning-model-selection.json`, applies its startup fallback policy,
+validates the configured local runtime, and then runs the prompt suite. It
+intentionally rejects direct `--model` and `--host` overrides. Use this mode when
+checking whether the application-facing runtime wiring works.
 
 ## Run With Ollama
 
@@ -318,14 +326,16 @@ Persist the active benchmark model selection locally:
 
 ```bash
 .venv/bin/python -m benchmarks.reasoning.manage_models select granite4.1:8b \
-  --fallback-model granite3.3:2b
+  --fallback-model granite3.3:2b \
+  --fallback-policy startup_missing_primary
 ```
 
-his writes `.local/reasoning-model-selection.json`. A subsequent
+This writes `.local/reasoning-model-selection.json`. A subsequent
 `python -m benchmarks.reasoning.benchmark run --engine ollama` uses its primary
-model and host unless
-`--model` or `--host` overrides them. The fallback is recorded for later runtime
-use but is not silently benchmarked or activated.
+model and host unless `--model` or `--host` overrides them. The app-facing
+selected runtime applies the persisted fallback policy during startup. Direct
+benchmark runs do not activate fallback because their purpose is to measure the
+specific requested model.
 
 If a model is missing, pull it through Ollama:
 
@@ -401,7 +411,8 @@ version directory so old results remain reproducible.
 The prompt builder instructs the model to follow these local reasoning rules:
 
 - operate as if no internet or cloud service is available;
-- use only the transcript, supplied local memories, and supplied summary;
+- use only the transcript, supplied local memories, supplied summary, and
+  identified runtime context;
 - keep responses short and suitable for speech;
 - do not invent remembered facts;
 - ask for confirmation before saving, changing, or deleting personal data;
@@ -413,6 +424,6 @@ The prompt builder instructs the model to follow these local reasoning rules:
 `granite4.1:8b` is the recommended quality oriented default, with
 `granite3.3:2b` retained as the lower resource fallback. See the
 [Recommended Default Model](recommended-default-model.md) for the evidence and
-limits of that decision. Benchmarking now consumes the configurable selection;
-the future application entry point should do the same rather than hard-coding a
+limits of that decision. Both the selected benchmark runtime and application
+factory consume the same configurable selection rather than hard-coding a
 model.
