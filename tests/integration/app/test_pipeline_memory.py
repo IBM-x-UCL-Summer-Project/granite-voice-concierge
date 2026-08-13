@@ -145,7 +145,7 @@ def test_confirmed_memory_survives_reopen_and_reaches_reasoning(tmp_path) -> Non
 
 
 @pytest.mark.integration
-def test_failed_embedding_rolls_back_confirmed_memory_record(tmp_path) -> None:
+def test_failed_embedding_is_reconciled_after_reopen(tmp_path) -> None:
     config = LocalMemoryConfig(
         memory_db_path=tmp_path / "memories.sqlite3",
         vector_db_path=tmp_path / "vectors.sqlite3",
@@ -166,11 +166,28 @@ def test_failed_embedding_rolls_back_confirmed_memory_record(tmp_path) -> None:
         confirmation = pipeline.process_transcript("yes", proposal.state)
 
         assert confirmation.memory_operation.attempted is True
-        assert confirmation.memory_operation.succeeded is False
-        assert confirmation.errors == ("memory_action_failed",)
-        assert manager.get_all_memories() == []
+        assert confirmation.memory_operation.succeeded is True
+        assert confirmation.memory_operation.reason == "stored_pending_index"
+        assert confirmation.errors == ()
+        memories = manager.get_all_memories()
+        assert len(memories) == 1
+        assert memories[0]["indexed_revision"] == 0
     finally:
         pipeline.close()
+
+    reopened_manager = build_memory_manager(
+        config,
+        embedding_service=DeterministicEmbeddingService(),
+        validator=FailingValidator(),
+    )
+    try:
+        memories = reopened_manager.get_all_memories()
+        assert len(memories) == 1
+        assert memories[0]["content"] == "User prefers tea."
+        assert memories[0]["indexed_revision"] == memories[0]["revision"] == 1
+        assert reopened_manager.vector_store.has_vector(memories[0]["id"])
+    finally:
+        reopened_manager.close()
 
 
 @pytest.mark.integration

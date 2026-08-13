@@ -41,21 +41,25 @@ class VectorStore:
                 f"Expected embedding dimension {self.dimension}, got {len(embedding)}."
             )
 
-        # Delete existing vector if it exists (sqlite_vec doesn't support REPLACE)
-        self.con.execute(
-            "DELETE FROM memory_vectors WHERE memory_id = ?",
-            (memory_id,),
-        )
-
-        self.con.execute(
-            """
-            INSERT INTO memory_vectors
-            (memory_id, embedding)
-            VALUES (?, ?)
-            """,
-            (memory_id, serialize_float32(embedding)),
-        )
-        self.con.commit()
+        try:
+            # sqlite-vec does not support REPLACE, so both statements must share
+            # one local transaction to preserve the previous vector on failure.
+            self.con.execute(
+                "DELETE FROM memory_vectors WHERE memory_id = ?",
+                (memory_id,),
+            )
+            self.con.execute(
+                """
+                INSERT INTO memory_vectors
+                (memory_id, embedding)
+                VALUES (?, ?)
+                """,
+                (memory_id, serialize_float32(embedding)),
+            )
+            self.con.commit()
+        except Exception:
+            self.con.rollback()
+            raise
 
     def search_similar(self, query_embedding, top_k=3):
         if len(query_embedding) != self.dimension:
@@ -85,11 +89,30 @@ class VectorStore:
 
     def delete_vector(self, memory_id):
         """Delete a vector by memory_id."""
-        self.con.execute(
-            "DELETE FROM memory_vectors WHERE memory_id = ?",
+        try:
+            self.con.execute(
+                "DELETE FROM memory_vectors WHERE memory_id = ?",
+                (memory_id,),
+            )
+            self.con.commit()
+        except Exception:
+            self.con.rollback()
+            raise
+
+    def has_vector(self, memory_id):
+        """Return whether a derived vector exists for one memory ID."""
+
+        row = self.con.execute(
+            "SELECT 1 FROM memory_vectors WHERE memory_id = ?",
             (memory_id,),
-        )
-        self.con.commit()
+        ).fetchone()
+        return row is not None
+
+    def list_memory_ids(self):
+        """Return every memory ID currently present in the vector index."""
+
+        rows = self.con.execute("SELECT memory_id FROM memory_vectors").fetchall()
+        return {row[0] for row in rows}
 
     def close(self):
         self.con.close()

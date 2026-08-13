@@ -54,9 +54,11 @@ def build_memory_manager(
     embeddings = embedding_service or EmbeddingService(
         model_name=runtime_config.embedding_model
     )
-    return MemoryManager(
+    manager = MemoryManager(
         memory_store=memory_store,
         vector_store=vector_store,
         embedding_service=embeddings,
         validator=validator,
     )
+    manager.reconcile_index()
+    return manager

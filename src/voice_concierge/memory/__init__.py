@@ -9,7 +9,10 @@ from voice_concierge.memory.factory import (
     LocalMemoryConfig,
     build_memory_manager,
 )
-from voice_concierge.memory.memory_manager import MemoryManager
+from voice_concierge.memory.memory_manager import (
+    IndexReconciliationResult,
+    MemoryManager,
+)
 from voice_concierge.memory.memory_retriever import MemoryRetriever
 from voice_concierge.memory.memory_store import MemoryStore
 from voice_concierge.memory.memory_validator import MemoryValidator
@@ -21,6 +24,7 @@ __all__ = [
     "DEFAULT_MEMORY_DB_PATH",
     "DEFAULT_VECTOR_DB_PATH",
     "EmbeddingService",
+    "IndexReconciliationResult",
     "LocalMemoryConfig",
     "MemoryManager",
     "MemoryRetriever",

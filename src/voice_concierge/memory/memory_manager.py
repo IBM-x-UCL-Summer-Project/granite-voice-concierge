@@ -1,5 +1,6 @@
 """High-level memory management orchestrating storage, validation, and retrieval."""
 
+from dataclasses import dataclass
 from typing import Optional, Tuple
 
 from voice_concierge.memory.embedding_service import EmbeddingService
@@ -13,6 +14,16 @@ from voice_concierge.memory.structured_lists import (
 )
 from voice_concierge.memory.vector_store import VectorStore
 from voice_concierge.reasoning.types import MemoryAction, MemoryTarget
+
+
+@dataclass(frozen=True)
+class IndexReconciliationResult:
+    """Summary of repairing the derived vector index from authoritative SQL."""
+
+    indexed_memories: int = 0
+    cleaned_tombstones: int = 0
+    removed_orphan_vectors: int = 0
+    failures: int = 0
 
 
 class MemoryManager:
@@ -142,9 +153,7 @@ class MemoryManager:
             if memory_type:
                 classified_topic = memory_type.value
 
-        memory_id = None
         try:
-            # Store in memory_store
             memory_id = self.memory_store.create_memory(
                 content=content,
                 layer=layer,
@@ -155,22 +164,88 @@ class MemoryManager:
                 event_time=event_time,
                 strength=strength,
             )
-
-            # Generate and store embedding
-            try:
-                embedding = self.embedding_service.get_embedding(content)
-                self.vector_store.save_vector(memory_id, embedding)
-            except Exception as e:
-                # Rollback: delete SQL record if vector storage fails
-                self.memory_store.delete_memory(memory_id)
-                return False, f"vector_storage_failed_rolled_back: {str(e)}", None
-
-            return True, "stored_successfully", memory_id
-
         except Exception as e:
-            if memory_id is not None:
-                self.memory_store.delete_memory(memory_id)
             return False, f"storage_error: {str(e)}", None
+
+        try:
+            memory = self.memory_store.get_memory_by_id(memory_id)
+            if memory is not None and self._index_memory(memory):
+                return True, "stored_successfully", memory_id
+        except Exception:
+            pass
+        return True, "stored_pending_index", memory_id
+
+    def reconcile_index(self) -> IndexReconciliationResult:
+        """Repair derived vectors and finish tombstoned deletions safely."""
+
+        indexed_memories = 0
+        cleaned_tombstones = 0
+        removed_orphan_vectors = 0
+        failures = 0
+
+        try:
+            tombstones = self.memory_store.get_tombstoned_memories()
+        except Exception:
+            tombstones = []
+            failures += 1
+        for memory in tombstones:
+            try:
+                self.vector_store.delete_vector(memory["id"])
+                if not self.memory_store.purge_tombstone(memory["id"]):
+                    failures += 1
+                    continue
+                cleaned_tombstones += 1
+            except Exception:
+                failures += 1
+
+        try:
+            active_memories = self.memory_store.get_memories()
+        except Exception:
+            active_memories = []
+            failures += 1
+        try:
+            vector_ids: set[int] | None = self.vector_store.list_memory_ids()
+        except Exception:
+            vector_ids = None
+            failures += 1
+        for memory in active_memories:
+            needs_index = memory["indexed_revision"] != memory["revision"] or (
+                vector_ids is not None and memory["id"] not in vector_ids
+            )
+            if not needs_index:
+                continue
+            try:
+                if self._index_memory(memory):
+                    indexed_memories += 1
+                    if vector_ids is not None:
+                        vector_ids.add(memory["id"])
+                else:
+                    failures += 1
+            except Exception:
+                failures += 1
+
+        if vector_ids is None:
+            orphan_ids: set[int] = set()
+        else:
+            try:
+                stored_ids = self.memory_store.get_all_memory_ids()
+                orphan_ids = vector_ids - stored_ids
+            except Exception:
+                orphan_ids = set()
+                failures += 1
+        for memory_id in orphan_ids:
+            try:
+                self.vector_store.delete_vector(memory_id)
+                removed_orphan_vectors += 1
+            except Exception:
+                failures += 1
+
+        return IndexReconciliationResult(
+            indexed_memories=indexed_memories,
+            cleaned_tombstones=cleaned_tombstones,
+            removed_orphan_vectors=removed_orphan_vectors,
+            failures=failures,
+        )
 
     def retrieve_similar(
         self,
@@ -193,6 +268,7 @@ class MemoryManager:
         Returns:
             List of similar memories with distance scores
         """
+        self.reconcile_index()
         return self.retriever.retrieve_similar(
             query=query,
             top_k=top_k,
@@ -219,8 +295,7 @@ class MemoryManager:
         expected_revision: Optional[int] = None,
     ) -> Tuple[bool, str]:
         """
-        Update a memory and regenerate its embedding if content changed.
-        Rolls back SQL changes if embedding generation/storage fails.
+        Update authoritative memory state and refresh its derived embedding.
 
         Args:
             memory_id: ID of memory to update
@@ -237,7 +312,6 @@ class MemoryManager:
             Tuple of (success: bool, reason: str)
         """
         try:
-            # Save original state for potential rollback
             original_memory = self.memory_store.get_memory_by_id(memory_id)
             if not original_memory:
                 return False, "memory_not_found"
@@ -266,17 +340,26 @@ class MemoryManager:
                     return False, "memory_revision_conflict"
                 return False, "no_changes"
 
-            # Regenerate embedding if content changed
-            if content:
-                try:
-                    embedding = self.embedding_service.get_embedding(content)
-                    self.vector_store.save_vector(memory_id, embedding)
-                except Exception as e:
-                    # Rollback SQL changes if embedding fails
-                    self.memory_store.restore_memory(original_memory)
-                    return False, f"embedding_error_rolled_back: {str(e)}"
+            current_memory = self.memory_store.get_memory_by_id(memory_id)
+            if current_memory is None:
+                return False, "memory_not_found"
 
-            return True, "updated_successfully"
+            try:
+                if content is not None:
+                    indexed = self._index_memory(current_memory)
+                elif self._memory_index_is_current(original_memory):
+                    indexed = self.memory_store.mark_memory_indexed(
+                        memory_id,
+                        current_memory["revision"],
+                    )
+                else:
+                    indexed = False
+            except Exception:
+                indexed = False
+
+            if indexed:
+                return True, "updated_successfully"
+            return True, "updated_pending_index"
 
         except Exception as e:
             return False, f"update_error: {str(e)}"
@@ -296,7 +379,7 @@ class MemoryManager:
             Tuple of (success: bool, reason: str)
         """
         try:
-            success = self.memory_store.delete_memory(
+            success = self.memory_store.tombstone_memory(
                 memory_id,
                 expected_revision=expected_revision,
             )
@@ -306,11 +389,12 @@ class MemoryManager:
                     return False, "memory_revision_conflict"
                 return False, "memory_not_found"
 
-            # Also delete the associated vector
             try:
                 self.vector_store.delete_vector(memory_id)
-            except Exception as e:
-                return False, f"vector_deletion_failed: {str(e)}"
+                if not self.memory_store.purge_tombstone(memory_id):
+                    return True, "deleted_pending_index_cleanup"
+            except Exception:
+                return True, "deleted_pending_index_cleanup"
 
             return True, "deleted_successfully"
 
@@ -455,6 +539,22 @@ class MemoryManager:
     def get_all_memories(self) -> list[dict]:
         """Get all stored memories."""
         return self.retriever.retrieve_all()
+
+    def _index_memory(self, memory: dict) -> bool:
+        """Write one derived vector and mark only its still-current revision."""
+
+        embedding = self.embedding_service.get_embedding(memory["content"])
+        self.vector_store.save_vector(memory["id"], embedding)
+        return self.memory_store.mark_memory_indexed(
+            memory["id"],
+            memory["revision"],
+        )
+
+    def _memory_index_is_current(self, memory: dict) -> bool:
+        """Return whether SQL and the derived vector agree for one revision."""
+
+        revision_is_indexed = memory["indexed_revision"] == memory["revision"]
+        return revision_is_indexed and self.vector_store.has_vector(memory["id"])
 
     def close(self):
         """Close all storage connections."""

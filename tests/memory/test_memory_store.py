@@ -51,6 +51,8 @@ def test_defaults(store):
     assert row["last_accessed"] is None
     assert row["strength"] == 1
     assert row["revision"] == 1
+    assert row["indexed_revision"] == 0
+    assert row["deleted_at"] is None
 
 
 # ---- Metadata filtering ----
@@ -165,6 +167,8 @@ def test_existing_database_is_migrated_with_stable_memory_keys(tmp_path):
     assert memory is not None
     assert memory["id"] == memory_id
     assert memory["revision"] == 1
+    assert memory["indexed_revision"] == 0
+    assert memory["deleted_at"] is None
 
 
 def test_delete_memory(store):
@@ -227,6 +231,73 @@ def test_delete_requires_current_revision_when_supplied(store):
     assert not store.delete_memory(memory_id, expected_revision=1)
     assert store.get_memory_by_id(memory_id) is not None
     assert store.delete_memory(memory_id, expected_revision=2)
+
+
+def test_tombstone_is_hidden_until_purged(store):
+    memory_id = store.create_memory("delete safely", "profile")
+
+    assert store.tombstone_memory(memory_id, expected_revision=1)
+    assert store.get_memory_by_id(memory_id) is None
+    tombstone = store.get_memory_by_id_including_deleted(memory_id)
+    assert tombstone is not None
+    assert tombstone["deleted_at"] is not None
+    assert store.get_memories() == []
+
+    assert store.purge_tombstone(memory_id)
+    assert store.get_memory_by_id_including_deleted(memory_id) is None
+
+
+def test_tombstoned_stable_key_can_be_recreated_before_cleanup(store):
+    old_memory_id = store.create_memory(
+        "Shopping list: milk.",
+        "feedback",
+        memory_key="list:shopping",
+    )
+    assert store.delete_memory(old_memory_id)
+
+    new_memory_id = store.create_memory(
+        "Shopping list: bread.",
+        "feedback",
+        memory_key="list:shopping",
+    )
+
+    assert new_memory_id != old_memory_id
+    active = store.get_memory_by_key("list:shopping")
+    assert active is not None
+    assert active["id"] == new_memory_id
+    assert active["content"] == "Shopping list: bread."
+
+
+def test_failed_write_rolls_back_before_later_write(store):
+    store.create_memory(
+        "Shopping list: milk.",
+        "feedback",
+        memory_key="list:shopping",
+    )
+
+    with pytest.raises(sqlite3.IntegrityError):
+        store.create_memory(
+            "Conflicting shopping list.",
+            "feedback",
+            memory_key="list:shopping",
+        )
+
+    memory_id = store.create_memory("Independent preference.", "profile")
+    assert store.get_memory_by_id(memory_id) is not None
+
+
+def test_mark_indexed_requires_current_active_revision(store):
+    memory_id = store.create_memory("index me", "profile")
+
+    assert not store.mark_memory_indexed(memory_id, revision=2)
+    assert store.mark_memory_indexed(memory_id, revision=1)
+    assert store.update_memory(memory_id, content="new version")
+    assert not store.mark_memory_indexed(memory_id, revision=1)
+
+    memory = store.get_memory_by_id(memory_id)
+    assert memory["indexed_revision"] == 1
+    assert memory["revision"] == 2
+    assert store.get_memories_needing_index() == [memory]
 
 
 def test_update_nothing(store):

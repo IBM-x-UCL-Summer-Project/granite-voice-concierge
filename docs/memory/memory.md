@@ -26,6 +26,20 @@ The defaults create:
 dimension. Parent directories are created automatically. Call `manager.close()`
 when the owner shuts down.
 
+The SQL memory record is authoritative; sqlite-vec is a rebuildable derived
+index. Each record stores both its current `revision` and `indexed_revision`.
+Content changes are immediately durable in SQL and remain excluded from
+semantic results until the matching vector revision is ready. Deletion first
+hides the record with a tombstone, then removes its vector and purges the
+tombstone. This prevents partial index failures from restoring stale SQL or
+making a deleted memory visible.
+
+`build_memory_manager()` reconciles this state during startup. Reconciliation
+rebuilds stale or missing vectors, finishes tombstoned deletions, and removes
+orphan vectors left by an interrupted older implementation. Semantic retrieval
+also reconciles before searching. Exact stable-key reads do not require the
+embedding service.
+
 The app pipeline normally wraps this manager with `MemoryManagerGateway` by
 calling `build_voice_concierge_pipeline(load_memory=True)`.
 
@@ -128,6 +142,8 @@ else:
 **Possible reason values:**
 
 - `"stored_successfully"` - Successfully stored
+- `"stored_pending_index"` - Authoritative SQL was stored and vector indexing
+  will be retried by reconciliation
 - `"validation_failed: llm_rejected"` - LLM rejected
 - `"validation_failed: too_short"` - Content too short
 - `"storage_error: ..."` - Storage error
@@ -160,6 +176,8 @@ List[dict]  # Memory list sorted by similarity
     'layer': 'profile',   # Layer
     'memory_key': None,   # Optional stable scoped key
     'revision': 1,        # Optimistic-concurrency revision
+    'indexed_revision': 1,# Revision currently represented in sqlite-vec
+    'deleted_at': None,   # Tombstone time; active queries exclude tombstones
     'created_at': 1234567,# Creation timestamp
     'person': 'Kenny',    # Related person
     'topic': 'semantic',  # Memory type or topic
@@ -238,6 +256,8 @@ success, reason = manager.update_memory(
 **Possible reason values:**
 
 - `"updated_successfully"` - Successfully updated
+- `"updated_pending_index"` - The new SQL revision is durable but its vector
+  still needs reconciliation
 - `"no_changes"` - No changes made
 - `"memory_revision_conflict"` - The record changed after it was retrieved
 - `"update_error: ..."` - Update failed
@@ -260,11 +280,33 @@ success, reason = manager.delete_memory(
 - `success: bool`
 - `reason: str`
 
+Deletion is logically successful once its SQL tombstone is durable. A
+`"deleted_pending_index_cleanup"` result means the record is already hidden and
+reconciliation will retry vector deletion and final purging.
+
 **Example:**
 
 ```python
 success, reason = manager.delete_memory(1)
 ```
+
+---
+
+#### `reconcile_index()`
+
+Repair the derived vector index from authoritative SQL state.
+
+```python
+result = manager.reconcile_index()
+print(result.indexed_memories)
+print(result.cleaned_tombstones)
+print(result.removed_orphan_vectors)
+print(result.failures)
+```
+
+The method is idempotent and returns `IndexReconciliationResult`. Individual
+repair failures remain pending for a later retry instead of reverting current
+memory content.
 
 ---
 

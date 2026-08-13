@@ -130,6 +130,38 @@ class TestMemoryManagerBasic:
         memories = memory_manager.get_all_memories()
         assert memories[0]["content"] == "new content"
 
+    def test_metadata_update_advances_indexed_revision_without_reembedding(
+        self,
+        memory_manager,
+        monkeypatch,
+    ):
+        _, _, memory_id = memory_manager.store_memory(
+            content="Content stays the same",
+            layer="profile",
+            validate=False,
+        )
+
+        def fail_if_embedded(content):
+            raise AssertionError("metadata-only update should not re-embed content")
+
+        monkeypatch.setattr(
+            memory_manager.embedding_service,
+            "get_embedding",
+            fail_if_embedded,
+        )
+
+        success, reason = memory_manager.update_memory(
+            memory_id,
+            strength=8,
+            expected_revision=1,
+        )
+
+        assert success is True
+        assert reason == "updated_successfully"
+        memory = memory_manager.memory_store.get_memory_by_id(memory_id)
+        assert memory["strength"] == 8
+        assert memory["indexed_revision"] == memory["revision"] == 2
+
     def test_delete_memory(self, memory_manager):
         """Delete a memory."""
         _, _, memory_id = memory_manager.store_memory(
@@ -660,6 +692,30 @@ class TestSQLVectorConsistency:
         results = memory_manager.retrieve_similar("coffee", top_k=5)
         assert any(r["id"] == memory_id for r in results)
 
+    def test_failed_vector_replacement_preserves_previous_entry(
+        self,
+        memory_manager,
+        monkeypatch,
+    ):
+        _, _, memory_id = memory_manager.store_memory(
+            content="Keep the existing vector",
+            layer="profile",
+            validate=False,
+        )
+
+        def fail_serialization(embedding):
+            raise RuntimeError("serialization failed after delete statement")
+
+        monkeypatch.setattr(
+            "voice_concierge.memory.vector_store.serialize_float32",
+            fail_serialization,
+        )
+
+        with pytest.raises(RuntimeError, match="serialization failed"):
+            memory_manager.vector_store.save_vector(memory_id, [1.0] * 768)
+
+        assert memory_manager.vector_store.has_vector(memory_id)
+
     def test_delete_removes_both_sql_and_vector(self, memory_manager):
         """Deleting a memory should remove both SQL record and vector."""
         # Create a memory
@@ -708,8 +764,14 @@ class TestSQLVectorConsistency:
         assert any(r["id"] == memory_id for r in results)
         assert results[0]["content"] == "I prefer coffee"
 
-    def test_store_rollback_on_vector_failure(self, memory_manager, monkeypatch):
-        """If vector storage fails, SQL record should be deleted."""
+    def test_store_survives_vector_failure_and_reconciles(
+        self,
+        memory_manager,
+        monkeypatch,
+    ):
+        """A failed derived write must not discard authoritative memory."""
+
+        save_vector = memory_manager.vector_store.save_vector
 
         # Mock embedding service to fail
         def failing_save_vector(memory_id, embedding):
@@ -726,17 +788,30 @@ class TestSQLVectorConsistency:
             validate=False,
         )
 
-        # Should fail
-        assert success is False
-        assert "vector" in reason.lower()
+        assert success is True
+        assert reason == "stored_pending_index"
+        assert memory_id is not None
+        memory = memory_manager.memory_store.get_memory_by_id(memory_id)
+        assert memory is not None
+        assert memory["content"] == "This should fail"
+        assert memory["indexed_revision"] == 0
+        assert memory["revision"] == 1
 
-        # Verify no SQL record was left behind
-        if memory_id:
-            memory = memory_manager.memory_store.get_memory_by_id(memory_id)
-            assert memory is None
+        monkeypatch.setattr(memory_manager.vector_store, "save_vector", save_vector)
+        result = memory_manager.reconcile_index()
 
-    def test_update_rollback_on_vector_failure(self, memory_manager, monkeypatch):
-        """If vector update fails, SQL record should be reverted."""
+        assert result.indexed_memories == 1
+        assert result.failures == 0
+        memory = memory_manager.memory_store.get_memory_by_id(memory_id)
+        assert memory["indexed_revision"] == memory["revision"] == 1
+        assert memory_manager.vector_store.has_vector(memory_id)
+
+    def test_update_failure_preserves_latest_revision_for_reconciliation(
+        self,
+        memory_manager,
+        monkeypatch,
+    ):
+        """A derived-write failure cannot restore over a later SQL revision."""
         # Create a memory
         success, reason, memory_id = memory_manager.store_memory(
             content="Original content",
@@ -744,6 +819,7 @@ class TestSQLVectorConsistency:
             validate=False,
         )
         assert success is True
+        save_vector = memory_manager.vector_store.save_vector
 
         # Mock vector_store to fail on save
         def failing_save_vector(memory_id, embedding):
@@ -761,10 +837,110 @@ class TestSQLVectorConsistency:
             content="New content",
         )
 
-        # Should fail due to vector storage error
-        assert success is False
-        assert "embedding" in reason.lower() or "vector" in reason.lower()
-
-        # Verify SQL record was reverted to original content
+        assert success is True
+        assert reason == "updated_pending_index"
         memory = memory_manager.memory_store.get_memory_by_id(memory_id)
-        assert memory["content"] == "Original content"
+        assert memory["content"] == "New content"
+        assert memory["indexed_revision"] == 1
+        assert memory["revision"] == 2
+
+        success, reason = memory_manager.update_memory(
+            memory_id=memory_id,
+            content="Newest content",
+            expected_revision=2,
+        )
+        assert success is True
+        assert reason == "updated_pending_index"
+
+        monkeypatch.setattr(memory_manager.vector_store, "save_vector", save_vector)
+        result = memory_manager.reconcile_index()
+
+        assert result.indexed_memories == 1
+        memory = memory_manager.memory_store.get_memory_by_id(memory_id)
+        assert memory["content"] == "Newest content"
+        assert memory["indexed_revision"] == memory["revision"] == 3
+
+    def test_delete_tombstone_hides_memory_until_vector_cleanup(
+        self,
+        memory_manager,
+        monkeypatch,
+    ):
+        _, _, memory_id = memory_manager.store_memory(
+            content="Delete this safely",
+            layer="profile",
+            validate=False,
+        )
+        delete_vector = memory_manager.vector_store.delete_vector
+
+        def failing_delete_vector(memory_id):
+            raise RuntimeError("Vector deletion failed")
+
+        monkeypatch.setattr(
+            memory_manager.vector_store,
+            "delete_vector",
+            failing_delete_vector,
+        )
+
+        success, reason = memory_manager.delete_memory(memory_id)
+
+        assert success is True
+        assert reason == "deleted_pending_index_cleanup"
+        assert memory_manager.memory_store.get_memory_by_id(memory_id) is None
+        tombstone = memory_manager.memory_store.get_memory_by_id_including_deleted(
+            memory_id
+        )
+        assert tombstone is not None
+        assert tombstone["deleted_at"] is not None
+        assert (
+            memory_manager.retriever.retrieve_similar(
+                "Delete this safely",
+                top_k=5,
+            )
+            == []
+        )
+
+        monkeypatch.setattr(
+            memory_manager.vector_store,
+            "delete_vector",
+            delete_vector,
+        )
+        result = memory_manager.reconcile_index()
+
+        assert result.cleaned_tombstones == 1
+        assert result.failures == 0
+        assert (
+            memory_manager.memory_store.get_memory_by_id_including_deleted(memory_id)
+            is None
+        )
+        assert not memory_manager.vector_store.has_vector(memory_id)
+
+    def test_reconciliation_rebuilds_missing_vector(self, memory_manager):
+        _, _, memory_id = memory_manager.store_memory(
+            content="Rebuild this index entry",
+            layer="profile",
+            validate=False,
+        )
+        memory_manager.vector_store.delete_vector(memory_id)
+        assert not memory_manager.vector_store.has_vector(memory_id)
+
+        result = memory_manager.reconcile_index()
+
+        assert result.indexed_memories == 1
+        assert result.failures == 0
+        assert memory_manager.vector_store.has_vector(memory_id)
+
+    def test_reconciliation_removes_orphan_vector(self, memory_manager):
+        _, _, memory_id = memory_manager.store_memory(
+            content="Legacy partial deletion",
+            layer="profile",
+            validate=False,
+        )
+        assert memory_manager.memory_store.tombstone_memory(memory_id)
+        assert memory_manager.memory_store.purge_tombstone(memory_id)
+        assert memory_manager.vector_store.has_vector(memory_id)
+
+        result = memory_manager.reconcile_index()
+
+        assert result.removed_orphan_vectors == 1
+        assert result.failures == 0
+        assert not memory_manager.vector_store.has_vector(memory_id)

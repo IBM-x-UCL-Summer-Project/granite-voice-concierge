@@ -58,13 +58,15 @@ class MemoryRetriever:
                 query_embedding, top_k=top_k * 2
             )
 
-            # Get full memory details and apply filters
+            indexed_memories = {
+                memory["id"]: memory
+                for memory in self.memory_store.get_memories()
+                if memory["indexed_revision"] == memory["revision"]
+            }
             memories = []
             for result in vector_results:
                 memory_id = result["memory_id"]
-                all_memories = self.memory_store.get_memories()
-
-                memory = next((m for m in all_memories if m["id"] == memory_id), None)
+                memory = indexed_memories.get(memory_id)
                 if not memory:
                     continue
 
