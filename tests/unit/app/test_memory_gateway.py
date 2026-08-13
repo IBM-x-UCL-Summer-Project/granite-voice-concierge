@@ -280,7 +280,7 @@ def test_memory_manager_gateway_skips_retrieval_when_scope_is_none() -> None:
     assert manager.key_calls == []
 
 
-def test_memory_manager_gateway_applies_store_with_scope_metadata() -> None:
+def test_memory_manager_gateway_rejects_untyped_shopping_list_store() -> None:
     manager = FakeMemoryManager()
     gateway = MemoryManagerGateway(manager)
     action = MemoryAction(
@@ -290,14 +290,8 @@ def test_memory_manager_gateway_applies_store_with_scope_metadata() -> None:
     )
 
     outcome = gateway.apply(action, "list_relevant")
-    assert outcome.status is MemoryOperationStatus.STORED_SUCCESSFULLY
-    assert manager.processed_commands == [
-        StoreMemoryCommand(
-            content="Shopping list includes milk.",
-            layer="feedback",
-            topic="shopping",
-        )
-    ]
+    assert outcome.status is MemoryOperationStatus.MEMORY_SCOPE_MISMATCH
+    assert manager.processed_commands == []
 
 
 def test_memory_manager_gateway_delegates_update_and_delete_actions() -> None:
@@ -337,6 +331,29 @@ def test_memory_manager_gateway_rejects_target_outside_active_scope() -> None:
 
     assert outcome.status is MemoryOperationStatus.MEMORY_SCOPE_MISMATCH
     assert outcome.memory_id is None
+    assert manager.processed_commands == []
+
+
+def test_memory_manager_gateway_rejects_same_topic_non_list_target() -> None:
+    manager = FakeMemoryManager()
+    manager.id_memories[50] = _memory_record(
+        memory_id=50,
+        content="Shopping note: compare prices.",
+        revision=2,
+        topic="shopping",
+    )
+    gateway = MemoryManagerGateway(manager)
+    action = MemoryAction(
+        action="delete",
+        content="Shopping note: compare prices.",
+        rationale="Attempted same-topic deletion.",
+        target=MemoryTarget(memory_id=50, expected_revision=2),
+    )
+
+    outcome = gateway.apply(action, "list_relevant")
+
+    assert outcome.status is MemoryOperationStatus.MEMORY_SCOPE_MISMATCH
+    assert outcome.memory_id == 50
     assert manager.processed_commands == []
 
 

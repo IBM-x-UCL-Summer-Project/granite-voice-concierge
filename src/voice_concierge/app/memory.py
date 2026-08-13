@@ -143,6 +143,8 @@ class MemoryManagerGateway:
                 return MemoryOperationOutcome(
                     MemoryOperationStatus.STRUCTURED_LIST_SCOPE_MISMATCH
                 )
+        elif scope == "list_relevant" and action.action in {"store", "update"}:
+            return MemoryOperationOutcome(MemoryOperationStatus.MEMORY_SCOPE_MISMATCH)
         target_outcome = self._authorize_target(action, scope)
         if target_outcome is not None:
             return target_outcome
@@ -277,7 +279,7 @@ def _scope_contains_memory(scope: MemoryScope, memory: MemoryRecord) -> bool:
     if scope == "task_relevant_only":
         return memory.layer == "feedback" and memory.topic == "task"
     if scope == "list_relevant":
-        return memory.layer == "feedback" and memory.topic == "shopping"
+        return memory.memory_key == SHOPPING_LIST_MEMORY_KEY
     return False
 
 

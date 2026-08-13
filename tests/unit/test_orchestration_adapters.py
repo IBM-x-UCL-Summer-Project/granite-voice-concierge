@@ -134,7 +134,7 @@ class OrchestrationAdaptersTest(unittest.TestCase):
         self.assertEqual(manager.retrieve_calls[1]["layer"], "feedback")
         self.assertEqual(len(manager.retrieve_calls), 2)
 
-    def test_shopping_store_action_uses_shopping_topic(self) -> None:
+    def test_shopping_scope_rejects_untyped_store(self) -> None:
         manager = FakeMemoryManager()
         gateway = MemoryManagerGateway(manager)
         action = MemoryAction(
@@ -146,17 +146,8 @@ class OrchestrationAdaptersTest(unittest.TestCase):
 
         result = gateway.apply(action, "list_relevant")
 
-        self.assertEqual(result.status, MemoryOperationStatus.STORED_SUCCESSFULLY)
-        self.assertEqual(
-            manager.process_calls,
-            [
-                StoreMemoryCommand(
-                    content="Buy oat milk.",
-                    layer="feedback",
-                    topic="shopping",
-                )
-            ],
-        )
+        self.assertEqual(result.status, MemoryOperationStatus.MEMORY_SCOPE_MISMATCH)
+        self.assertEqual(manager.process_calls, [])
 
     def test_non_store_memory_action_delegates_to_manager(self) -> None:
         manager = FakeMemoryManager()
