@@ -76,7 +76,7 @@ class OrchestrationAdaptersTest(unittest.TestCase):
 
         self.assertEqual(manager.retrieve_calls[0]["topic"], None)
         self.assertEqual(manager.retrieve_calls[0]["top_k"], 2)
-        self.assertEqual(manager.retrieve_calls[1]["topic"], "procedural")
+        self.assertEqual(manager.retrieve_calls[1]["topic"], "task")
         self.assertEqual(manager.retrieve_calls[2]["topic"], "shopping")
 
     def test_shopping_store_action_uses_shopping_topic(self) -> None:
@@ -96,8 +96,11 @@ class OrchestrationAdaptersTest(unittest.TestCase):
             manager.store_calls,
             [
                 {
+                    "auto_classify": False,
+                    "auto_extract": False,
                     "content": "Buy oat milk.",
                     "layer": "feedback",
+                    "memory_key": None,
                     "topic": "shopping",
                     "validate": False,
                 }
@@ -105,13 +108,14 @@ class OrchestrationAdaptersTest(unittest.TestCase):
         )
         self.assertEqual(manager.process_calls, [])
 
-    def test_non_shopping_memory_action_delegates_to_manager(self) -> None:
+    def test_non_store_memory_action_delegates_to_manager(self) -> None:
         manager = FakeMemoryManager()
         gateway = MemoryManagerGateway(manager)
         action = MemoryAction(
-            action="store",
+            action="update",
             content="User likes tea.",
             rationale="Preference.",
+            target_key="preference:drink",
             requires_confirmation=True,
         )
 

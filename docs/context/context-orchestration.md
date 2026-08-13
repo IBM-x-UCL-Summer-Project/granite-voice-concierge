@@ -1,5 +1,10 @@
 # Context Orchestration Implementation Plan
 
+> **Status:** Historical implementation plan. The original
+> `ConciergeOrchestrator` API now delegates to `VoiceConciergePipeline`, which is
+> the sole turn-processing implementation. New code should use the app pipeline
+> directly.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a testable `ConciergeOrchestrator` that links context decisions to memory retrieval, local reasoning, and speech output through injected dependencies.
