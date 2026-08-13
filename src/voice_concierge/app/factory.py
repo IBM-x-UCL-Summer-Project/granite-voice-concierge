@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from voice_concierge.app.memory import MemoryGateway, build_local_memory_gateway
 from voice_concierge.app.pipeline import VoiceConciergePipeline
 from voice_concierge.app.reasoning import (
@@ -16,7 +18,9 @@ from voice_concierge.app.types import (
     SpeechToTextAdapter,
     TextToSpeechAdapter,
 )
-from voice_concierge.memory import LocalMemoryConfig
+
+if TYPE_CHECKING:
+    from voice_concierge.memory.factory import LocalMemoryConfig
 
 
 def build_voice_concierge_pipeline(

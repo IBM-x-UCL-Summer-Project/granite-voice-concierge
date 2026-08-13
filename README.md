@@ -36,7 +36,43 @@ Useful manual variants:
 python -m voice_concierge.app.live --no-wake-word
 python -m voice_concierge.app.live --device-index <index>
 python -m voice_concierge.app.live --no-memory --no-playback
+python -m voice_concierge.app.live --no-guided-routines
 ```
+
+### Guided routines
+
+Asking to be walked through something ("guide me through making pasta", "how do
+I ...", "steps to ...") starts a guided routine instead of a one-shot answer.
+The assistant reads a step, keeps listening while it speaks, and moves on by
+itself if you stay quiet, so it works with your hands busy.
+
+While a step is being read, or in the quiet window after it:
+
+| Say | Effect |
+| --- | --- |
+| `next` / `back` / `repeat` | move through the routine |
+| `pause` / `continue` | hold and resume; a paused routine will not auto-advance |
+| `stop` | end the routine |
+
+Barge-in during playback uses the macOS voice-processing unit for echo
+cancellation, so the assistant does not hear its own speech as a command. It
+needs the `macos-aec` extra; without it the app falls back to answering
+normally. Use `--no-guided-routines` to switch the behaviour off.
+
+### Browser UI
+
+Run the pipeline-connected browser UI:
+
+```bash
+source .venv/bin/activate
+python -m voice_concierge.app.web
+```
+
+Add `--voice-io` for browser recording/STT and response TTS, `--memory` for
+persistent local memory, or `--demo` to review the UI without Ollama and audio
+models. If the virtual environment has not been installed yet, run
+`python -m pip install -e .` after activating it. See
+[the web UI guide](web/README.md) for details.
 
 ## Project Documentation
 

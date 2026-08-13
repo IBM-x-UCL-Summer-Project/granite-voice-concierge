@@ -4,9 +4,10 @@ Status: implemented Python app-pipeline contract for frontend/backend planning.
 The browser UI should connect through a backend wrapper rather than importing
 the Python package directly.
 
-The app pipeline is turn-based and stateful. A UI or backend wrapper should send
-one user turn at a time, along with the `state` returned from the previous turn.
-The pipeline returns the assistant response and the next state.
+The app pipeline is turn-based and stateful. Trusted in-process callers may pass
+the `state` returned from one turn into the next. A network backend must keep the
+authoritative state server-side and associate it with the local client; browser
+state is display data, not authority for confirmations or memory mutations.
 
 The frontend should not need to know about STT, TTS, Ollama, memory internals, or
 context-manager internals.
@@ -57,6 +58,7 @@ from voice_concierge.app import (
     app_pipeline_state_to_dict,
     app_turn_request_from_dict,
     app_turn_result_to_dict,
+    handle_audio_turn,
     handle_turn,
 )
 
@@ -82,7 +84,6 @@ Equivalent frontend-facing request shape:
 ```ts
 type AppTurnRequest = {
   transcript: string;
-  state?: AppPipelineState | null;
   options?: {
     synthesize?: boolean; // default false
     play?: boolean; // default false, mostly for local/manual testing
@@ -90,8 +91,11 @@ type AppTurnRequest = {
 };
 ```
 
-For the web UI, use `transcript`. Audio input can be added later by a backend
-wrapper using the pipeline's `process_audio(...)` method.
+The included web wrapper accepts transcripts at `POST /api/turn`. It accepts a
+base64-encoded, mono 16-bit PCM WAV at `POST /api/audio` and routes it through
+the pipeline's `process_audio(...)` method. It uses an HTTP-only, same-site
+session cookie to select server-owned pipeline state. A posted `state` field is
+ignored for backwards compatibility and cannot inject a pending action.
 
 ## Backend Adapter
 
@@ -99,14 +103,19 @@ The framework-free adapter accepts and returns plain dictionaries:
 
 ```py
 response_payload = handle_turn(request_payload, pipeline)
+audio_response_payload = handle_audio_turn(audio_request_payload, pipeline)
 ```
 
 `handle_turn(...)` parses the request with `app_turn_request_from_dict(...)`,
 calls `pipeline.process_request(...)`, then serializes the result with
-`app_turn_result_to_dict(...)`.
+`app_turn_result_to_dict(...)`. `handle_audio_turn(...)` decodes the browser WAV
+and calls `pipeline.process_audio(...)` with the same state and options contract.
+These low-level adapters accept serialized state for trusted callers and test
+tools. An HTTP or other untrusted transport must substitute server-owned state
+before calling them, as the included web wrapper does.
 
-Malformed payloads raise `PayloadValidationError`. An HTTP wrapper should
-translate that exception into a 400 response.
+Malformed payloads raise `PayloadValidationError`. The included HTTP wrapper
+translates that exception into a 400 response.
 
 ## Fake Smoke Runner
 
@@ -127,13 +136,16 @@ the adapter output.
 
 ## State Shape
 
-The UI should store this whole object and send it back on the next turn. Treat it
-as application state owned by the pipeline, not as frontend business logic.
+The response includes this whole object so the UI can render conversation and
+confirmation state. The included browser stores it as a local display cache but
+does not send it back. The server retains the authoritative copy used for the
+next turn. A frontend must never create or edit pending actions or targets.
 
 `conversation_history` contains short-term session context only. The pipeline
 keeps at most six completed exchanges and passes prior exchanges to reasoning so
 follow-up references can be understood. It is separate from approved persistent
-memory and should not be edited by the UI.
+memory. A client may render its response copy, but the server-owned value is the
+only one used for reasoning.
 
 ```ts
 type AppPipelineState = {
@@ -184,9 +196,9 @@ Every pending `update` or `delete` includes an exact target. `memory_id`
 identifies a retrieved record, `memory_key` identifies an explicitly scoped
 singleton such as `list:shopping`, and `expected_revision` prevents a stale
 confirmation from overwriting a newer value. A `store` may include only a
-`memory_key` when it is creating the first value for that scoped record. The UI
-must round-trip these fields unchanged and must not choose a target from memory
-content.
+`memory_key` when it is creating the first value for that scoped record. These
+fields stay within server-owned state; the UI must not choose a target from
+memory content.
 
 Shopping-list and task-list writes use `list_operation`; their `content` is
 `null`. The typed item array is the only mutation payload for those actions.
@@ -440,15 +452,12 @@ If the assistant response includes:
 }
 ```
 
-Then the frontend sends the full previous `state` back with the user's
-confirmation:
+The frontend then sends only the user's confirmation. The HTTP-only session
+cookie identifies the server-owned pending state:
 
 ```json
 {
-  "transcript": "yes",
-  "state": {
-    "...": "previous state object"
-  }
+  "transcript": "yes"
 }
 ```
 
@@ -458,7 +467,9 @@ The backend applies the pending memory action and returns updated state with
 ## Frontend Rule
 
 Display fields such as `spoken_response`, `context.mode`,
-`context.needs_confirmation`, and `errors`. Always send the full returned `state`
-back on the next turn. Store `conversation_history` as opaque pipeline state;
-the UI can maintain a separate display-message list if it needs richer rendering
-metadata.
+`context.needs_confirmation`, and `errors`. Keep returned `state` only as an
+opaque display cache; do not send it as authority on the next HTTP turn. The UI
+can maintain a separate display-message list if it needs richer rendering
+metadata. Treat the returned `state.context.accessibility` as the pipeline's
+current verbosity and speech pace; browser audio controls may apply device-local
+volume and rate multipliers without rewriting it.

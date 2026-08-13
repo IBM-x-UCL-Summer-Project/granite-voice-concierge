@@ -6,23 +6,24 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol
 
-from voice_concierge.reasoning import (
-    DEFAULT_MODEL_SELECTION_PATH,
-    DEFAULT_PROMPT_VERSION,
-    MemoryReference,
+from voice_concierge.reasoning.engine import ReasoningEngine
+from voice_concierge.reasoning.errors import (
     ReasoningBackendUnavailableError,
     ReasoningConfigurationError,
-    ReasoningConstraints,
-    ReasoningEngine,
     ReasoningError,
     ReasoningGenerationError,
     ReasoningModelUnavailableError,
-    ReasoningRequest,
     ReasoningRequestError,
-    ReasoningResponse,
     ReasoningTimeoutError,
+)
+from voice_concierge.reasoning.models import DEFAULT_MODEL_SELECTION_PATH
+from voice_concierge.reasoning.prompting import DEFAULT_PROMPT_VERSION
+from voice_concierge.reasoning.types import (
+    MemoryReference,
+    ReasoningConstraints,
+    ReasoningRequest,
+    ReasoningResponse,
     RuntimeReference,
-    build_reasoning_engine,
 )
 
 ReasoningFailureCategory = Literal[
@@ -155,11 +156,17 @@ class ReasoningTurnService:
 def build_reasoning_turn_service(
     config: AppReasoningConfig | None = None,
     *,
-    engine_factory: ReasoningEngineFactory = build_reasoning_engine,
+    engine_factory: ReasoningEngineFactory | None = None,
 ) -> ReasoningTurnService:
     """Construct the app reasoning service from selected local runtime config."""
 
     runtime_config = config or AppReasoningConfig()
+    if engine_factory is None:
+        # Keep the Ollama client optional for deterministic/demo pipeline users.
+        # The real backend is imported only when it is actually requested.
+        from voice_concierge.reasoning.factory import build_reasoning_engine
+
+        engine_factory = build_reasoning_engine
     engine = engine_factory(
         runtime_config.selection_path,
         prompt_version=runtime_config.prompt_version,

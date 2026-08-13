@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from voice_concierge.context.types import MemoryScope
-from voice_concierge.memory import LocalMemoryConfig, build_memory_manager
 from voice_concierge.memory.types import (
     ApplyStructuredListCommand,
     DeleteMemoryCommand,
@@ -28,6 +27,9 @@ from voice_concierge.reasoning.types import (
     MemoryReference,
     MemoryTarget,
 )
+
+if TYPE_CHECKING:
+    from voice_concierge.memory.factory import LocalMemoryConfig
 
 
 class MemoryGateway(Protocol):
@@ -191,6 +193,8 @@ def build_local_memory_gateway(
     config: LocalMemoryConfig | None = None,
 ) -> MemoryManagerGateway:
     """Build the app gateway over persistent local memory components."""
+
+    from voice_concierge.memory.factory import build_memory_manager
 
     return MemoryManagerGateway(build_memory_manager(config))
 

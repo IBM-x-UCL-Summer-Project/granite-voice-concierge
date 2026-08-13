@@ -1,5 +1,6 @@
 """Event-driven barge-in command control for playback interruption."""
 
+from voice_concierge.command_control.debounce import DebouncingCommandSpotter
 from voice_concierge.command_control.dispatcher import CommandDispatcher
 from voice_concierge.command_control.errors import (
     CommandControlError,
@@ -30,6 +31,7 @@ from voice_concierge.command_control.spotter import (
     DEFAULT_PHRASE_COMMANDS,
     PhraseCommandSpotter,
 )
+from voice_concierge.command_control.stabilizer import StableCommandSpotter
 from voice_concierge.command_control.transcript_parser import TranscriptCommandParser
 from voice_concierge.command_control.types import (
     CommandEvent,
@@ -47,6 +49,7 @@ __all__ = [
     "CommandListener",
     "CommandSpotter",
     "CommandSpotterUnavailableError",
+    "DebouncingCommandSpotter",
     "FakeCommandSpotter",
     "FakePhraseRecognizer",
     "FakePlaybackController",
@@ -57,6 +60,7 @@ __all__ = [
     "PlaybackController",
     "RoutineCommand",
     "SoundDevicePlaybackController",
+    "StableCommandSpotter",
     "TranscriptCommandParser",
     "VoiceCommand",
     "VoskPhraseRecognizer",

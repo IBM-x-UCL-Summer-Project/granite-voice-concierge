@@ -1,21 +1,20 @@
-"""Local memory management system for voice concierge."""
+"""Local memory management system for voice concierge.
 
-from voice_concierge.memory.embedding_service import EmbeddingService
+Persistent database dependencies stay lazy so the app pipeline can run with its
+default no-op memory gateway in lightweight or UI-only installations.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
 from voice_concierge.memory.factory import (
     DEFAULT_EMBEDDING_DIMENSION,
     DEFAULT_EMBEDDING_MODEL,
     DEFAULT_MEMORY_DB_PATH,
     DEFAULT_VECTOR_DB_PATH,
     LocalMemoryConfig,
-    build_memory_manager,
 )
-from voice_concierge.memory.memory_manager import (
-    IndexReconciliationResult,
-    MemoryManager,
-)
-from voice_concierge.memory.memory_retriever import MemoryRetriever
-from voice_concierge.memory.memory_store import MemoryStore
-from voice_concierge.memory.memory_validator import MemoryValidator
 from voice_concierge.memory.types import (
     ApplyStructuredListCommand,
     DeleteMemoryCommand,
@@ -37,7 +36,6 @@ from voice_concierge.memory.types import (
     normalize_event_time,
     normalize_memory_strength,
 )
-from voice_concierge.memory.vector_store import VectorStore
 
 __all__ = [
     "ApplyStructuredListCommand",
@@ -73,3 +71,28 @@ __all__ = [
     "normalize_event_time",
     "normalize_memory_strength",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    modules = {
+        "EmbeddingService": ("voice_concierge.memory.embedding_service", name),
+        "IndexReconciliationResult": (
+            "voice_concierge.memory.memory_manager",
+            name,
+        ),
+        "MemoryManager": ("voice_concierge.memory.memory_manager", name),
+        "MemoryRetriever": ("voice_concierge.memory.memory_retriever", name),
+        "MemoryStore": ("voice_concierge.memory.memory_store", name),
+        "MemoryValidator": ("voice_concierge.memory.memory_validator", name),
+        "VectorStore": ("voice_concierge.memory.vector_store", name),
+        "build_memory_manager": ("voice_concierge.memory.factory", name),
+    }
+    target = modules.get(name)
+    if target is None:
+        raise AttributeError(name)
+    module_name, attribute_name = target
+    from importlib import import_module
+
+    value = getattr(import_module(module_name), attribute_name)
+    globals()[name] = value
+    return value

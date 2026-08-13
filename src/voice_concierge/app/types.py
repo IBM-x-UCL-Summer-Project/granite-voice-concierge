@@ -86,7 +86,11 @@ class ConversationTurn:
 
 @dataclass(frozen=True)
 class AppPipelineState:
-    """State that callers should round-trip between app pipeline turns."""
+    """State trusted in-process callers may pass between pipeline turns.
+
+    Network transports must keep this state server-side rather than treating a
+    serialized client copy as authoritative for confirmations or mutations.
+    """
 
     context: ContextState = field(default_factory=ContextState)
     last_spoken_response: str | None = None
