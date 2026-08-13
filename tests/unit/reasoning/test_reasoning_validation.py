@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.support import memory_reference
+from tests.support import memory_reference, runtime_reference
 from voice_concierge.reasoning import (
     MemoryAction,
     MemoryReference,
@@ -28,6 +28,7 @@ def test_valid_reasoning_request_passes_validation() -> None:
             ),
         ),
         conversation_summary="The user was planning groceries.",
+        runtime_context=(runtime_reference("Local device time: 15:05."),),
     )
 
     validate_reasoning_request(request)
@@ -114,6 +115,23 @@ def test_request_validation_rejects_non_tuple_memories() -> None:
     )
 
     with pytest.raises(ReasoningRequestError, match="memories must be a tuple"):
+        validate_reasoning_request(request)
+
+
+def test_request_validation_rejects_non_tuple_runtime_context() -> None:
+    request = ReasoningRequest(
+        transcript="Hello",
+        runtime_context=[runtime_reference("Local device time: 15:05.")],
+    )
+
+    with pytest.raises(ReasoningRequestError, match="runtime context must be a tuple"):
+        validate_reasoning_request(request)
+
+
+def test_request_validation_rejects_invalid_runtime_reference() -> None:
+    request = ReasoningRequest(transcript="Hello", runtime_context=(object(),))
+
+    with pytest.raises(ReasoningRequestError, match=r"runtime_context\[0\]"):
         validate_reasoning_request(request)
 
 

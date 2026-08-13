@@ -6,6 +6,9 @@ $conversation_summary
 Local memories:
 $memories
 
+Runtime context:
+$runtime_context
+
 User transcript:
 $transcript
 

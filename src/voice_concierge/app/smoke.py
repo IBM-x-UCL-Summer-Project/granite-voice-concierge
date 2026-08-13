@@ -21,6 +21,7 @@ from voice_concierge.memory.types import (
     MemoryOperationStatus,
 )
 from voice_concierge.reasoning.types import (
+    InformationEvidence,
     MemoryAction,
     MemoryReference,
     ReasoningResponse,
@@ -59,6 +60,9 @@ class SmokeReasoningService:
                     ),
                     confidence="high",
                     required_information_source="user_input",
+                    information_evidence=(
+                        InformationEvidence(source="user_input", quote=transcript),
+                    ),
                 )
             )
 

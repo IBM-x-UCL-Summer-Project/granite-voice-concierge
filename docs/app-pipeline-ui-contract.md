@@ -39,6 +39,10 @@ ignored by Git. Semantic retrieval uses the local Ollama
 ollama pull granite-embedding:278m
 ```
 
+The factory also supplies the local system date and time to reasoning through a
+trusted runtime provider. This is local-only and requires no service or
+credential. Serialized UI requests cannot inject runtime facts.
+
 Confirmed writes are stored without a second model-based classification step.
 The app context policy supplies the storage layer and topic, while the embedding
 model supplies only the vector used for later retrieval.
@@ -261,6 +265,10 @@ type AppTurnResponse = {
       | 'external_live';
     information_evidence: Array<
       | {
+          source: 'user_input';
+          quote: string;
+        }
+      | {
           source: 'memory';
           quote: string;
           memory_id: number;
@@ -269,6 +277,12 @@ type AppTurnResponse = {
       | {
           source: 'conversation_summary';
           quote: string;
+        }
+      | {
+          source: 'runtime_context';
+          quote: string;
+          runtime_id: string;
+          observed_at: number;
         }
     >;
     freshness_requirement: 'not_required' | 'current';
@@ -324,6 +338,7 @@ type AppTurnError =
   | 'empty_transcript'
   | 'stt_failed'
   | 'memory_retrieval_failed'
+  | 'runtime_context_failed'
   | 'reasoning_failed'
   | 'memory_action_failed'
   | 'tts_failed'

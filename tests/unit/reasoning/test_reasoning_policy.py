@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.support import memory_reference
+from tests.support import memory_reference, runtime_reference, user_input_evidence
 from voice_concierge.reasoning.policy import apply_reasoning_policy_guards
 from voice_concierge.reasoning.types import (
     InformationEvidence,
@@ -252,6 +252,7 @@ def test_policy_guard_attributes_current_information_supplied_by_user() -> None:
         ReasoningResponse(
             spoken_response="The road is closed.",
             required_information_source="user_input",
+            information_evidence=(user_input_evidence("The road is closed"),),
             freshness_requirement="current",
         ),
     )
@@ -272,6 +273,9 @@ def test_policy_guard_allows_user_supplied_appointment_today() -> None:
             spoken_response="I cannot verify up-to-date information offline.",
             confidence="medium",
             required_information_source="user_input",
+            information_evidence=(
+                user_input_evidence("Remember my appointment today."),
+            ),
         ),
     )
 
@@ -336,6 +340,27 @@ def test_policy_guard_still_blocks_current_clock_time() -> None:
         "I do not have live device information for that request."
     )
     assert response.metadata["policy_guard"] == "runtime_source_unavailable"
+
+
+def test_policy_guard_uses_identified_current_runtime_fact() -> None:
+    clock = runtime_reference("Local device time: 15:05.")
+    original = ReasoningResponse(
+        spoken_response="It is 15:05.",
+        confidence="high",
+        required_information_source="runtime_live",
+        information_evidence=(clock.information_evidence(),),
+        freshness_requirement="current",
+    )
+
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(
+            transcript="What time is it now?",
+            runtime_context=(clock,),
+        ),
+        original,
+    )
+
+    assert response is original
 
 
 def test_policy_guard_applies_offline_guard_only_when_required() -> None:
@@ -632,6 +657,9 @@ def test_policy_guard_adds_memory_store_action() -> None:
             spoken_response="Understood.",
             confidence="medium",
             required_information_source="user_input",
+            information_evidence=(
+                user_input_evidence("Remember that I prefer short answers."),
+            ),
         ),
     )
 
@@ -655,6 +683,9 @@ def test_policy_guard_replaces_list_operation_for_non_list_memory_request() -> N
                 list_operation=_add_items("shopping", "short answers"),
             ),
             required_information_source="user_input",
+            information_evidence=(
+                user_input_evidence("Remember that I prefer short answers."),
+            ),
         ),
     )
 

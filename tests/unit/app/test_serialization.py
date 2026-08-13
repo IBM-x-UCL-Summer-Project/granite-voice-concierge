@@ -40,6 +40,7 @@ from voice_concierge.memory import (
     MemorySimilarityAdvisory,
 )
 from voice_concierge.reasoning.types import (
+    InformationEvidence,
     MemoryAction,
     MemoryTarget,
     ReasoningResponse,
@@ -287,6 +288,44 @@ def test_memory_operation_serializes_similarity_as_advisory_evidence() -> None:
         ],
         "reason": "stored_successfully",
     }
+
+
+def test_runtime_information_evidence_serializes_with_observation_identity() -> None:
+    state = AppPipelineState()
+    result = AppTurnResult(
+        state=state,
+        spoken_response="It is 15:05.",
+        context_decision=ContextDecision(
+            state=state.context,
+            policy=policy_for_mode("home", state.context.accessibility),
+        ),
+        reasoning_result=ReasoningTurnResult(
+            response=ReasoningResponse(
+                spoken_response="It is 15:05.",
+                required_information_source="runtime_live",
+                information_evidence=(
+                    InformationEvidence(
+                        source="runtime_context",
+                        quote="Local device time: 15:05.",
+                        runtime_id="device.clock",
+                        observed_at=1_700_000_000,
+                    ),
+                ),
+                freshness_requirement="current",
+            )
+        ),
+    )
+
+    payload = app_turn_result_to_dict(result)
+
+    assert payload["reasoning"]["information_evidence"] == [
+        {
+            "source": "runtime_context",
+            "quote": "Local device time: 15:05.",
+            "runtime_id": "device.clock",
+            "observed_at": 1_700_000_000,
+        }
+    ]
 
 
 def test_captured_audio_to_dict_serializes_wav_audio() -> None:

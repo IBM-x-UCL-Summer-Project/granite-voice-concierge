@@ -12,6 +12,8 @@ It contains:
 - `mode`: current behavior mode, such as `home`, `cooking`, `shopping`, or `driving`;
 - `memories`: typed `MemoryReference` values supplied by the memory component,
   including stable ID, optional scoped key, and revision as well as content;
+- `runtime_context`: typed `RuntimeReference` values supplied by trusted local
+  application or device providers, including an ID and observation timestamp;
 - `conversation_summary`: optional recent context;
 - `constraints`: runtime limits such as max spoken words and whether memory writes are allowed.
 
@@ -25,8 +27,8 @@ It contains:
 - `mode_suggestion`: optional future mode switch hint;
 - `confidence`: coarse confidence label;
 - `required_information_source`: typed provenance required to fulfil the turn;
-- `information_evidence`: exact supplied memory or conversation-summary
-  citations supporting a `local_context` answer;
+- `information_evidence`: exact transcript, memory, conversation-summary, or
+  runtime citations supporting the declared information source;
 - `freshness_requirement`: whether correctness depends on current information;
 - `metadata`: backend-specific details.
 
@@ -61,15 +63,17 @@ reasoning boundary declares one of these sources:
 
 `freshness_requirement` is `current` only when live accuracy is necessary to
 fulfil the request. The deterministic information policy validates that the
-declared source is available. A `local_context` answer must cite a verbatim
-fragment of the supplied context; memory evidence must also match the supplied
-memory ID and revision. Missing, invented, stale, or misquoted evidence fails
-closed. Evidence is rejected for other declared sources rather than being
+declared source is available. A `user_input` answer must quote the current
+transcript. A `local_context` answer must quote supplied context; memory evidence
+must also match the supplied memory ID and revision. A `runtime_live` answer
+must match a supplied runtime ID, observation timestamp, and verbatim content
+fragment. Missing, invented, stale, or misquoted evidence fails closed. Evidence
+is rejected for sources that should not use supplied context rather than being
 silently ignored. External live data is rejected under offline constraints,
-runtime state is rejected until such context is explicitly provided, missing
-local context fails closed, and current claims based only on stable knowledge
-are rejected. Current information supplied by the user or local context is
-attributed with a freshness caveat.
+missing local or runtime context fails closed, live sources must declare current
+freshness, and current claims based only on stable knowledge are rejected.
+Current information supplied by the user or local context is attributed with a
+freshness caveat.
 
 This evidence check binds a response to context that was actually supplied; it
 does not by itself prove that every generated claim logically follows from the
@@ -83,9 +87,17 @@ lookup text itself is never stored as a fact.
 
 `validate_reasoning_request()` owns public request validation. Engines call it
 before prompt construction or backend calls. It rejects empty transcripts or
-modes, non-tuple memory collections, values that are not `MemoryReference`
-instances, empty supplied conversation summaries, missing or malformed
-constraints, non-positive `max_words`, and non-boolean constraint flags.
+modes, non-tuple memory or runtime collections, values that are not
+`MemoryReference` or `RuntimeReference` instances, empty supplied conversation
+summaries, missing or malformed constraints, non-positive `max_words`, and
+non-boolean constraint flags.
+
+The normal app factory installs `LocalRuntimeContextProvider`, which supplies a
+timezone-aware local system date and time without network access. Other device
+facts must enter through the app-owned `RuntimeContextProvider` boundary; they
+are not accepted from the serialized UI request payload. Set
+`load_runtime_context=False` only when a caller intentionally wants no default
+runtime facts.
 
 `output.py` owns backend-neutral spoken-response shaping. The Ollama adapter calls
 its shared word-limit function after deterministic policy guards, while the

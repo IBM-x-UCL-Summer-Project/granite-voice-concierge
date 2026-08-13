@@ -9,12 +9,13 @@ from voice_concierge.app.reasoning import ReasoningTurnResult
 from voice_concierge.audio.types import CapturedAudio
 from voice_concierge.context.types import ContextDecision, ContextState, MemoryScope
 from voice_concierge.memory.types import MemoryOperationOutcome
-from voice_concierge.reasoning.types import MemoryAction
+from voice_concierge.reasoning.types import MemoryAction, RuntimeReference
 
 AppTurnError = Literal[
     "empty_transcript",
     "stt_failed",
     "memory_retrieval_failed",
+    "runtime_context_failed",
     "reasoning_failed",
     "memory_action_failed",
     "tts_failed",
@@ -49,6 +50,13 @@ class AudioPlayerAdapter(Protocol):
 
     def play(self, audio: CapturedAudio) -> None:
         """Play synthesized speech audio."""
+
+
+class RuntimeContextProvider(Protocol):
+    """Trusted boundary for current local application or device facts."""
+
+    def snapshot(self) -> tuple[RuntimeReference, ...]:
+        """Return identified runtime facts observed for the current turn."""
 
 
 @dataclass(frozen=True)

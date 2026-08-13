@@ -16,6 +16,7 @@ from voice_concierge.reasoning.types import (
     ReasoningConstraints,
     ReasoningRequest,
     ReasoningResponse,
+    RuntimeReference,
 )
 
 EvaluationMode = Literal["raw", "guarded", "both"]
@@ -32,6 +33,7 @@ class BenchmarkCase:
     mode: str
     expected_behavior: str
     memories: tuple[MemoryReference, ...] = ()
+    runtime_context: tuple[RuntimeReference, ...] = ()
     conversation_summary: str | None = None
     checks: dict[str, Any] | None = None
 
@@ -62,6 +64,7 @@ class BenchmarkResult:
     transcript: str
     mode: str
     memories: tuple[MemoryReference, ...]
+    runtime_context: tuple[RuntimeReference, ...]
     conversation_summary: str | None
     expected_behavior: str
     spoken_response: str
@@ -115,6 +118,12 @@ def iter_benchmark_cases(suite: dict[str, Any]) -> Iterable[BenchmarkCase]:
                         case.get("memories", ()),
                     )
                 ),
+                runtime_context=tuple(
+                    _runtime_reference_from_payload(reference, index=runtime_index)
+                    for runtime_index, reference in enumerate(
+                        case.get("runtime_context", ()),
+                    )
+                ),
                 conversation_summary=case.get("conversation_summary"),
                 checks=case.get("checks"),
             )
@@ -144,6 +153,7 @@ def run_reasoning_benchmark(
             transcript=case.transcript,
             mode=case.mode,
             memories=case.memories,
+            runtime_context=case.runtime_context,
             conversation_summary=case.conversation_summary,
             constraints=constraints,
         )
@@ -182,6 +192,7 @@ def run_reasoning_benchmark(
                 transcript=case.transcript,
                 mode=case.mode,
                 memories=case.memories,
+                runtime_context=case.runtime_context,
                 conversation_summary=case.conversation_summary,
                 expected_behavior=case.expected_behavior,
                 spoken_response=primary_evaluation.spoken_response,
@@ -247,6 +258,23 @@ def _memory_reference_from_payload(
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(f"memories[{index}] is invalid: {exc}") from exc
+
+
+def _runtime_reference_from_payload(
+    payload: object,
+    *,
+    index: int,
+) -> RuntimeReference:
+    if not isinstance(payload, dict):
+        raise ValueError(f"runtime_context[{index}] must be an object.")
+    try:
+        return RuntimeReference(
+            runtime_id=payload["runtime_id"],
+            content=payload["content"],
+            observed_at=payload["observed_at"],
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"runtime_context[{index}] is invalid: {exc}") from exc
 
 
 def _generate_responses(

@@ -21,6 +21,7 @@ from voice_concierge.reasoning import (
     ReasoningRequestError,
     ReasoningResponse,
     ReasoningTimeoutError,
+    RuntimeReference,
     build_reasoning_engine,
 )
 
@@ -63,6 +64,7 @@ class ReasoningTurnContext:
 
     mode: str = "home"
     memories: tuple[MemoryReference, ...] = ()
+    runtime_context: tuple[RuntimeReference, ...] = ()
     conversation_summary: str | None = None
     max_words: int = 60
     allow_memory_writes: bool = True
@@ -76,6 +78,7 @@ class ReasoningTurnContext:
             transcript=transcript,
             mode=self.mode,
             memories=self.memories,
+            runtime_context=self.runtime_context,
             conversation_summary=self.conversation_summary,
             constraints=ReasoningConstraints(
                 offline=self.offline,

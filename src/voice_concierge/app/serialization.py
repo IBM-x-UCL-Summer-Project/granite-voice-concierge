@@ -272,6 +272,14 @@ def reasoning_result_to_dict(result: AppTurnResult) -> JsonDict | None:
                     if evidence.source == "memory"
                     else {}
                 ),
+                **(
+                    {
+                        "runtime_id": evidence.runtime_id,
+                        "observed_at": evidence.observed_at,
+                    }
+                    if evidence.source == "runtime_context"
+                    else {}
+                ),
             }
             for evidence in response.information_evidence
         ],

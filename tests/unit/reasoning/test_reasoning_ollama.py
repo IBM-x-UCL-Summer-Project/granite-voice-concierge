@@ -9,7 +9,7 @@ import pytest
 from httpx import ReadTimeout
 from ollama import ChatResponse, ResponseError
 
-from tests.support import memory_reference
+from tests.support import memory_reference, runtime_reference
 from voice_concierge.reasoning import (
     MemoryTarget,
     OllamaBackendUnavailableError,
@@ -251,6 +251,7 @@ def test_ollama_engine_parses_memory_action() -> None:
             },
             confidence="high",
             required_information_source="user_input",
+            information_evidence=[{"source": "user_input", "quote": "Please help."}],
         )
     )
 
@@ -306,6 +307,12 @@ def test_ollama_engine_parses_typed_structured_list_operation() -> None:
                 "requires_confirmation": True,
             },
             required_information_source="user_input",
+            information_evidence=[
+                {
+                    "source": "user_input",
+                    "quote": "Add milk and bread to my shopping list.",
+                }
+            ],
         )
     )
 
@@ -325,6 +332,36 @@ def test_ollama_engine_parses_typed_structured_list_operation() -> None:
             items=("milk", "bread"),
         )
     )
+
+
+def test_ollama_engine_parses_and_verifies_runtime_evidence() -> None:
+    clock = runtime_reference("Local device time: 15:05.")
+    engine, _ = _engine_with_response(
+        _structured_content(
+            "It is 15:05.",
+            confidence="high",
+            required_information_source="runtime_live",
+            information_evidence=[
+                {
+                    "source": "runtime_context",
+                    "quote": clock.content,
+                    "runtime_id": clock.runtime_id,
+                    "observed_at": clock.observed_at,
+                }
+            ],
+            freshness_requirement="current",
+        )
+    )
+
+    response = engine.generate(
+        ReasoningRequest(
+            transcript="What time is it?",
+            runtime_context=(clock,),
+        )
+    )
+
+    assert response.spoken_response == "It is 15:05."
+    assert response.information_evidence == (clock.information_evidence(),)
 
 
 def test_ollama_engine_maps_connection_errors() -> None:
@@ -467,6 +504,12 @@ def test_ollama_engine_stores_declared_user_fact_with_temporal_language() -> Non
         _structured_content(
             "I can remember that. Please confirm before I save it.",
             required_information_source="user_input",
+            information_evidence=[
+                {
+                    "source": "user_input",
+                    "quote": "Remember my appointment this afternoon.",
+                }
+            ],
         )
     )
 

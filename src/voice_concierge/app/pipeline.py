@@ -22,6 +22,7 @@ from voice_concierge.app.types import (
     AudioPlayerAdapter,
     ConversationTurn,
     MemoryOperationResult,
+    RuntimeContextProvider,
     SpeechToTextAdapter,
     TextToSpeechAdapter,
     TranscriptResult,
@@ -43,7 +44,11 @@ from voice_concierge.memory.types import (
     MemoryOperationOutcome,
     MemoryOperationStatus,
 )
-from voice_concierge.reasoning.types import MemoryReference, ReasoningResponse
+from voice_concierge.reasoning.types import (
+    MemoryReference,
+    ReasoningResponse,
+    RuntimeReference,
+)
 
 _EMPTY_TRANSCRIPT_RESPONSE = "I didn't catch that. Could you say it again?"
 _STT_FAILED_RESPONSE = "I couldn't transcribe that. Please try again."
@@ -89,6 +94,7 @@ class VoiceConciergePipeline:
         speech_to_text: SpeechToTextAdapter | None = None,
         text_to_speech: TextToSpeechAdapter | None = None,
         audio_player: AudioPlayerAdapter | None = None,
+        runtime_context: RuntimeContextProvider | None = None,
         memory_context_limit: int = 3,
         conversation_history_limit: int = DEFAULT_CONVERSATION_HISTORY_LIMIT,
     ) -> None:
@@ -101,6 +107,7 @@ class VoiceConciergePipeline:
         self._speech_to_text = speech_to_text
         self._text_to_speech = text_to_speech
         self._audio_player = audio_player
+        self._runtime_context = runtime_context
         self._memory_context_limit = memory_context_limit
         self._conversation_history_limit = conversation_history_limit
 
@@ -242,6 +249,7 @@ class VoiceConciergePipeline:
             return command_result
 
         memories: tuple[MemoryReference, ...] = ()
+        runtime_context: tuple[RuntimeReference, ...] = ()
         errors: list[AppTurnError] = []
         if context_decision.policy.memory_scope != "none":
             try:
@@ -253,9 +261,24 @@ class VoiceConciergePipeline:
             except Exception:
                 errors.append("memory_retrieval_failed")
 
+        if self._runtime_context is not None:
+            try:
+                candidate_runtime_context = self._runtime_context.snapshot()
+                if not isinstance(candidate_runtime_context, tuple) or not all(
+                    isinstance(reference, RuntimeReference)
+                    for reference in candidate_runtime_context
+                ):
+                    raise TypeError(
+                        "Runtime context must be a tuple of RuntimeReference values."
+                    )
+                runtime_context = candidate_runtime_context
+            except Exception:
+                errors.append("runtime_context_failed")
+
         reasoning_context = ReasoningTurnContext(
             mode=context_decision.policy.mode,
             memories=memories,
+            runtime_context=runtime_context,
             conversation_summary=_conversation_summary(
                 current_state.conversation_history
             ),

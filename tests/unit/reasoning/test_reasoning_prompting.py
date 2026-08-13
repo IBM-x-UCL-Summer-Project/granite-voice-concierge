@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from tests.support import memory_reference
+from tests.support import memory_reference, runtime_reference
 from voice_concierge.reasoning import (
     DEFAULT_PROMPT_VERSION,
     ChatMessage,
@@ -79,6 +79,7 @@ def test_granite_messages_include_mode_and_memory_context() -> None:
             ),
         ),
         conversation_summary="User was preparing breakfast.",
+        runtime_context=(runtime_reference("Local device time: 15:05."),),
         constraints=ReasoningConstraints(max_words=30),
     )
 
@@ -93,6 +94,10 @@ def test_granite_messages_include_mode_and_memory_context() -> None:
         "topic=none; content=User prefers short answers."
     ) in user_prompt
     assert "User was preparing breakfast." in user_prompt
+    assert (
+        "- id=device.clock; observed_at=1700000000; "
+        "content=Local device time: 15:05."
+    ) in user_prompt
     assert "How do I like you to answer?" in user_prompt
     assert "Return only a JSON object" in user_prompt
 
@@ -119,6 +124,7 @@ def test_granite_messages_mark_missing_memory_context() -> None:
 
     assert "No local memories supplied." in messages[1].content
     assert "No summary supplied." in messages[1].content
+    assert "No runtime context supplied." in messages[1].content
 
 
 def test_granite_messages_reject_invalid_prompt_version() -> None:

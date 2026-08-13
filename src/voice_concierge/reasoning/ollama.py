@@ -133,19 +133,41 @@ class _StructuredInformationEvidence(BaseModel):
 
     model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
 
-    source: Literal["memory", "conversation_summary"]
+    source: Literal[
+        "user_input",
+        "memory",
+        "conversation_summary",
+        "runtime_context",
+    ]
     quote: str = Field(min_length=1)
     memory_id: int | None = Field(default=None, gt=0)
     memory_revision: int | None = Field(default=None, gt=0)
+    runtime_id: str | None = Field(default=None, min_length=1)
+    observed_at: int | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
     def require_source_identity(self) -> _StructuredInformationEvidence:
         if self.source == "memory":
             if self.memory_id is None or self.memory_revision is None:
                 raise ValueError("memory evidence requires ID and revision")
+            if self.runtime_id is not None or self.observed_at is not None:
+                raise ValueError("memory evidence cannot carry runtime identity")
             return self
-        if self.memory_id is not None or self.memory_revision is not None:
-            raise ValueError("conversation evidence cannot carry memory identity")
+        if self.source == "runtime_context":
+            if self.runtime_id is None or self.observed_at is None:
+                raise ValueError("runtime evidence requires ID and observed_at")
+            if self.memory_id is not None or self.memory_revision is not None:
+                raise ValueError("runtime evidence cannot carry memory identity")
+            return self
+        if (
+            self.memory_id is not None
+            or self.memory_revision is not None
+            or self.runtime_id is not None
+            or self.observed_at is not None
+        ):
+            raise ValueError(
+                "transcript and conversation evidence cannot carry identity"
+            )
         return self
 
 
@@ -242,7 +264,8 @@ class _StructuredReasoningResponse(BaseModel):
     information_evidence: tuple[_StructuredInformationEvidence, ...] = Field(
         description=(
             "Exact supplied memory or conversation-summary quotes supporting a "
-            "local_context answer; empty for every other source."
+            "local_context answer, transcript quotes supporting user_input, or "
+            "identified runtime facts supporting runtime_live."
         )
     )
     freshness_requirement: Literal["not_required", "current"]
@@ -648,6 +671,8 @@ def _response_from_structured_payload(
                 quote=evidence.quote,
                 memory_id=evidence.memory_id,
                 memory_revision=evidence.memory_revision,
+                runtime_id=evidence.runtime_id,
+                observed_at=evidence.observed_at,
             )
             for evidence in payload.information_evidence
         ),

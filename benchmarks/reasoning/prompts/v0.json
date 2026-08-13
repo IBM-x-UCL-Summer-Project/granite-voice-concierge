@@ -232,6 +232,25 @@
           "freshness_requirement": "current",
           "must_contain_any": ["offline", "cannot", "verify"]
         }
+      },
+      {
+        "id": "runtime_local_device_time",
+        "transcript": "What time is it now?",
+        "mode": "home",
+        "runtime_context": [
+          {
+            "runtime_id": "system.local_datetime",
+            "content": "Local device date and time: 2026-08-13T15:05:00+01:00.",
+            "observed_at": 1786629900
+          }
+        ],
+        "expected_behavior": "Answer from the identified local runtime observation rather than refusing or using model knowledge.",
+        "checks": {
+          "memory_action": null,
+          "information_source": "runtime_live",
+          "freshness_requirement": "current",
+          "must_contain_any": ["15:05", "3:05", "three oh five"]
+        }
       }
     ],
     "accessibility": [

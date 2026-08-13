@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from tests.support import memory_reference
+from tests.support import memory_reference, runtime_reference
 from voice_concierge.app.pipeline import VoiceConciergePipeline
 from voice_concierge.app.reasoning import (
     ReasoningFailure,
@@ -25,6 +25,7 @@ from voice_concierge.reasoning.types import (
     MemoryReference,
     MemoryTarget,
     ReasoningResponse,
+    RuntimeReference,
 )
 
 
@@ -135,6 +136,23 @@ class FakeAudioPlayer:
         self.played.append(audio)
         if self.error is not None:
             raise self.error
+
+
+class FakeRuntimeContext:
+    def __init__(
+        self,
+        *,
+        error: Exception | None = None,
+    ) -> None:
+        self.reference = runtime_reference("Local device time: 15:05.")
+        self.error = error
+        self.calls = 0
+
+    def snapshot(self) -> tuple[RuntimeReference, ...]:
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        return (self.reference,)
 
 
 def test_process_transcript_calls_memory_and_reasoning_with_context_policy() -> None:
@@ -482,6 +500,41 @@ def test_memory_retrieval_failure_still_allows_reasoning() -> None:
     reasoning_context = reasoning.calls[0]["context"]
     assert isinstance(reasoning_context, ReasoningTurnContext)
     assert reasoning_context.memories == ()
+
+
+def test_runtime_context_snapshot_is_passed_to_reasoning() -> None:
+    reasoning = FakeReasoning()
+    runtime_context = FakeRuntimeContext()
+    pipeline = VoiceConciergePipeline(
+        reasoning,
+        memory=FakeMemory(),
+        runtime_context=runtime_context,
+    )
+
+    result = pipeline.process_transcript("what time is it")
+
+    reasoning_context = reasoning.calls[0]["context"]
+    assert isinstance(reasoning_context, ReasoningTurnContext)
+    assert reasoning_context.runtime_context == (runtime_context.reference,)
+    assert runtime_context.calls == 1
+    assert result.errors == ()
+
+
+def test_runtime_context_failure_is_recoverable() -> None:
+    reasoning = FakeReasoning()
+    runtime_context = FakeRuntimeContext(error=RuntimeError("clock unavailable"))
+    pipeline = VoiceConciergePipeline(
+        reasoning,
+        memory=FakeMemory(),
+        runtime_context=runtime_context,
+    )
+
+    result = pipeline.process_transcript("hello")
+
+    reasoning_context = reasoning.calls[0]["context"]
+    assert isinstance(reasoning_context, ReasoningTurnContext)
+    assert reasoning_context.runtime_context == ()
+    assert result.errors == ("runtime_context_failed",)
 
 
 def test_reasoning_exception_returns_stable_failure_result() -> None:

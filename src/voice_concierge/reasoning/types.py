@@ -34,7 +34,12 @@ InformationSource = Literal[
     "runtime_live",
     "external_live",
 ]
-InformationEvidenceSource = Literal["memory", "conversation_summary"]
+InformationEvidenceSource = Literal[
+    "user_input",
+    "memory",
+    "conversation_summary",
+    "runtime_context",
+]
 FreshnessRequirement = Literal["not_required", "current"]
 
 
@@ -123,16 +128,54 @@ class MemoryReference:
 
 
 @dataclass(frozen=True)
+class RuntimeReference:
+    """Typed live application or device fact supplied to reasoning."""
+
+    runtime_id: str
+    content: str
+    observed_at: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.runtime_id, str) or not self.runtime_id.strip():
+            raise ValueError("Runtime reference ID must not be blank.")
+        if not isinstance(self.content, str) or not self.content.strip():
+            raise ValueError("Runtime reference content must not be blank.")
+        if (
+            not isinstance(self.observed_at, int)
+            or isinstance(self.observed_at, bool)
+            or self.observed_at < 0
+        ):
+            raise ValueError("Runtime reference timestamp must be non-negative.")
+
+    def information_evidence(self) -> InformationEvidence:
+        """Return exact evidence identifying this supplied runtime fact."""
+
+        return InformationEvidence(
+            source="runtime_context",
+            quote=self.content,
+            runtime_id=self.runtime_id,
+            observed_at=self.observed_at,
+        )
+
+
+@dataclass(frozen=True)
 class InformationEvidence:
-    """Verifiable local-context evidence cited by a reasoning response."""
+    """Verifiable supplied evidence cited by a reasoning response."""
 
     source: InformationEvidenceSource
     quote: str
     memory_id: int | None = None
     memory_revision: int | None = None
+    runtime_id: str | None = None
+    observed_at: int | None = None
 
     def __post_init__(self) -> None:
-        if self.source not in {"memory", "conversation_summary"}:
+        if self.source not in {
+            "user_input",
+            "memory",
+            "conversation_summary",
+            "runtime_context",
+        }:
             raise ValueError(f"Unsupported information evidence: {self.source!r}.")
         if not isinstance(self.quote, str) or not self.quote.strip():
             raise ValueError("Information evidence quote must not be blank.")
@@ -149,10 +192,29 @@ class InformationEvidence:
                 or self.memory_revision <= 0
             ):
                 raise ValueError("Memory evidence revision must be positive.")
+            if self.runtime_id is not None or self.observed_at is not None:
+                raise ValueError("Memory evidence cannot carry runtime identity.")
             return
-        if self.memory_id is not None or self.memory_revision is not None:
+        if self.source == "runtime_context":
+            if not isinstance(self.runtime_id, str) or not self.runtime_id.strip():
+                raise ValueError("Runtime evidence ID must not be blank.")
+            if (
+                not isinstance(self.observed_at, int)
+                or isinstance(self.observed_at, bool)
+                or self.observed_at < 0
+            ):
+                raise ValueError("Runtime evidence timestamp must be non-negative.")
+            if self.memory_id is not None or self.memory_revision is not None:
+                raise ValueError("Runtime evidence cannot carry memory identity.")
+            return
+        if (
+            self.memory_id is not None
+            or self.memory_revision is not None
+            or self.runtime_id is not None
+            or self.observed_at is not None
+        ):
             raise ValueError(
-                "Conversation-summary evidence cannot carry memory identity."
+                "Transcript and conversation evidence cannot carry record identity."
             )
 
 
@@ -233,6 +295,8 @@ class ReasoningRequest:
     mode: str = "home"
     #: Relevant retrieved memories with stable identity and revision metadata.
     memories: tuple[MemoryReference, ...] = ()
+    #: Current runtime facts with stable identity and observation timestamps.
+    runtime_context: tuple[RuntimeReference, ...] = ()
     #: Optional compact summary of prior turns supplied by conversation state.
     conversation_summary: str | None = None
     #: Runtime policy and output-shaping constraints for this request.

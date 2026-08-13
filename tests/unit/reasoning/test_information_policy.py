@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.support import memory_reference
+from tests.support import memory_reference, runtime_reference, user_input_evidence
 from voice_concierge.reasoning.information_policy import decide_information_policy
 from voice_concierge.reasoning.types import (
     InformationEvidence,
@@ -30,11 +30,15 @@ def test_information_policy_uses_declared_source_not_transcript_words(
     freshness,
     expected_disposition,
 ) -> None:
+    transcript = "Any wording can express this intent."
     decision = decide_information_policy(
-        ReasoningRequest(transcript="Any wording can express this intent."),
+        ReasoningRequest(transcript=transcript),
         ReasoningResponse(
             spoken_response="Candidate answer.",
             required_information_source=source,
+            information_evidence=(
+                (user_input_evidence(transcript),) if source == "user_input" else ()
+            ),
             freshness_requirement=freshness,
         ),
     )
@@ -162,7 +166,99 @@ def test_information_policy_rejects_local_evidence_for_other_sources() -> None:
         ),
     )
 
-    assert decision.disposition == "unexpected_local_context_evidence"
+    assert decision.disposition == "unexpected_information_evidence"
+
+
+def test_information_policy_rejects_user_input_without_evidence() -> None:
+    decision = decide_information_policy(
+        ReasoningRequest(transcript="The road is closed."),
+        ReasoningResponse(
+            spoken_response="The road is closed.",
+            required_information_source="user_input",
+        ),
+    )
+
+    assert decision.disposition == "missing_user_input_evidence"
+
+
+def test_information_policy_rejects_non_verbatim_user_input_evidence() -> None:
+    decision = decide_information_policy(
+        ReasoningRequest(transcript="The road is closed."),
+        ReasoningResponse(
+            spoken_response="The road is closed.",
+            required_information_source="user_input",
+            information_evidence=(user_input_evidence("The shop is closed."),),
+        ),
+    )
+
+    assert decision.disposition == "invalid_user_input_evidence"
+
+
+def test_information_policy_allows_exact_runtime_evidence() -> None:
+    clock = runtime_reference("Local device time: 15:05.")
+    decision = decide_information_policy(
+        ReasoningRequest(
+            transcript="What time is it?",
+            runtime_context=(clock,),
+        ),
+        ReasoningResponse(
+            spoken_response="It is 15:05.",
+            required_information_source="runtime_live",
+            information_evidence=(clock.information_evidence(),),
+            freshness_requirement="current",
+        ),
+    )
+
+    assert decision.allowed is True
+
+
+def test_information_policy_rejects_unidentified_runtime_evidence() -> None:
+    clock = runtime_reference("Local device time: 15:05.")
+    other_clock = runtime_reference(
+        "Local device time: 15:05.",
+        runtime_id="other.clock",
+    )
+    decision = decide_information_policy(
+        ReasoningRequest(
+            transcript="What time is it?",
+            runtime_context=(clock,),
+        ),
+        ReasoningResponse(
+            spoken_response="It is 15:05.",
+            required_information_source="runtime_live",
+            information_evidence=(other_clock.information_evidence(),),
+            freshness_requirement="current",
+        ),
+    )
+
+    assert decision.disposition == "invalid_runtime_context_evidence"
+
+
+@pytest.mark.parametrize("source", ("runtime_live", "external_live"))
+def test_information_policy_requires_current_freshness_for_live_sources(
+    source,
+) -> None:
+    runtime_context = ()
+    evidence = ()
+    if source == "runtime_live":
+        clock = runtime_reference("Local device time: 15:05.")
+        runtime_context = (clock,)
+        evidence = (clock.information_evidence(),)
+
+    decision = decide_information_policy(
+        ReasoningRequest(
+            transcript="Use live information.",
+            runtime_context=runtime_context,
+        ),
+        ReasoningResponse(
+            spoken_response="Candidate answer.",
+            required_information_source=source,
+            information_evidence=evidence,
+            freshness_requirement="not_required",
+        ),
+    )
+
+    assert decision.disposition == "live_source_requires_current_freshness"
 
 
 def test_information_policy_allows_external_source_when_offline_is_disabled() -> None:

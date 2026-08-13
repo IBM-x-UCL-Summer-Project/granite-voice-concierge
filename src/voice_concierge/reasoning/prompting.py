@@ -13,7 +13,11 @@ from string import Template
 from types import MappingProxyType
 from typing import Literal
 
-from voice_concierge.reasoning.types import MemoryReference, ReasoningRequest
+from voice_concierge.reasoning.types import (
+    MemoryReference,
+    ReasoningRequest,
+    RuntimeReference,
+)
 
 Role = Literal["system", "user", "assistant"]
 
@@ -33,6 +37,7 @@ _USER_FIELDS = frozenset(
         "conversation_summary",
         "memories",
         "mode",
+        "runtime_context",
         "transcript",
     }
 )
@@ -145,7 +150,7 @@ def build_granite_messages(
         conversation_summary=_format_conversation_summary(request),
         memories=_format_memories(request.memories),
         mode=request.mode,
-        #  transcript  _format_transcript
+        runtime_context=_format_runtime_context(request.runtime_context),
         transcript=_format_transcript(request.transcript),
     )
     return (
@@ -242,16 +247,28 @@ def _validate_resource_name(value: str, *, label: str) -> None:
 
 def _format_transcript(transcript: str) -> str:
     if len(transcript) > _MAX_TRANSCRIPT_CHARS:
-
         return transcript[:_MAX_TRANSCRIPT_CHARS] + "... [truncated]"
     return transcript
+
+
+def _format_runtime_context(
+    runtime_context: tuple[RuntimeReference, ...],
+) -> str:
+    if not runtime_context:
+        return "No runtime context supplied."
+    return "\n".join(
+        (
+            f"- id={reference.runtime_id}; observed_at={reference.observed_at}; "
+            f"content={reference.content}"
+        )
+        for reference in runtime_context
+    )
 
 
 def _format_conversation_summary(request: ReasoningRequest) -> str:
     if request.conversation_summary:
         summary = request.conversation_summary
         if len(summary) > _MAX_SUMMARY_CHARS:
-
             return "... [truncated]\n" + summary[-_MAX_SUMMARY_CHARS:]
         return summary
     return "No summary supplied."
