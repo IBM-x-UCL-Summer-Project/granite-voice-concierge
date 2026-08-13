@@ -6,7 +6,12 @@ from typing import Any, Protocol
 
 from voice_concierge.context.types import MemoryScope
 from voice_concierge.memory import LocalMemoryConfig, build_memory_manager
-from voice_concierge.reasoning.types import MemoryAction, MemoryReference
+from voice_concierge.reasoning.types import (
+    SHOPPING_LIST_MEMORY_KEY,
+    TASK_LIST_MEMORY_KEY,
+    MemoryAction,
+    MemoryReference,
+)
 
 
 class MemoryGateway(Protocol):
@@ -60,20 +65,40 @@ class MemoryManagerGateway:
         *,
         limit: int = 3,
     ) -> tuple[MemoryReference, ...]:
-        if scope == "none":
+        if scope == "none" or limit <= 0:
             return ()
+
+        if scope == "list_relevant":
+            shopping_list = _memory_reference(
+                self._manager.get_memory_by_key(SHOPPING_LIST_MEMORY_KEY)
+            )
+            return (shopping_list,) if shopping_list is not None else ()
+
+        exact_memories: tuple[MemoryReference, ...] = ()
+        if scope == "task_relevant_only":
+            task_list = _memory_reference(
+                self._manager.get_memory_by_key(TASK_LIST_MEMORY_KEY)
+            )
+            if task_list is not None:
+                exact_memories = (task_list,)
+
+        semantic_limit = limit - len(exact_memories)
+        if semantic_limit <= 0:
+            return exact_memories
 
         topic = _retrieval_topic(scope)
         memories = self._manager.retrieve_similar(
             query=query,
-            top_k=limit,
+            top_k=semantic_limit,
             topic=topic,
         )
-        return tuple(
+        semantic_memories = tuple(
             reference
             for memory in memories
             if (reference := _memory_reference(memory)) is not None
+            and all(exact.memory_id != reference.memory_id for exact in exact_memories)
         )
+        return (*exact_memories, *semantic_memories[:semantic_limit])
 
     def apply(self, action: MemoryAction, scope: MemoryScope) -> tuple[bool, str]:
         if scope == "none":

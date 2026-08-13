@@ -13,10 +13,33 @@ from voice_concierge.reasoning.types import (
 
 class FakeMemoryManager:
     def __init__(self) -> None:
+        self.key_calls: list[str] = []
         self.retrieve_calls: list[dict[str, object]] = []
         self.store_calls: list[dict[str, object]] = []
         self.processed_actions: list[MemoryAction] = []
         self.closed = False
+        self.keyed_memories: dict[str, dict[str, object]] = {
+            "list:shopping": {
+                "id": 10,
+                "content": "Shopping list: milk, bread.",
+                "layer": "feedback",
+                "revision": 3,
+                "memory_key": "list:shopping",
+                "topic": "shopping",
+            },
+            "list:tasks": {
+                "id": 20,
+                "content": "Task list: call the dentist.",
+                "layer": "feedback",
+                "revision": 4,
+                "memory_key": "list:tasks",
+                "topic": "task",
+            },
+        }
+
+    def get_memory_by_key(self, memory_key: str) -> dict[str, object] | None:
+        self.key_calls.append(memory_key)
+        return self.keyed_memories.get(memory_key)
 
     def retrieve_similar(
         self,
@@ -32,14 +55,19 @@ class FakeMemoryManager:
                 "topic": topic,
             }
         )
+        content = (
+            "Remembered task context."
+            if topic == "task"
+            else "Remembered personal context."
+        )
         return [
             {
                 "id": 1,
-                "content": "Remembered milk.",
+                "content": content,
                 "layer": "feedback",
                 "revision": 2,
-                "memory_key": "list:shopping",
-                "topic": "shopping",
+                "memory_key": None,
+                "topic": topic,
             },
             {"content": 123},
             {
@@ -48,7 +76,7 @@ class FakeMemoryManager:
                 "layer": "feedback",
                 "revision": 1,
                 "memory_key": None,
-                "topic": "shopping",
+                "topic": topic,
             },
         ]
 
@@ -99,36 +127,99 @@ def test_null_memory_gateway_returns_no_memories_and_blocks_writes() -> None:
     )
 
 
-def test_memory_manager_gateway_retrieves_content_for_scoped_query() -> None:
+def test_memory_manager_gateway_semantically_retrieves_personal_context() -> None:
     manager = FakeMemoryManager()
     gateway = MemoryManagerGateway(manager)
 
-    memories = gateway.retrieve(
-        "What is on my shopping list?", "list_relevant", limit=2
-    )
+    memories = gateway.retrieve("What should I drink?", "personal_relevant", limit=2)
 
     assert memories == (
         MemoryReference(
             memory_id=1,
-            content="Remembered milk.",
+            content="Remembered personal context.",
             layer="feedback",
             revision=2,
-            memory_key="list:shopping",
-            topic="shopping",
         ),
         MemoryReference(
             memory_id=2,
             content="Remembered bread.",
             layer="feedback",
             revision=1,
-            topic="shopping",
         ),
     )
     assert manager.retrieve_calls == [
         {
-            "query": "What is on my shopping list?",
+            "query": "What should I drink?",
             "top_k": 2,
-            "topic": "shopping",
+            "topic": None,
+        }
+    ]
+    assert manager.key_calls == []
+
+
+def test_memory_manager_gateway_retrieves_shopping_list_by_stable_key() -> None:
+    manager = FakeMemoryManager()
+    gateway = MemoryManagerGateway(manager)
+
+    memories = gateway.retrieve(
+        "Semantically unrelated wording", "list_relevant", limit=3
+    )
+
+    assert memories == (
+        MemoryReference(
+            memory_id=10,
+            content="Shopping list: milk, bread.",
+            layer="feedback",
+            revision=3,
+            memory_key="list:shopping",
+            topic="shopping",
+        ),
+    )
+    assert manager.key_calls == ["list:shopping"]
+    assert manager.retrieve_calls == []
+
+
+def test_memory_manager_gateway_does_not_semantically_substitute_missing_list() -> None:
+    manager = FakeMemoryManager()
+    manager.keyed_memories.pop("list:shopping")
+    gateway = MemoryManagerGateway(manager)
+
+    memories = gateway.retrieve("milk", "list_relevant", limit=3)
+
+    assert memories == ()
+    assert manager.key_calls == ["list:shopping"]
+    assert manager.retrieve_calls == []
+
+
+def test_memory_manager_gateway_keeps_task_list_ahead_of_semantic_context() -> None:
+    manager = FakeMemoryManager()
+    gateway = MemoryManagerGateway(manager)
+
+    memories = gateway.retrieve("What is the next step?", "task_relevant_only", limit=2)
+
+    assert memories == (
+        MemoryReference(
+            memory_id=20,
+            content="Task list: call the dentist.",
+            layer="feedback",
+            revision=4,
+            memory_key="list:tasks",
+            topic="task",
+        ),
+        MemoryReference(
+            memory_id=1,
+            content="Remembered task context.",
+            layer="feedback",
+            revision=2,
+            topic="task",
+        ),
+    )
+    assert manager.key_calls == ["list:tasks"]
+    assert manager.retrieve_calls == [
+        {
+            "query": "What is the next step?",
+            "top_k": 1,
+            "topic": "task",
         }
     ]
 
@@ -139,6 +230,7 @@ def test_memory_manager_gateway_skips_retrieval_when_scope_is_none() -> None:
 
     assert gateway.retrieve("Do I need fuel?", "none") == ()
     assert manager.retrieve_calls == []
+    assert manager.key_calls == []
 
 
 def test_memory_manager_gateway_applies_store_with_scope_metadata() -> None:

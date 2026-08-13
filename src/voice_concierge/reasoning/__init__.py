@@ -52,6 +52,9 @@ from voice_concierge.reasoning.prompting import (
     load_prompt_template,
 )
 from voice_concierge.reasoning.types import (
+    SHOPPING_LIST_MEMORY_KEY,
+    STRUCTURED_LIST_MEMORY_KEYS,
+    TASK_LIST_MEMORY_KEY,
     FreshnessRequirement,
     InformationEvidence,
     InformationEvidenceSource,
@@ -112,7 +115,10 @@ __all__ = [
     "ReasoningResponse",
     "ReasoningTrace",
     "ReasoningTimeoutError",
+    "SHOPPING_LIST_MEMORY_KEY",
+    "STRUCTURED_LIST_MEMORY_KEYS",
     "StructuredListOperation",
+    "TASK_LIST_MEMORY_KEY",
     "TraceableReasoningEngine",
     "apply_spoken_word_limit",
     "build_granite_messages",

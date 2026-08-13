@@ -24,6 +24,9 @@ class FakeMemoryManager:
         self.store_calls = []
         self.process_calls = []
 
+    def get_memory_by_key(self, memory_key):
+        return None
+
     def retrieve_similar(self, query, top_k=5, person=None, topic=None, layer=None):
         self.retrieve_calls.append(
             {
@@ -99,20 +102,13 @@ class OrchestrationAdaptersTest(unittest.TestCase):
         )
         self.assertEqual(
             gateway.retrieve("milk", "list_relevant"),
-            (
-                MemoryReference(
-                    memory_id=1,
-                    content="remembered item",
-                    layer="profile",
-                    revision=1,
-                ),
-            ),
+            (),
         )
 
         self.assertEqual(manager.retrieve_calls[0]["topic"], None)
         self.assertEqual(manager.retrieve_calls[0]["top_k"], 2)
         self.assertEqual(manager.retrieve_calls[1]["topic"], "task")
-        self.assertEqual(manager.retrieve_calls[2]["topic"], "shopping")
+        self.assertEqual(len(manager.retrieve_calls), 2)
 
     def test_shopping_store_action_uses_shopping_topic(self) -> None:
         manager = FakeMemoryManager()

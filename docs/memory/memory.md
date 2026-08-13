@@ -29,6 +29,12 @@ when the owner shuts down.
 The app pipeline normally wraps this manager with `MemoryManagerGateway` by
 calling `build_voice_concierge_pipeline(load_memory=True)`.
 
+Project-owned structured lists are identity-addressed records. The gateway
+loads `list:shopping` and `list:tasks` by their stable keys; it never uses a
+nearest semantic match as a substitute for a missing shopping list. Task mode
+may add semantically relevant task context after the exact task-list record,
+but semantic ranking cannot displace that record.
+
 ---
 
 ## Table of Contents
@@ -180,6 +186,20 @@ for mem in results:
 **Exceptions:**
 
 - `RuntimeError` - Retrieval failed (network, model, etc.)
+
+---
+
+#### `get_memory_by_key()`
+
+Retrieve one project-owned structured record without embedding generation or
+semantic ranking.
+
+```python
+memory = manager.get_memory_by_key("list:shopping")
+```
+
+This returns the stored memory dictionary or `None`. Use it for stable keys;
+use `retrieve_similar()` only when relevance discovery is actually intended.
 
 ---
 

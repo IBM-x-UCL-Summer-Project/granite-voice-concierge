@@ -86,6 +86,32 @@ class TestMemoryManagerBasic:
         assert memories[0]["person"] == "Kenny"
         assert memories[0]["topic"] == "food"
 
+    def test_get_memory_by_key_does_not_depend_on_semantic_ranking(
+        self,
+        memory_manager,
+        monkeypatch,
+    ):
+        """Project-owned records remain addressable when vector search misses."""
+
+        _, _, memory_id = memory_manager.store_memory(
+            content="Shopping list: milk.",
+            layer="feedback",
+            memory_key="list:shopping",
+            topic="shopping",
+            validate=False,
+        )
+        monkeypatch.setattr(
+            memory_manager.vector_store,
+            "search_similar",
+            lambda query_embedding, top_k: [],
+        )
+
+        memory = memory_manager.get_memory_by_key("list:shopping")
+
+        assert memory is not None
+        assert memory["id"] == memory_id
+        assert memory["content"] == "Shopping list: milk."
+
     def test_update_memory(self, memory_manager):
         """Update an existing memory."""
         _, _, memory_id = memory_manager.store_memory(

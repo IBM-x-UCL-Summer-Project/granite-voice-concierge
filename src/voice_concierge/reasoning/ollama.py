@@ -49,6 +49,9 @@ from voice_concierge.reasoning.prompting import (
     load_prompt_template,
 )
 from voice_concierge.reasoning.types import (
+    SHOPPING_LIST_MEMORY_KEY,
+    STRUCTURED_LIST_MEMORY_KEYS,
+    TASK_LIST_MEMORY_KEY,
     InformationEvidence,
     MemoryAction,
     MemoryTarget,
@@ -191,7 +194,7 @@ class _StructuredMemoryAction(BaseModel):
             if (
                 self.action in {"store", "update"}
                 and self.target is not None
-                and self.target.memory_key in {"list:shopping", "list:tasks"}
+                and self.target.memory_key in STRUCTURED_LIST_MEMORY_KEYS
             ):
                 raise ValueError(
                     "structured-list writes require a typed list operation"
@@ -204,9 +207,9 @@ class _StructuredMemoryAction(BaseModel):
         if self.target is None:
             raise ValueError("structured-list operation requires an exact target")
         expected_key = (
-            "list:shopping"
+            SHOPPING_LIST_MEMORY_KEY
             if self.list_operation.list_name == "shopping"
-            else "list:tasks"
+            else TASK_LIST_MEMORY_KEY
         )
         if self.target.memory_key not in {None, expected_key}:
             raise ValueError("structured-list operation does not match target key")

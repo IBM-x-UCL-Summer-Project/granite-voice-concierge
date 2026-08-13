@@ -7,6 +7,8 @@ from dataclasses import replace
 
 from voice_concierge.reasoning.information_policy import decide_information_policy
 from voice_concierge.reasoning.types import (
+    SHOPPING_LIST_MEMORY_KEY,
+    TASK_LIST_MEMORY_KEY,
     InformationEvidence,
     InformationSource,
     MemoryAction,
@@ -16,9 +18,6 @@ from voice_concierge.reasoning.types import (
     ReasoningResponse,
     StructuredListOperation,
 )
-
-SHOPPING_LIST_MEMORY_KEY = "list:shopping"
-TASK_LIST_MEMORY_KEY = "list:tasks"
 
 
 def apply_reasoning_policy_guards(

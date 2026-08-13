@@ -20,6 +20,11 @@ Confidence = Literal["low", "medium", "high"]
 MemoryActionKind = Literal["store", "delete", "update"]
 StructuredListName = Literal["shopping", "task"]
 StructuredListOperationKind = Literal["add_items"]
+SHOPPING_LIST_MEMORY_KEY = "list:shopping"
+TASK_LIST_MEMORY_KEY = "list:tasks"
+STRUCTURED_LIST_MEMORY_KEYS = frozenset(
+    {SHOPPING_LIST_MEMORY_KEY, TASK_LIST_MEMORY_KEY}
+)
 InformationSource = Literal[
     "none",
     "user_input",
@@ -185,8 +190,8 @@ class StructuredListOperation:
         """Return the stable memory key owned by this list."""
 
         if self.list_name == "shopping":
-            return "list:shopping"
-        return "list:tasks"
+            return SHOPPING_LIST_MEMORY_KEY
+        return TASK_LIST_MEMORY_KEY
 
 
 @dataclass(frozen=True)
@@ -286,7 +291,7 @@ class MemoryAction:
             if (
                 self.action in {"store", "update"}
                 and self.target is not None
-                and self.target.memory_key in {"list:shopping", "list:tasks"}
+                and self.target.memory_key in STRUCTURED_LIST_MEMORY_KEYS
             ):
                 raise ValueError(
                     "Structured-list writes require a typed list operation."

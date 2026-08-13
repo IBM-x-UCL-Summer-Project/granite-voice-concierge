@@ -201,6 +201,11 @@ class MemoryManager:
             layer=layer,
         )
 
+    def get_memory_by_key(self, memory_key: str) -> Optional[dict]:
+        """Retrieve one project-owned structured record by stable key."""
+
+        return self.memory_store.get_memory_by_key(memory_key)
+
     def update_memory(
         self,
         memory_id: int,
