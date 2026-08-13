@@ -6,19 +6,18 @@ from voice_concierge.memory.structured_lists import (
     apply_structured_list_operation,
     create_structured_list,
     parse_structured_list,
-    structured_list_topic,
 )
-from voice_concierge.reasoning.types import (
-    MemoryAction,
-    MemoryTarget,
-    StructuredListOperation,
+from voice_concierge.memory.types import (
+    ApplyStructuredListCommand,
+    MemoryCommandTarget,
+    StoreMemoryCommand,
+    StructuredListMutation,
 )
 
 
-def _shopping_add(*items: str) -> StructuredListOperation:
-    return StructuredListOperation(
+def _shopping_add(*items: str) -> StructuredListMutation:
+    return StructuredListMutation(
         list_name="shopping",
-        operation="add_items",
         items=items,
     )
 
@@ -56,46 +55,30 @@ def test_structured_list_operation_normalizes_and_deduplicates_items() -> None:
 
     assert operation.items == ("milk", "bread")
     assert operation.memory_key == "list:shopping"
-    assert structured_list_topic(operation) == "shopping"
+    assert operation.topic == "shopping"
 
 
 @pytest.mark.parametrize("items", ((), ("",), (" . ",)))
 def test_structured_list_operation_rejects_missing_items(items) -> None:
     with pytest.raises(ValueError, match="items"):
-        StructuredListOperation(
+        StructuredListMutation(
             list_name="shopping",
-            operation="add_items",
             items=items,
         )
 
 
 def test_structured_list_write_rejects_content_encoded_command() -> None:
-    with pytest.raises(ValueError, match="typed list operation"):
-        MemoryAction(
-            action="update",
+    with pytest.raises(ValueError, match="ApplyStructuredListCommand"):
+        StoreMemoryCommand(
             content="shopping_list:add:milk",
-            rationale="Legacy command encoding.",
-            target=MemoryTarget(memory_key="list:shopping"),
+            layer="feedback",
+            memory_key="list:shopping",
         )
 
 
 def test_structured_list_operation_must_match_target_key() -> None:
     with pytest.raises(ValueError, match="does not match target key"):
-        MemoryAction(
-            action="update",
-            content=None,
-            rationale="Mismatched list operation.",
-            target=MemoryTarget(memory_key="list:tasks"),
-            list_operation=_shopping_add("milk"),
-        )
-
-
-def test_structured_list_operation_must_not_duplicate_content() -> None:
-    with pytest.raises(ValueError, match="must not duplicate"):
-        MemoryAction(
-            action="store",
-            content="Shopping list: milk.",
-            rationale="Duplicated structured-list payload.",
-            target=MemoryTarget(memory_key="list:shopping"),
-            list_operation=_shopping_add("milk"),
+        ApplyStructuredListCommand(
+            target=MemoryCommandTarget(memory_key="list:tasks"),
+            mutation=_shopping_add("milk"),
         )

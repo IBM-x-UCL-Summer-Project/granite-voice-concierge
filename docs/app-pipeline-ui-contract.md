@@ -228,6 +228,7 @@ type MemoryOperationStatus =
   | 'memory_not_configured'
   | 'memory_scope_none'
   | 'structured_list_scope_mismatch'
+  | 'memory_scope_mismatch'
   | 'memory_gateway_error';
 
 type AppTurnResponse = {
@@ -306,6 +307,13 @@ machine-readable memory status and `succeeded` is derived from that status.
 same metadata scope after a successful store; it is evidence only and never a
 write rejection. `reason` is retained as a display/logging string; clients
 should not parse it to make decisions.
+
+The app memory gateway translates reasoning proposals into memory-owned
+commands only after checking the active `memory_scope`. Personal retrieval is
+restricted to profile records, task retrieval to feedback/task records, and
+shopping retrieval to the stable shopping-list record. An update or delete
+whose exact target falls outside that scope returns `memory_scope_mismatch`
+without reaching persistence.
 
 ## Error Codes
 

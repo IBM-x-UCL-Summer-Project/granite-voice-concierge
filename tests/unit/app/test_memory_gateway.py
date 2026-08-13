@@ -4,10 +4,16 @@ from __future__ import annotations
 
 from voice_concierge.app.memory import MemoryManagerGateway, NullMemoryGateway
 from voice_concierge.memory import (
+    ApplyStructuredListCommand,
+    DeleteMemoryCommand,
+    MemoryCommand,
+    MemoryCommandTarget,
     MemoryOperationOutcome,
     MemoryOperationStatus,
     MemoryRecord,
     MemorySearchResult,
+    StoreMemoryCommand,
+    StructuredListMutation,
 )
 from voice_concierge.reasoning.types import (
     MemoryAction,
@@ -20,9 +26,9 @@ from voice_concierge.reasoning.types import (
 class FakeMemoryManager:
     def __init__(self) -> None:
         self.key_calls: list[str] = []
+        self.id_calls: list[int] = []
         self.retrieve_calls: list[dict[str, object]] = []
-        self.store_calls: list[dict[str, object]] = []
-        self.processed_actions: list[MemoryAction] = []
+        self.processed_commands: list[MemoryCommand] = []
         self.closed = False
         self.keyed_memories: dict[str, MemoryRecord] = {
             "list:shopping": _memory_record(
@@ -40,10 +46,30 @@ class FakeMemoryManager:
                 topic="task",
             ),
         }
+        self.id_memories: dict[int, MemoryRecord] = {
+            42: _memory_record(
+                memory_id=42,
+                content="Old appointment.",
+                revision=3,
+                layer="profile",
+            )
+        }
 
     def get_memory_by_key(self, memory_key: str) -> MemoryRecord | None:
         self.key_calls.append(memory_key)
         return self.keyed_memories.get(memory_key)
+
+    def get_memory_by_id(self, memory_id: int) -> MemoryRecord | None:
+        self.id_calls.append(memory_id)
+        keyed_memory = next(
+            (
+                memory
+                for memory in self.keyed_memories.values()
+                if memory.id == memory_id
+            ),
+            None,
+        )
+        return keyed_memory or self.id_memories.get(memory_id)
 
     def retrieve_similar(
         self,
@@ -51,12 +77,14 @@ class FakeMemoryManager:
         query: str,
         top_k: int,
         topic: str | None,
+        layer: str | None,
     ) -> list[MemorySearchResult]:
         self.retrieve_calls.append(
             {
                 "query": query,
                 "top_k": top_k,
                 "topic": topic,
+                "layer": layer,
             }
         )
         content = (
@@ -71,6 +99,7 @@ class FakeMemoryManager:
                     content=content,
                     revision=2,
                     topic=topic,
+                    layer=layer or "feedback",
                 ),
                 distance=0.1,
             ),
@@ -80,40 +109,22 @@ class FakeMemoryManager:
                     content="Remembered bread.",
                     revision=1,
                     topic=topic,
+                    layer=layer or "feedback",
                 ),
                 distance=0.2,
             ),
         ]
 
-    def store_memory(
+    def execute_memory_command(
         self,
-        *,
-        content: str,
-        layer: str,
-        memory_key: str | None,
-        topic: str | None,
-        validate: bool,
-        auto_classify: bool,
-        auto_extract: bool,
+        command: MemoryCommand,
     ) -> MemoryOperationOutcome:
-        self.store_calls.append(
-            {
-                "content": content,
-                "layer": layer,
-                "memory_key": memory_key,
-                "topic": topic,
-                "validate": validate,
-                "auto_classify": auto_classify,
-                "auto_extract": auto_extract,
-            }
-        )
-        return MemoryOperationOutcome(
-            MemoryOperationStatus.STORED_SUCCESSFULLY,
-            memory_id=42,
-        )
-
-    def process_memory_action(self, action: MemoryAction) -> MemoryOperationOutcome:
-        self.processed_actions.append(action)
+        self.processed_commands.append(command)
+        if isinstance(command, StoreMemoryCommand):
+            return MemoryOperationOutcome(
+                MemoryOperationStatus.STORED_SUCCESSFULLY,
+                memory_id=42,
+            )
         return MemoryOperationOutcome(MemoryOperationStatus.UPDATED_SUCCESSFULLY)
 
     def close(self) -> None:
@@ -125,13 +136,14 @@ def _memory_record(
     memory_id: int,
     content: str,
     revision: int,
+    layer: str = "feedback",
     memory_key: str | None = None,
     topic: str | None = None,
 ) -> MemoryRecord:
     return MemoryRecord(
         id=memory_id,
         content=content,
-        layer="feedback",
+        layer=layer,
         memory_key=memory_key,
         revision=revision,
         indexed_revision=revision,
@@ -170,13 +182,13 @@ def test_memory_manager_gateway_semantically_retrieves_personal_context() -> Non
         MemoryReference(
             memory_id=1,
             content="Remembered personal context.",
-            layer="feedback",
+            layer="profile",
             revision=2,
         ),
         MemoryReference(
             memory_id=2,
             content="Remembered bread.",
-            layer="feedback",
+            layer="profile",
             revision=1,
         ),
     )
@@ -185,6 +197,7 @@ def test_memory_manager_gateway_semantically_retrieves_personal_context() -> Non
             "query": "What should I drink?",
             "top_k": 2,
             "topic": None,
+            "layer": "profile",
         }
     ]
     assert manager.key_calls == []
@@ -253,6 +266,7 @@ def test_memory_manager_gateway_keeps_task_list_ahead_of_semantic_context() -> N
             "query": "What is the next step?",
             "top_k": 1,
             "topic": "task",
+            "layer": "feedback",
         }
     ]
 
@@ -277,16 +291,12 @@ def test_memory_manager_gateway_applies_store_with_scope_metadata() -> None:
 
     outcome = gateway.apply(action, "list_relevant")
     assert outcome.status is MemoryOperationStatus.STORED_SUCCESSFULLY
-    assert manager.store_calls == [
-        {
-            "content": "Shopping list includes milk.",
-            "layer": "feedback",
-            "memory_key": None,
-            "topic": "shopping",
-            "validate": False,
-            "auto_classify": False,
-            "auto_extract": False,
-        }
+    assert manager.processed_commands == [
+        StoreMemoryCommand(
+            content="Shopping list includes milk.",
+            layer="feedback",
+            topic="shopping",
+        )
     ]
 
 
@@ -302,7 +312,32 @@ def test_memory_manager_gateway_delegates_update_and_delete_actions() -> None:
 
     outcome = gateway.apply(action, "personal_relevant")
     assert outcome.status is MemoryOperationStatus.UPDATED_SUCCESSFULLY
-    assert manager.processed_actions == [action]
+    assert manager.processed_commands == [
+        DeleteMemoryCommand(
+            target=MemoryCommandTarget(memory_id=42, expected_revision=3),
+        )
+    ]
+
+
+def test_memory_manager_gateway_rejects_target_outside_active_scope() -> None:
+    manager = FakeMemoryManager()
+    gateway = MemoryManagerGateway(manager)
+    action = MemoryAction(
+        action="delete",
+        content="Delete the shopping list.",
+        rationale="User requested deletion.",
+        target=MemoryTarget(
+            memory_id=10,
+            memory_key="list:shopping",
+            expected_revision=3,
+        ),
+    )
+
+    outcome = gateway.apply(action, "personal_relevant")
+
+    assert outcome.status is MemoryOperationStatus.MEMORY_SCOPE_MISMATCH
+    assert outcome.memory_id is None
+    assert manager.processed_commands == []
 
 
 def test_memory_manager_gateway_delegates_typed_list_store() -> None:
@@ -322,8 +357,15 @@ def test_memory_manager_gateway_delegates_typed_list_store() -> None:
 
     outcome = gateway.apply(action, "list_relevant")
     assert outcome.status is MemoryOperationStatus.UPDATED_SUCCESSFULLY
-    assert manager.processed_actions == [action]
-    assert manager.store_calls == []
+    assert manager.processed_commands == [
+        ApplyStructuredListCommand(
+            target=MemoryCommandTarget(memory_key="list:shopping"),
+            mutation=StructuredListMutation(
+                list_name="shopping",
+                items=("milk",),
+            ),
+        )
+    ]
 
 
 def test_memory_manager_gateway_rejects_list_scope_mismatch() -> None:
@@ -344,7 +386,7 @@ def test_memory_manager_gateway_rejects_list_scope_mismatch() -> None:
     assert gateway.apply(action, "list_relevant").status is (
         MemoryOperationStatus.STRUCTURED_LIST_SCOPE_MISMATCH
     )
-    assert manager.processed_actions == []
+    assert manager.processed_commands == []
 
 
 def test_memory_manager_gateway_blocks_apply_when_scope_is_none() -> None:
@@ -359,8 +401,7 @@ def test_memory_manager_gateway_blocks_apply_when_scope_is_none() -> None:
     assert (
         gateway.apply(action, "none").status is MemoryOperationStatus.MEMORY_SCOPE_NONE
     )
-    assert manager.store_calls == []
-    assert manager.processed_actions == []
+    assert manager.processed_commands == []
 
 
 def test_memory_manager_gateway_closes_manager() -> None:

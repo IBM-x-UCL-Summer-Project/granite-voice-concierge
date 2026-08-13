@@ -1347,8 +1347,8 @@ class FakeMemoryManager:
         self.store_calls.append(kwargs)
         return True, "stored_successfully", 123
 
-    def process_memory_action(self, action):
-        self.process_calls.append(action)
+    def execute_memory_command(self, command):
+        self.process_calls.append(command)
         return True, "processed"
 
 
@@ -1508,7 +1508,8 @@ class MemoryManagerGateway:
             )
             return success, reason
 
-        return self._manager.process_memory_action(action)
+        command = translate_to_memory_command(action, scope)
+        return self._manager.execute_memory_command(command)
 
 
 class OfflineTTSSpeechGateway:

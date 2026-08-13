@@ -8,6 +8,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
 
+from voice_concierge.memory_contracts import (
+    SHOPPING_LIST_MEMORY_KEY,
+    STRUCTURED_LIST_MEMORY_KEYS,
+    TASK_LIST_MEMORY_KEY,
+    StructuredListName,
+)
+
 
 @dataclass(frozen=True)
 class MemoryRecord:
@@ -69,7 +76,7 @@ class MemoryRecord:
 
 
 @dataclass(frozen=True)
-class MemoryScope:
+class MemoryRecordScope:
     """Metadata boundary that separates independently meaningful memories."""
 
     layer: str
@@ -161,6 +168,145 @@ class MemoryUpdate:
                 self.topic,
             )
         )
+
+
+@dataclass(frozen=True)
+class MemoryCommandTarget:
+    """Exact identity and optional revision for an executable mutation."""
+
+    memory_id: int | None = None
+    memory_key: str | None = None
+    expected_revision: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.memory_id is None and self.memory_key is None:
+            raise ValueError("Memory command target requires an ID or stable key.")
+        if self.memory_id is not None:
+            _require_positive_int(self.memory_id, "Memory command target ID")
+        _require_optional_nonblank_string(
+            self.memory_key,
+            "Memory command target key",
+        )
+        if self.expected_revision is not None:
+            _require_positive_int(
+                self.expected_revision,
+                "Memory command expected revision",
+            )
+
+
+@dataclass(frozen=True)
+class StructuredListMutation:
+    """Memory-owned operation over one project structured list."""
+
+    list_name: StructuredListName
+    items: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if self.list_name not in {"shopping", "task"}:
+            raise ValueError(f"Unsupported structured list: {self.list_name!r}.")
+        if not isinstance(self.items, tuple) or not self.items:
+            raise ValueError("Structured-list items must be a non-empty tuple.")
+        if any(
+            not isinstance(item, str) or not item.strip(" .") for item in self.items
+        ):
+            raise ValueError("Structured-list items must not be blank.")
+
+        normalized_items: list[str] = []
+        seen: set[str] = set()
+        for item in self.items:
+            normalized = item.strip(" .")
+            comparison_key = normalized.casefold()
+            if comparison_key in seen:
+                continue
+            normalized_items.append(normalized)
+            seen.add(comparison_key)
+        object.__setattr__(self, "items", tuple(normalized_items))
+
+    @property
+    def memory_key(self) -> str:
+        """Return the stable identity of the target list."""
+
+        if self.list_name == "shopping":
+            return SHOPPING_LIST_MEMORY_KEY
+        return TASK_LIST_MEMORY_KEY
+
+    @property
+    def topic(self) -> str:
+        """Return the storage topic for this list."""
+
+        if self.list_name == "shopping":
+            return "shopping"
+        return "task"
+
+
+@dataclass(frozen=True)
+class StoreMemoryCommand:
+    """Executable command to create one memory in an authorized scope."""
+
+    content: str
+    layer: str
+    memory_key: str | None = None
+    topic: str | None = None
+
+    def __post_init__(self) -> None:
+        _require_nonblank_string(self.content, "Store command content")
+        _require_nonblank_string(self.layer, "Store command layer")
+        _require_optional_nonblank_string(self.memory_key, "Store command key")
+        _require_optional_nonblank_string(self.topic, "Store command topic")
+        if self.memory_key in STRUCTURED_LIST_MEMORY_KEYS:
+            raise ValueError(
+                "Structured-list writes require ApplyStructuredListCommand."
+            )
+
+
+@dataclass(frozen=True)
+class UpdateMemoryCommand:
+    """Executable command to update one exact memory."""
+
+    target: MemoryCommandTarget
+    content: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.target, MemoryCommandTarget):
+            raise TypeError("Update command target must be MemoryCommandTarget.")
+        _require_nonblank_string(self.content, "Update command content")
+
+
+@dataclass(frozen=True)
+class DeleteMemoryCommand:
+    """Executable command to delete one exact memory."""
+
+    target: MemoryCommandTarget
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.target, MemoryCommandTarget):
+            raise TypeError("Delete command target must be MemoryCommandTarget.")
+
+
+@dataclass(frozen=True)
+class ApplyStructuredListCommand:
+    """Executable, identity-addressed structured-list mutation."""
+
+    target: MemoryCommandTarget
+    mutation: StructuredListMutation
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.target, MemoryCommandTarget):
+            raise TypeError("Structured-list target must be MemoryCommandTarget.")
+        if not isinstance(self.mutation, StructuredListMutation):
+            raise TypeError(
+                "Structured-list command mutation must be StructuredListMutation."
+            )
+        if self.target.memory_key not in {None, self.mutation.memory_key}:
+            raise ValueError("Structured-list mutation does not match target key.")
+
+
+MemoryCommand = (
+    StoreMemoryCommand
+    | UpdateMemoryCommand
+    | DeleteMemoryCommand
+    | ApplyStructuredListCommand
+)
 
 
 @dataclass(frozen=True)
@@ -271,6 +417,7 @@ class MemoryOperationStatus(StrEnum):
     MEMORY_NOT_CONFIGURED = ("memory_not_configured", False)
     MEMORY_SCOPE_NONE = ("memory_scope_none", False)
     STRUCTURED_LIST_SCOPE_MISMATCH = ("structured_list_scope_mismatch", False)
+    MEMORY_SCOPE_MISMATCH = ("memory_scope_mismatch", False)
     MEMORY_GATEWAY_ERROR = ("memory_gateway_error", False)
 
 

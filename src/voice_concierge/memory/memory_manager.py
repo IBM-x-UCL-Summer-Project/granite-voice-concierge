@@ -10,19 +10,23 @@ from voice_concierge.memory.memory_validator import MemoryValidator
 from voice_concierge.memory.structured_lists import (
     apply_structured_list_operation,
     create_structured_list,
-    structured_list_topic,
 )
 from voice_concierge.memory.types import (
+    ApplyStructuredListCommand,
+    DeleteMemoryCommand,
     ExtractedMemoryMetadata,
+    MemoryCommand,
+    MemoryCommandTarget,
     MemoryOperationOutcome,
     MemoryOperationStatus,
     MemoryRecord,
-    MemoryScope,
+    MemoryRecordScope,
     MemorySearchResult,
     MemorySimilarityAdvisory,
+    StoreMemoryCommand,
+    UpdateMemoryCommand,
 )
 from voice_concierge.memory.vector_store import VectorStore
-from voice_concierge.reasoning.types import MemoryAction, MemoryTarget
 
 
 @dataclass(frozen=True)
@@ -66,7 +70,7 @@ class MemoryManager:
         threshold: float = 0.85,
         top_k: int = 5,
         *,
-        scope: MemoryScope | None = None,
+        scope: MemoryRecordScope | None = None,
     ) -> MemorySearchResult | None:
         """
         Find semantically similar existing memory, optionally within a scope.
@@ -212,7 +216,7 @@ class MemoryManager:
 
         similarity_advisories: tuple[MemorySimilarityAdvisory, ...] = ()
         if check_duplicates and memory_key is None:
-            scope = MemoryScope(
+            scope = MemoryRecordScope(
                 layer=layer,
                 person=person,
                 source_type=source_type,
@@ -286,7 +290,7 @@ class MemoryManager:
         self,
         content: str,
         *,
-        scope: MemoryScope,
+        scope: MemoryRecordScope,
         event_time: int | None,
     ) -> MemoryRecord | None:
         """Find deterministic content identity without crossing scopes."""
@@ -405,6 +409,11 @@ class MemoryManager:
         """Retrieve one project-owned structured record by stable key."""
 
         return self.memory_store.get_memory_by_key(memory_key)
+
+    def get_memory_by_id(self, memory_id: int) -> MemoryRecord | None:
+        """Retrieve one active record by its stable SQL identity."""
+
+        return self.memory_store.get_memory_by_id(memory_id)
 
     def update_memory(
         self,
@@ -575,102 +584,97 @@ class MemoryManager:
                 detail=_exception_detail(e),
             )
 
-    def process_memory_action(self, action: MemoryAction) -> MemoryOperationOutcome:
-        """
-        Process a proposed memory action from the reasoning engine.
+    def execute_memory_command(
+        self,
+        command: MemoryCommand,
+    ) -> MemoryOperationOutcome:
+        """Execute one application-authorized memory-domain command."""
 
-        Args:
-            action: MemoryAction from ReasoningResponse
-
-        Returns:
-            Typed operation outcome
-        """
         try:
-            return self._apply_memory_action(action)
+            return self._execute_memory_command(command)
         except Exception as error:
             return MemoryOperationOutcome(
                 MemoryOperationStatus.MEMORY_ACTION_ERROR,
                 detail=_exception_detail(error),
             )
 
-    def _apply_memory_action(self, action: MemoryAction) -> MemoryOperationOutcome:
-        """Apply one already-validated memory proposal."""
-
-        if action.list_operation is not None:
-            return self._process_structured_list_action(action)
-
-        if action.action == "store":
-            assert action.content is not None
-            memory_key = action.target.memory_key if action.target is not None else None
-            return self.store_memory(
-                content=action.content,
-                layer="feedback",
-                memory_key=memory_key,
-                validate=False,
-            )
-
-        elif action.action == "update":
-            assert action.content is not None
-            assert action.target is not None
-            target, error = self._resolve_memory_target(action.target)
-            if target is None:
-                assert error is not None
-                return MemoryOperationOutcome(error)
-            return self.update_memory(
-                target.id,
-                content=action.content,
-                expected_revision=action.target.expected_revision,
-            )
-
-        elif action.action == "delete":
-            assert action.target is not None
-            target, error = self._resolve_memory_target(action.target)
-            if target is None:
-                assert error is not None
-                return MemoryOperationOutcome(error)
-            return self.delete_memory(
-                target.id,
-                expected_revision=action.target.expected_revision,
-            )
-
-        else:
-            return MemoryOperationOutcome(
-                MemoryOperationStatus.UNKNOWN_ACTION,
-                detail=action.action,
-            )
-
-    def _process_structured_list_action(
+    def _execute_memory_command(
         self,
-        action: MemoryAction,
+        command: MemoryCommand,
     ) -> MemoryOperationOutcome:
-        operation = action.list_operation
-        target = action.target
-        assert operation is not None
-        assert target is not None
-
-        if action.action == "store":
+        if isinstance(command, StoreMemoryCommand):
             return self.store_memory(
-                content=create_structured_list(operation),
-                layer="feedback",
-                memory_key=operation.memory_key,
-                topic=structured_list_topic(operation),
+                content=command.content,
+                layer=command.layer,
+                memory_key=command.memory_key,
+                topic=command.topic,
                 validate=False,
                 auto_classify=False,
                 auto_extract=False,
             )
 
+        if isinstance(command, UpdateMemoryCommand):
+            target, error = self._resolve_memory_target(command.target)
+            if target is None:
+                assert error is not None
+                return MemoryOperationOutcome(error)
+            return self.update_memory(
+                target.id,
+                content=command.content,
+                expected_revision=command.target.expected_revision,
+            )
+
+        if isinstance(command, DeleteMemoryCommand):
+            target, error = self._resolve_memory_target(command.target)
+            if target is None:
+                assert error is not None
+                return MemoryOperationOutcome(error)
+            return self.delete_memory(
+                target.id,
+                expected_revision=command.target.expected_revision,
+            )
+
+        if isinstance(command, ApplyStructuredListCommand):
+            return self._apply_structured_list_command(command)
+
+        return MemoryOperationOutcome(
+            MemoryOperationStatus.UNKNOWN_ACTION,
+            detail=command.__class__.__name__,
+        )
+
+    def _apply_structured_list_command(
+        self,
+        command: ApplyStructuredListCommand,
+    ) -> MemoryOperationOutcome:
+        mutation = command.mutation
+        target = command.target
+
         memory, error = self._resolve_memory_target(target)
+        if (
+            memory is None
+            and target.memory_id is None
+            and target.expected_revision is None
+        ):
+            return self.store_memory(
+                content=create_structured_list(mutation),
+                layer="feedback",
+                memory_key=mutation.memory_key,
+                topic=mutation.topic,
+                validate=False,
+                auto_classify=False,
+                auto_extract=False,
+            )
         if memory is None:
             assert error is not None
             return MemoryOperationOutcome(error)
-        if memory.memory_key != operation.memory_key:
+        if memory.memory_key != mutation.memory_key:
             return MemoryOperationOutcome(
                 MemoryOperationStatus.STRUCTURED_LIST_TARGET_MISMATCH
             )
 
         updated_content = apply_structured_list_operation(
             memory.content,
-            operation,
+            mutation,
         )
         if updated_content is None:
             return MemoryOperationOutcome(
@@ -684,7 +688,7 @@ class MemoryManager:
 
     def _resolve_memory_target(
         self,
-        target: MemoryTarget,
+        target: MemoryCommandTarget,
     ) -> tuple[MemoryRecord | None, MemoryOperationStatus | None]:
         if target.memory_id is not None:
             memory = self.memory_store.get_memory_by_id(target.memory_id)

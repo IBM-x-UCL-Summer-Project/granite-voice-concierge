@@ -6,10 +6,13 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from voice_concierge.memory import (
+    MemoryCommandTarget,
     MemoryOperationOutcome,
     MemoryOperationStatus,
     MemoryRecord,
     MemorySearchResult,
+    StoreMemoryCommand,
+    UpdateMemoryCommand,
 )
 from voice_concierge.orchestration import MemoryManagerGateway, OfflineTTSSpeechGateway
 from voice_concierge.reasoning.types import (
@@ -27,10 +30,12 @@ except ImportError:
 class FakeMemoryManager:
     def __init__(self) -> None:
         self.retrieve_calls = []
-        self.store_calls = []
         self.process_calls = []
 
     def get_memory_by_key(self, memory_key):
+        return None
+
+    def get_memory_by_id(self, memory_id):
         return None
 
     def retrieve_similar(self, query, top_k=5, person=None, topic=None, layer=None):
@@ -48,7 +53,7 @@ class FakeMemoryManager:
                 memory=MemoryRecord(
                     id=1,
                     content="remembered item",
-                    layer="profile",
+                    layer=layer or "profile",
                     memory_key=None,
                     revision=1,
                     indexed_revision=1,
@@ -65,15 +70,13 @@ class FakeMemoryManager:
             ),
         ]
 
-    def store_memory(self, **kwargs):
-        self.store_calls.append(kwargs)
-        return MemoryOperationOutcome(
-            MemoryOperationStatus.STORED_SUCCESSFULLY,
-            memory_id=123,
-        )
-
-    def process_memory_action(self, action):
-        self.process_calls.append(action)
+    def execute_memory_command(self, command):
+        self.process_calls.append(command)
+        if isinstance(command, StoreMemoryCommand):
+            return MemoryOperationOutcome(
+                MemoryOperationStatus.STORED_SUCCESSFULLY,
+                memory_id=123,
+            )
         return MemoryOperationOutcome(MemoryOperationStatus.UPDATED_SUCCESSFULLY)
 
 
@@ -114,7 +117,7 @@ class OrchestrationAdaptersTest(unittest.TestCase):
                 MemoryReference(
                     memory_id=1,
                     content="remembered item",
-                    layer="profile",
+                    layer="feedback",
                     revision=1,
                 ),
             ),
@@ -125,8 +128,10 @@ class OrchestrationAdaptersTest(unittest.TestCase):
         )
 
         self.assertEqual(manager.retrieve_calls[0]["topic"], None)
+        self.assertEqual(manager.retrieve_calls[0]["layer"], "profile")
         self.assertEqual(manager.retrieve_calls[0]["top_k"], 2)
         self.assertEqual(manager.retrieve_calls[1]["topic"], "task")
+        self.assertEqual(manager.retrieve_calls[1]["layer"], "feedback")
         self.assertEqual(len(manager.retrieve_calls), 2)
 
     def test_shopping_store_action_uses_shopping_topic(self) -> None:
@@ -143,20 +148,15 @@ class OrchestrationAdaptersTest(unittest.TestCase):
 
         self.assertEqual(result.status, MemoryOperationStatus.STORED_SUCCESSFULLY)
         self.assertEqual(
-            manager.store_calls,
+            manager.process_calls,
             [
-                {
-                    "auto_classify": False,
-                    "auto_extract": False,
-                    "content": "Buy oat milk.",
-                    "layer": "feedback",
-                    "memory_key": None,
-                    "topic": "shopping",
-                    "validate": False,
-                }
+                StoreMemoryCommand(
+                    content="Buy oat milk.",
+                    layer="feedback",
+                    topic="shopping",
+                )
             ],
         )
-        self.assertEqual(manager.process_calls, [])
 
     def test_non_store_memory_action_delegates_to_manager(self) -> None:
         manager = FakeMemoryManager()
@@ -172,7 +172,15 @@ class OrchestrationAdaptersTest(unittest.TestCase):
         result = gateway.apply(action, "personal_relevant")
 
         self.assertEqual(result.status, MemoryOperationStatus.UPDATED_SUCCESSFULLY)
-        self.assertEqual(manager.process_calls, [action])
+        self.assertEqual(
+            manager.process_calls,
+            [
+                UpdateMemoryCommand(
+                    target=MemoryCommandTarget(memory_key="preference:drink"),
+                    content="User likes tea.",
+                )
+            ],
+        )
 
     def test_speech_gateway_maps_pace_to_length_scale_and_stop(self) -> None:
         tts = FakeTTS()

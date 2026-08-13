@@ -335,57 +335,56 @@ memory content.
 
 ---
 
-#### `process_memory_action()`
+#### `execute_memory_command()`
 
-Process memory actions proposed by the reasoning engine.
+Execute a command owned and validated by the memory domain.
 
 ```python
-from voice_concierge.reasoning.types import (
-    MemoryAction,
-    MemoryTarget,
-    StructuredListOperation,
+from voice_concierge.memory import (
+    ApplyStructuredListCommand,
+    MemoryCommandTarget,
+    StoreMemoryCommand,
+    StructuredListMutation,
 )
 
-outcome = manager.process_memory_action(
-    action: MemoryAction
+outcome = manager.execute_memory_command(
+    StoreMemoryCommand(
+        content="User prefers tea.",
+        layer="profile",
+    )
 )
 ```
 
-**MemoryAction structure:**
+The reasoning engine does not create executable memory commands. It proposes a
+reasoning-owned `MemoryAction`; `MemoryManagerGateway` verifies the active app
+scope and translates that proposal into `StoreMemoryCommand`,
+`UpdateMemoryCommand`, `DeleteMemoryCommand`, or
+`ApplyStructuredListCommand`. The memory package therefore has no dependency on
+the reasoning package.
 
-```python
-MemoryAction(
-    action: str,  # "store" / "update" / "delete"
-    content: Optional[str],  # None when list_operation carries the mutation
-    rationale: str,  # Why this action should be taken
-    target: Optional[MemoryTarget],  # Required for update/delete
-    list_operation: Optional[StructuredListOperation],
-    requires_confirmation: bool,  # Whether confirmation is required
-)
-```
-
-`update` and `delete` actions fail closed unless `target` contains a stable
-memory ID or an explicit scoped key. Targets derived from retrieved memories
-should also carry `expected_revision`. Semantic retrieval is not used to choose
-which record is mutated.
+Updates and deletes fail closed unless their `MemoryCommandTarget` contains a
+stable memory ID or explicit scoped key. Targets derived from retrieved memories
+should also carry `expected_revision`. Semantic retrieval is never used to
+choose a record for mutation.
 
 Shopping and task additions use
-`StructuredListOperation(operation="add_items")` with a tuple of items. The
-same typed operation creates the first persisted list or updates an existing
-exact target. The memory domain owns rendering and item deduplication; callers
-must not encode commands in `content`.
+`ApplyStructuredListCommand` with a `StructuredListMutation`. The same command
+creates the first persisted list or updates an existing exact target. The
+memory domain owns rendering and item deduplication; callers must not encode
+commands in `content`.
 
 **Example:**
 
 ```python
-action = MemoryAction(
-    action="store",
-    content="Remember user likes business trips",
-    rationale="User mentioned upcoming business trip",
-    requires_confirmation=False,
+command = ApplyStructuredListCommand(
+    target=MemoryCommandTarget(memory_key="list:shopping"),
+    mutation=StructuredListMutation(
+        list_name="shopping",
+        items=("milk",),
+    ),
 )
 
-outcome = manager.process_memory_action(action)
+outcome = manager.execute_memory_command(command)
 ```
 
 ---
@@ -811,7 +810,7 @@ request = ReasoningRequest(transcript=user_input, memories=references)
 
 # Handle results
 if response.proposed_memory_action:
-    manager.process_memory_action(response.proposed_memory_action)
+    gateway.apply(response.proposed_memory_action, "personal_relevant")
 ```
 
 ### Scenario 3: Batch Operations

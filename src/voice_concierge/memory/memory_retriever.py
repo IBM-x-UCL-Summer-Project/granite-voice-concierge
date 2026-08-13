@@ -54,16 +54,22 @@ class MemoryRetriever:
             # Generate embedding for query
             query_embedding = self.embedding_service.get_embedding(query)
 
-            # Search for similar vectors
-            vector_results = self.vector_store.search_similar(
-                query_embedding, top_k=top_k * 2
-            )
-
             indexed_memories = {
                 memory.id: memory
                 for memory in self.memory_store.get_memories()
                 if memory.indexed_revision == memory.revision
             }
+            search_limit = top_k * 2
+            if person is not None or topic is not None or layer is not None:
+                # sqlite-vec ranks before SQL metadata is available. Search all
+                # active vectors for a scoped query so globally close records
+                # cannot crowd the requested scope out of the candidate set.
+                search_limit = max(search_limit, len(indexed_memories))
+            vector_results = self.vector_store.search_similar(
+                query_embedding,
+                top_k=search_limit,
+            )
+
             memories: list[MemorySearchResult] = []
             for result in vector_results:
                 memory_id = result.memory_id

@@ -7,16 +7,26 @@ from typing import Protocol
 from voice_concierge.context.types import MemoryScope
 from voice_concierge.memory import LocalMemoryConfig, build_memory_manager
 from voice_concierge.memory.types import (
+    ApplyStructuredListCommand,
+    DeleteMemoryCommand,
+    MemoryCommand,
+    MemoryCommandTarget,
     MemoryOperationOutcome,
     MemoryOperationStatus,
     MemoryRecord,
     MemorySearchResult,
+    StoreMemoryCommand,
+    StructuredListMutation,
+    UpdateMemoryCommand,
 )
-from voice_concierge.reasoning.types import (
+from voice_concierge.memory_contracts import (
     SHOPPING_LIST_MEMORY_KEY,
     TASK_LIST_MEMORY_KEY,
+)
+from voice_concierge.reasoning.types import (
     MemoryAction,
     MemoryReference,
+    MemoryTarget,
 )
 
 
@@ -100,11 +110,12 @@ class MemoryManagerGateway:
         if semantic_limit <= 0:
             return exact_memories
 
-        topic = _retrieval_topic(scope)
+        layer, topic = _retrieval_metadata(scope)
         memories = self._manager.retrieve_similar(
             query=query,
             top_k=semantic_limit,
             topic=topic,
+            layer=layer,
         )
         semantic_memories = tuple(
             reference
@@ -132,23 +143,41 @@ class MemoryManagerGateway:
                 return MemoryOperationOutcome(
                     MemoryOperationStatus.STRUCTURED_LIST_SCOPE_MISMATCH
                 )
-            return self._manager.process_memory_action(action)
+        target_outcome = self._authorize_target(action, scope)
+        if target_outcome is not None:
+            return target_outcome
+        command = _memory_command_from_action(action, scope)
+        return self._manager.execute_memory_command(command)
 
-        if action.action == "store":
-            assert action.content is not None
-            layer, topic = _storage_metadata(scope)
-            memory_key = action.target.memory_key if action.target is not None else None
-            return self._manager.store_memory(
-                content=action.content,
-                layer=layer,
-                memory_key=memory_key,
-                topic=topic,
-                validate=False,
-                auto_classify=False,
-                auto_extract=False,
+    def _authorize_target(
+        self,
+        action: MemoryAction,
+        scope: MemoryScope,
+    ) -> MemoryOperationOutcome | None:
+        """Reject exact targets outside the current app-owned memory scope."""
+
+        target = action.target
+        if target is None:
+            return None
+        if target.memory_key is not None and not _scope_allows_key(
+            scope,
+            target.memory_key,
+        ):
+            return MemoryOperationOutcome(MemoryOperationStatus.MEMORY_SCOPE_MISMATCH)
+
+        memory: MemoryRecord | None
+        if target.memory_id is not None:
+            memory = self._manager.get_memory_by_id(target.memory_id)
+        elif target.memory_key is not None:
+            memory = self._manager.get_memory_by_key(target.memory_key)
+        else:
+            memory = None
+        if memory is not None and not _scope_contains_memory(scope, memory):
+            return MemoryOperationOutcome(
+                MemoryOperationStatus.MEMORY_SCOPE_MISMATCH,
+                memory_id=memory.id,
             )
-
-        return self._manager.process_memory_action(action)
+        return None
 
     def close(self) -> None:
         """Close the underlying memory manager."""
@@ -164,14 +193,14 @@ def build_local_memory_gateway(
     return MemoryManagerGateway(build_memory_manager(config))
 
 
-def _retrieval_topic(scope: MemoryScope) -> str | None:
-    topics: dict[MemoryScope, str | None] = {
-        "none": None,
-        "personal_relevant": None,
-        "task_relevant_only": "task",
-        "list_relevant": "shopping",
+def _retrieval_metadata(scope: MemoryScope) -> tuple[str | None, str | None]:
+    metadata: dict[MemoryScope, tuple[str | None, str | None]] = {
+        "none": (None, None),
+        "personal_relevant": ("profile", None),
+        "task_relevant_only": ("feedback", "task"),
+        "list_relevant": ("feedback", "shopping"),
     }
-    return topics[scope]
+    return metadata[scope]
 
 
 def _storage_metadata(scope: MemoryScope) -> tuple[str, str | None]:
@@ -182,6 +211,74 @@ def _storage_metadata(scope: MemoryScope) -> tuple[str, str | None]:
         "list_relevant": ("feedback", "shopping"),
     }
     return metadata[scope]
+
+
+def _memory_command_from_action(
+    action: MemoryAction,
+    scope: MemoryScope,
+) -> MemoryCommand:
+    """Translate an untrusted reasoning proposal into a memory-owned command."""
+
+    if action.list_operation is not None:
+        assert action.target is not None
+        return ApplyStructuredListCommand(
+            target=_command_target(action.target),
+            mutation=StructuredListMutation(
+                list_name=action.list_operation.list_name,
+                items=action.list_operation.items,
+            ),
+        )
+
+    if action.action == "store":
+        assert action.content is not None
+        layer, topic = _storage_metadata(scope)
+        return StoreMemoryCommand(
+            content=action.content,
+            layer=layer,
+            memory_key=(
+                action.target.memory_key if action.target is not None else None
+            ),
+            topic=topic,
+        )
+
+    assert action.target is not None
+    if action.action == "update":
+        assert action.content is not None
+        return UpdateMemoryCommand(
+            target=_command_target(action.target),
+            content=action.content,
+        )
+    return DeleteMemoryCommand(target=_command_target(action.target))
+
+
+def _command_target(target: object) -> MemoryCommandTarget:
+    if not isinstance(target, MemoryTarget):
+        raise TypeError("Memory proposal target must be MemoryTarget.")
+    return MemoryCommandTarget(
+        memory_id=target.memory_id,
+        memory_key=target.memory_key,
+        expected_revision=target.expected_revision,
+    )
+
+
+def _scope_allows_key(scope: MemoryScope, memory_key: str) -> bool:
+    if scope == "personal_relevant":
+        return memory_key.startswith("preference:")
+    if scope == "task_relevant_only":
+        return memory_key == TASK_LIST_MEMORY_KEY
+    if scope == "list_relevant":
+        return memory_key == SHOPPING_LIST_MEMORY_KEY
+    return False
+
+
+def _scope_contains_memory(scope: MemoryScope, memory: MemoryRecord) -> bool:
+    if scope == "personal_relevant":
+        return memory.layer == "profile"
+    if scope == "task_relevant_only":
+        return memory.layer == "feedback" and memory.topic == "task"
+    if scope == "list_relevant":
+        return memory.layer == "feedback" and memory.topic == "shopping"
+    return False
 
 
 def _memory_reference(
@@ -208,29 +305,20 @@ class MemoryManagerPort(Protocol):
 
     def get_memory_by_key(self, memory_key: str) -> MemoryRecord | None: ...
 
+    def get_memory_by_id(self, memory_id: int) -> MemoryRecord | None: ...
+
     def retrieve_similar(
         self,
         *,
         query: str,
         top_k: int,
         topic: str | None,
+        layer: str | None,
     ) -> list[MemorySearchResult]: ...
 
-    def store_memory(
+    def execute_memory_command(
         self,
-        *,
-        content: str,
-        layer: str,
-        memory_key: str | None,
-        topic: str | None,
-        validate: bool,
-        auto_classify: bool,
-        auto_extract: bool,
-    ) -> MemoryOperationOutcome: ...
-
-    def process_memory_action(
-        self,
-        action: MemoryAction,
+        command: MemoryCommand,
     ) -> MemoryOperationOutcome: ...
 
     def close(self) -> None: ...

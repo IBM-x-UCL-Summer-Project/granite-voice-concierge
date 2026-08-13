@@ -8,24 +8,23 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from voice_concierge.memory import (
+    ApplyStructuredListCommand,
+    DeleteMemoryCommand,
+    MemoryCommandTarget,
     MemoryManager,
     MemoryOperationStatus,
     MemorySearchResult,
     MemoryStore,
     MemoryValidator,
+    StoreMemoryCommand,
+    StructuredListMutation,
     VectorStore,
 )
-from voice_concierge.reasoning.types import (
-    MemoryAction,
-    MemoryTarget,
-    StructuredListOperation,
-)
 
 
-def _shopping_add(*items: str) -> StructuredListOperation:
-    return StructuredListOperation(
+def _shopping_add(*items: str) -> StructuredListMutation:
+    return StructuredListMutation(
         list_name="shopping",
-        operation="add_items",
         items=items,
     )
 
@@ -253,16 +252,13 @@ class TestMemoryManagerBasic:
         memories = memory_manager.get_all_memories()
         assert len(memories) == 0
 
-    def test_process_memory_action_store(self, memory_manager):
-        """Process a store action from reasoning engine."""
-        action = MemoryAction(
-            action="store",
+    def test_execute_memory_store_command(self, memory_manager):
+        command = StoreMemoryCommand(
             content="remember to call mom",
-            rationale="important reminder",
-            requires_confirmation=False,
+            layer="feedback",
         )
 
-        outcome = memory_manager.process_memory_action(action)
+        outcome = memory_manager.execute_memory_command(command)
         assert outcome.succeeded is True
 
         memories = memory_manager.get_all_memories()
@@ -290,19 +286,16 @@ class TestMemoryManagerBasic:
         )
         shopping_id = shopping_outcome.memory_id
         assert shopping_id is not None
-        action = MemoryAction(
-            action="update",
-            content=None,
-            rationale="User asked to add milk.",
-            target=MemoryTarget(
+        command = ApplyStructuredListCommand(
+            target=MemoryCommandTarget(
                 memory_id=shopping_id,
                 memory_key="list:shopping",
                 expected_revision=1,
             ),
-            list_operation=_shopping_add("milk"),
+            mutation=_shopping_add("milk"),
         )
 
-        outcome = memory_manager.process_memory_action(action)
+        outcome = memory_manager.execute_memory_command(command)
 
         assert outcome.succeeded is True
         assert outcome.status is MemoryOperationStatus.UPDATED_SUCCESSFULLY
@@ -326,19 +319,16 @@ class TestMemoryManagerBasic:
         )
         shopping_id = store_outcome.memory_id
         assert shopping_id is not None
-        action = MemoryAction(
-            action="update",
-            content=None,
-            rationale="User asked to add milk and eggs.",
-            target=MemoryTarget(
+        command = ApplyStructuredListCommand(
+            target=MemoryCommandTarget(
                 memory_id=shopping_id,
                 memory_key="list:shopping",
                 expected_revision=1,
             ),
-            list_operation=_shopping_add("Milk", "eggs"),
+            mutation=_shopping_add("Milk", "eggs"),
         )
 
-        outcome = memory_manager.process_memory_action(action)
+        outcome = memory_manager.execute_memory_command(command)
 
         assert outcome.succeeded is True
         assert outcome.status is MemoryOperationStatus.UPDATED_SUCCESSFULLY
@@ -359,15 +349,15 @@ class TestMemoryManagerBasic:
         )
         preference_id = store_outcome.memory_id
         assert preference_id is not None
-        action = MemoryAction(
-            action="update",
-            content=None,
-            rationale="Incorrect exact target supplied for a list operation.",
-            target=MemoryTarget(memory_id=preference_id, expected_revision=1),
-            list_operation=_shopping_add("milk"),
+        command = ApplyStructuredListCommand(
+            target=MemoryCommandTarget(
+                memory_id=preference_id,
+                expected_revision=1,
+            ),
+            mutation=_shopping_add("milk"),
         )
 
-        outcome = memory_manager.process_memory_action(action)
+        outcome = memory_manager.execute_memory_command(command)
 
         assert outcome.succeeded is False
         assert outcome.status is MemoryOperationStatus.STRUCTURED_LIST_TARGET_MISMATCH
@@ -385,13 +375,8 @@ class TestMemoryManagerBasic:
         )
         preference_id = store_outcome.memory_id
         assert preference_id is not None
-        with pytest.raises(ValueError, match="requires an exact target"):
-            MemoryAction(
-                action="update",
-                content=None,
-                rationale="User asked to add milk.",
-                list_operation=_shopping_add("milk"),
-            )
+        with pytest.raises(ValueError, match="requires an ID or stable key"):
+            MemoryCommandTarget()
 
         assert (
             memory_manager.memory_store.get_memory_by_id(preference_id).content
@@ -407,12 +392,8 @@ class TestMemoryManagerBasic:
         )
         preference_id = store_outcome.memory_id
         assert preference_id is not None
-        with pytest.raises(ValueError, match="requires an exact target"):
-            MemoryAction(
-                action="delete",
-                content="I prefer tea",
-                rationale="User asked to delete a memory.",
-            )
+        with pytest.raises(ValueError, match="requires an ID or stable key"):
+            MemoryCommandTarget()
 
         assert memory_manager.memory_store.get_memory_by_id(preference_id) is not None
 
@@ -436,18 +417,15 @@ class TestMemoryManagerBasic:
         )
         shopping_id = shopping_outcome.memory_id
         assert shopping_id is not None
-        action = MemoryAction(
-            action="delete",
-            content="my shopping list",
-            rationale="User asked to delete the shopping list.",
-            target=MemoryTarget(
+        command = DeleteMemoryCommand(
+            target=MemoryCommandTarget(
                 memory_id=shopping_id,
                 memory_key="list:shopping",
                 expected_revision=1,
             ),
         )
 
-        outcome = memory_manager.process_memory_action(action)
+        outcome = memory_manager.execute_memory_command(command)
 
         assert outcome.succeeded is True
         assert outcome.status is MemoryOperationStatus.DELETED_SUCCESSFULLY
@@ -471,19 +449,16 @@ class TestMemoryManagerBasic:
             expected_revision=1,
         )
         assert update_outcome.status is MemoryOperationStatus.UPDATED_SUCCESSFULLY
-        stale_action = MemoryAction(
-            action="update",
-            content=None,
-            rationale="User acted on an old list view.",
-            target=MemoryTarget(
+        stale_command = ApplyStructuredListCommand(
+            target=MemoryCommandTarget(
                 memory_id=shopping_id,
                 memory_key="list:shopping",
                 expected_revision=1,
             ),
-            list_operation=_shopping_add("milk"),
+            mutation=_shopping_add("milk"),
         )
 
-        outcome = memory_manager.process_memory_action(stale_action)
+        outcome = memory_manager.execute_memory_command(stale_command)
 
         assert outcome.succeeded is False
         assert outcome.status is MemoryOperationStatus.MEMORY_REVISION_CONFLICT
@@ -491,9 +466,54 @@ class TestMemoryManagerBasic:
             "Shopping list: bread, eggs."
         )
 
+    def test_missing_revision_checked_list_is_not_recreated(self, memory_manager):
+        command = ApplyStructuredListCommand(
+            target=MemoryCommandTarget(
+                memory_key="list:shopping",
+                expected_revision=1,
+            ),
+            mutation=_shopping_add("milk"),
+        )
+
+        outcome = memory_manager.execute_memory_command(command)
+
+        assert outcome.status is MemoryOperationStatus.MEMORY_TARGET_NOT_FOUND
+        assert memory_manager.get_memory_by_key("list:shopping") is None
+
 
 class TestMemoryRetrieval:
     """Test memory retrieval capabilities."""
+
+    def test_scoped_search_cannot_be_crowded_out_by_other_layers(
+        self,
+        memory_manager,
+    ):
+        for index in range(3):
+            memory_manager.store_memory(
+                content=f"Shopping item {index}",
+                layer="feedback",
+                topic="shopping",
+                validate=False,
+                auto_classify=False,
+                auto_extract=False,
+                check_duplicates=False,
+            )
+        profile_outcome = memory_manager.store_memory(
+            content="User prefers tea",
+            layer="profile",
+            validate=False,
+            auto_classify=False,
+            auto_extract=False,
+            check_duplicates=False,
+        )
+
+        results = memory_manager.retrieve_similar(
+            "anything",
+            top_k=1,
+            layer="profile",
+        )
+
+        assert [result.memory.id for result in results] == [profile_outcome.memory_id]
 
     @pytest.mark.skip(reason="Requires Ollama embedding service running")
     def test_semantic_search(self, memory_manager):

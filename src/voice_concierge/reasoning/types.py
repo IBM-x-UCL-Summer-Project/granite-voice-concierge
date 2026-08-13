@@ -16,15 +16,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
+from voice_concierge.memory_contracts import (
+    SHOPPING_LIST_MEMORY_KEY,
+    STRUCTURED_LIST_MEMORY_KEYS,
+    TASK_LIST_MEMORY_KEY,
+)
+
 Confidence = Literal["low", "medium", "high"]
 MemoryActionKind = Literal["store", "delete", "update"]
 StructuredListName = Literal["shopping", "task"]
 StructuredListOperationKind = Literal["add_items"]
-SHOPPING_LIST_MEMORY_KEY = "list:shopping"
-TASK_LIST_MEMORY_KEY = "list:tasks"
-STRUCTURED_LIST_MEMORY_KEYS = frozenset(
-    {SHOPPING_LIST_MEMORY_KEY, TASK_LIST_MEMORY_KEY}
-)
 InformationSource = Literal[
     "none",
     "user_input",

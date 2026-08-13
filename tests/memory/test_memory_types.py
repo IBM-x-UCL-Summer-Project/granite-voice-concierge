@@ -9,7 +9,7 @@ from voice_concierge.memory import (
     MemoryOperationOutcome,
     MemoryOperationStatus,
     MemoryRecord,
-    MemoryScope,
+    MemoryRecordScope,
     MemorySearchResult,
     MemorySimilarityAdvisory,
     MemoryUpdate,
@@ -72,7 +72,7 @@ def test_search_result_keeps_distance_out_of_authoritative_record() -> None:
 
 
 def test_memory_scope_treats_none_as_an_exact_value() -> None:
-    scope = MemoryScope(layer="profile", topic=None)
+    scope = MemoryRecordScope(layer="profile", topic=None)
 
     assert scope.contains(_record(layer="profile", topic=None)) is True
     assert scope.contains(_record(layer="profile", topic="preference")) is False

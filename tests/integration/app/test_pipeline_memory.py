@@ -280,3 +280,42 @@ def test_first_structured_list_item_is_stored_then_later_items_are_updated(
 
     assert structured_list is not None
     assert structured_list.content == expected
+
+
+@pytest.mark.integration
+def test_gateway_blocks_exact_mutation_outside_active_scope(tmp_path) -> None:
+    config = LocalMemoryConfig(
+        memory_db_path=tmp_path / "memories.sqlite3",
+        vector_db_path=tmp_path / "vectors.sqlite3",
+        embedding_dimension=4,
+    )
+    manager = build_memory_manager(
+        config,
+        embedding_service=DeterministicEmbeddingService(),
+        validator=FailingValidator(),
+    )
+    gateway = MemoryManagerGateway(manager)
+    stored = manager.store_memory(
+        content="User prefers tea.",
+        layer="profile",
+        validate=False,
+        auto_classify=False,
+        auto_extract=False,
+    )
+    assert stored.memory_id is not None
+    action = MemoryAction(
+        action="delete",
+        content="User prefers tea.",
+        rationale="Attempted cross-scope deletion.",
+        target=MemoryTarget(memory_id=stored.memory_id, expected_revision=1),
+    )
+
+    try:
+        outcome = gateway.apply(action, "list_relevant")
+        memory = manager.memory_store.get_memory_by_id(stored.memory_id)
+    finally:
+        gateway.close()
+
+    assert outcome.status is MemoryOperationStatus.MEMORY_SCOPE_MISMATCH
+    assert memory is not None
+    assert memory.content == "User prefers tea."
