@@ -81,3 +81,10 @@ scaling freely, so each step is noticeable but not jarring and the voice can
 never become unintelligible. At either end the assistant says so ("That's as
 slow as I can go") rather than staying silent, which would read as the command
 not having been heard.
+
+The chosen pace is remembered at `.local/preferences/speech-pace.json` and
+restored next time, so someone who has asked the assistant to slow down does not
+have to ask again every session. Pass `persist=False` to
+`build_paced_text_to_speech` to keep a session's pace to itself. Saving is best
+effort: an unwritable preferences file costs the memory of the setting, never
+the ability to change it now.
