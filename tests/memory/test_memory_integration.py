@@ -156,7 +156,32 @@ class TestMemoryManagerBasic:
         )
         assert (
             memory_manager.memory_store.get_memory_by_id(shopping_id)["content"]
-            == "shopping_list:add:milk"
+            == "Shopping list: bread, milk."
+        )
+
+    def test_process_shopping_update_deduplicates_items(self, memory_manager):
+        _, _, shopping_id = memory_manager.store_memory(
+            content="Shopping list: bread, milk.",
+            layer="feedback",
+            memory_key="list:shopping",
+            topic="shopping",
+            validate=False,
+            check_duplicates=False,
+        )
+        action = MemoryAction(
+            action="update",
+            content="shopping_list:add:Milk and eggs",
+            rationale="User asked to add milk and eggs.",
+            target_key="list:shopping",
+        )
+
+        success, reason = memory_manager.process_memory_action(action)
+
+        assert success is True
+        assert reason == "updated_successfully"
+        assert (
+            memory_manager.memory_store.get_memory_by_id(shopping_id)["content"]
+            == "Shopping list: bread, milk, eggs."
         )
 
     def test_process_update_without_stable_target_fails_closed(self, memory_manager):

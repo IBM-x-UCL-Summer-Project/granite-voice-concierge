@@ -153,7 +153,8 @@ def test_policy_guard_does_not_treat_bread_as_read_request() -> None:
     )
 
     assert response.proposed_memory_action is not None
-    assert response.proposed_memory_action.action == "update"
+    assert response.proposed_memory_action.action == "store"
+    assert response.proposed_memory_action.content == "Shopping list: milk, bread."
     assert response.proposed_memory_action.target_key == "list:shopping"
     assert response.metadata["policy_guard"] == "shopping_list_add_confirmation"
 
@@ -182,7 +183,8 @@ def test_policy_guard_rewrites_action_without_confirmation_wording() -> None:
     )
     assert response.needs_confirmation is True
     assert response.proposed_memory_action is not None
-    assert response.proposed_memory_action.action == "update"
+    assert response.proposed_memory_action.action == "store"
+    assert response.proposed_memory_action.content == "Shopping list: milk, bread."
     assert response.metadata["policy_guard"] == "shopping_list_add_confirmation"
 
 
@@ -212,7 +214,7 @@ def test_policy_guard_rewrites_confirmed_action_with_wrong_content() -> None:
         "I save it."
     )
     assert response.proposed_memory_action is not None
-    assert response.proposed_memory_action.content == "shopping_list:add:milk and bread"
+    assert response.proposed_memory_action.content == "Shopping list: milk, bread."
     assert response.metadata["policy_guard"] == "shopping_list_add_confirmation"
 
 
@@ -236,6 +238,7 @@ def test_policy_guard_keeps_confirmed_action_with_confirmation_wording() -> None
         ReasoningRequest(
             transcript="Add milk and bread to my shopping list.",
             mode="shopping",
+            memories=("Shopping list: eggs.",),
         ),
         original,
     )

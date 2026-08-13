@@ -158,3 +158,47 @@ def test_failed_embedding_rolls_back_confirmed_memory_record(tmp_path) -> None:
         assert manager.get_all_memories() == []
     finally:
         pipeline.close()
+
+
+@pytest.mark.integration
+def test_first_shopping_item_is_stored_then_later_items_are_updated(tmp_path) -> None:
+    config = LocalMemoryConfig(
+        memory_db_path=tmp_path / "memories.sqlite3",
+        vector_db_path=tmp_path / "vectors.sqlite3",
+        embedding_dimension=4,
+    )
+    manager = build_memory_manager(
+        config,
+        embedding_service=DeterministicEmbeddingService(),
+        validator=FailingValidator(),
+    )
+    gateway = MemoryManagerGateway(manager)
+
+    first_item = MemoryAction(
+        action="store",
+        content="Shopping list: milk.",
+        rationale="User added the first shopping item.",
+        target_key="list:shopping",
+    )
+    later_item = MemoryAction(
+        action="update",
+        content="shopping_list:add:bread",
+        rationale="User added another shopping item.",
+        target_key="list:shopping",
+    )
+
+    try:
+        assert gateway.apply(first_item, "list_relevant") == (
+            True,
+            "stored_successfully",
+        )
+        assert gateway.apply(later_item, "list_relevant") == (
+            True,
+            "updated_successfully",
+        )
+        shopping_list = manager.memory_store.get_memory_by_key("list:shopping")
+    finally:
+        gateway.close()
+
+    assert shopping_list is not None
+    assert shopping_list["content"] == "Shopping list: milk, bread."

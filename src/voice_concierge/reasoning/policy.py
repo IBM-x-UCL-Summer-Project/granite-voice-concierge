@@ -81,10 +81,16 @@ def apply_reasoning_policy_guards(
         return _memory_changes_disabled_response(response)
 
     if request.mode.lower() == "shopping" and shopping_items:
-        expected_content = f"shopping_list:add:{shopping_items}"
+        shopping_list_memory = _shopping_list_memory(request.memories)
+        action = "update" if shopping_list_memory is not None else "store"
+        expected_content = (
+            f"shopping_list:add:{shopping_items}"
+            if action == "update"
+            else _new_shopping_list_content(shopping_items)
+        )
         if _has_confirmed_action_response(
             response,
-            "update",
+            action,
             expected_content=expected_content,
             expected_target_key=SHOPPING_LIST_MEMORY_KEY,
         ):
@@ -98,7 +104,7 @@ def apply_reasoning_policy_guards(
             ),
             needs_confirmation=True,
             proposed_memory_action=MemoryAction(
-                action="update",
+                action=action,
                 content=expected_content,
                 rationale="User asked to add shopping list items.",
                 target_key=SHOPPING_LIST_MEMORY_KEY,
@@ -334,6 +340,12 @@ def _shopping_items_to_add(transcript: str, text: str) -> str | None:
         flags=re.IGNORECASE,
     )
     return cleaned.strip(" .") or None
+
+
+def _new_shopping_list_content(items: str) -> str:
+    parts = re.split(r"\s*,\s*|\s+and\s+", items, flags=re.IGNORECASE)
+    normalized = [part.strip(" .") for part in parts if part.strip(" .")]
+    return f"Shopping list: {', '.join(normalized)}."
 
 
 def _accessibility_preference(text: str) -> tuple[str, str] | None:

@@ -1,5 +1,6 @@
 """High-level memory management orchestrating storage, validation, and retrieval."""
 
+import re
 from typing import Optional, Tuple
 
 from voice_concierge.memory.embedding_service import EmbeddingService
@@ -8,6 +9,9 @@ from voice_concierge.memory.memory_store import MemoryStore
 from voice_concierge.memory.memory_validator import MemoryValidator
 from voice_concierge.memory.vector_store import VectorStore
 from voice_concierge.reasoning.types import MemoryAction
+
+SHOPPING_LIST_MEMORY_KEY = "list:shopping"
+SHOPPING_LIST_ADD_PREFIX = "shopping_list:add:"
 
 
 class MemoryManager:
@@ -322,6 +326,13 @@ class MemoryManager:
             target = self.memory_store.get_memory_by_key(action.target_key)
             if target is None:
                 return False, "memory_target_not_found"
+            if action.target_key == SHOPPING_LIST_MEMORY_KEY:
+                updated_content = _append_shopping_list_items(
+                    target["content"], action.content
+                )
+                if updated_content is None:
+                    return False, "invalid_structured_list_action"
+                return self.update_memory(target["id"], content=updated_content)
             return self.update_memory(target["id"], content=action.content)
 
         elif action_type == "delete":
@@ -364,3 +375,40 @@ class MemoryManager:
         """Close all storage connections."""
         self.memory_store.close()
         self.vector_store.close()
+
+
+def _append_shopping_list_items(
+    existing_content: str,
+    action_content: str,
+) -> str | None:
+    if not action_content.lower().startswith(SHOPPING_LIST_ADD_PREFIX):
+        return None
+
+    existing_items = _shopping_list_items(existing_content)
+    added_items = _shopping_list_items(action_content)
+    if existing_items is None or not added_items:
+        return None
+
+    combined = list(existing_items)
+    seen = {item.casefold() for item in existing_items}
+    for item in added_items:
+        normalized = item.casefold()
+        if normalized not in seen:
+            combined.append(item)
+            seen.add(normalized)
+
+    return f"Shopping list: {', '.join(combined)}."
+
+
+def _shopping_list_items(content: str) -> list[str] | None:
+    normalized = content.strip()
+    lowered = normalized.lower()
+    if lowered.startswith(SHOPPING_LIST_ADD_PREFIX):
+        item_text = normalized[len(SHOPPING_LIST_ADD_PREFIX) :]
+    elif lowered.startswith("shopping list:"):
+        item_text = normalized.partition(":")[2]
+    else:
+        return None
+
+    parts = re.split(r"\s*,\s*|\s+and\s+", item_text, flags=re.IGNORECASE)
+    return [part.strip(" .") for part in parts if part.strip(" .")]
