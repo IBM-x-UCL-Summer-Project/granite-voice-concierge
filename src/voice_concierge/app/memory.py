@@ -79,7 +79,18 @@ class MemoryManagerGateway:
         if scope == "none":
             return False, "memory_scope_none"
 
+        if action.list_operation is not None:
+            expected_scope: MemoryScope = (
+                "list_relevant"
+                if action.list_operation.list_name == "shopping"
+                else "task_relevant_only"
+            )
+            if scope != expected_scope:
+                return False, "structured_list_scope_mismatch"
+            return self._manager.process_memory_action(action)
+
         if action.action == "store":
+            assert action.content is not None
             layer, topic = _storage_metadata(scope)
             memory_key = action.target.memory_key if action.target is not None else None
             success, reason, _memory_id = self._manager.store_memory(

@@ -12,7 +12,19 @@ from voice_concierge.reasoning.types import (
     ReasoningConstraints,
     ReasoningRequest,
     ReasoningResponse,
+    StructuredListOperation,
 )
+
+
+def _add_items(
+    list_name: str,
+    *items: str,
+) -> StructuredListOperation:
+    return StructuredListOperation(
+        list_name=list_name,
+        operation="add_items",
+        items=items,
+    )
 
 
 def test_policy_guard_adds_accessibility_preference_action() -> None:
@@ -106,9 +118,10 @@ def test_policy_guard_uses_supplied_shopping_list_memory() -> None:
             needs_confirmation=True,
             proposed_memory_action=MemoryAction(
                 action="update",
-                content="shopping_list:add:eggs",
+                content=None,
                 rationale="Model confused recall with update.",
                 target=MemoryTarget(memory_key="list:shopping"),
+                list_operation=_add_items("shopping", "eggs"),
             ),
             confidence="medium",
         ),
@@ -400,7 +413,10 @@ def test_policy_guard_does_not_treat_bread_as_read_request() -> None:
 
     assert response.proposed_memory_action is not None
     assert response.proposed_memory_action.action == "store"
-    assert response.proposed_memory_action.content == "Shopping list: milk, bread."
+    assert response.proposed_memory_action.content is None
+    assert response.proposed_memory_action.list_operation == _add_items(
+        "shopping", "milk", "bread"
+    )
     assert response.proposed_memory_action.target == MemoryTarget(
         memory_key="list:shopping"
     )
@@ -418,9 +434,10 @@ def test_policy_guard_rewrites_action_without_confirmation_wording() -> None:
             needs_confirmation=True,
             proposed_memory_action=MemoryAction(
                 action="update",
-                content="shopping_list:add:milk and bread",
+                content=None,
                 rationale="User asked to add shopping list items.",
                 target=MemoryTarget(memory_key="list:shopping"),
+                list_operation=_add_items("shopping", "milk", "bread"),
             ),
             confidence="medium",
         ),
@@ -433,7 +450,10 @@ def test_policy_guard_rewrites_action_without_confirmation_wording() -> None:
     assert response.needs_confirmation is True
     assert response.proposed_memory_action is not None
     assert response.proposed_memory_action.action == "store"
-    assert response.proposed_memory_action.content == "Shopping list: milk, bread."
+    assert response.proposed_memory_action.content is None
+    assert response.proposed_memory_action.list_operation == _add_items(
+        "shopping", "milk", "bread"
+    )
     assert response.metadata["policy_guard"] == "shopping_list_add_confirmation"
 
 
@@ -451,9 +471,10 @@ def test_policy_guard_rewrites_confirmed_action_with_wrong_content() -> None:
             needs_confirmation=True,
             proposed_memory_action=MemoryAction(
                 action="update",
-                content="shopping_list:add:eggs",
+                content=None,
                 rationale="Model extracted the wrong shopping item.",
                 target=MemoryTarget(memory_key="list:shopping"),
+                list_operation=_add_items("shopping", "eggs"),
             ),
             confidence="medium",
         ),
@@ -464,7 +485,10 @@ def test_policy_guard_rewrites_confirmed_action_with_wrong_content() -> None:
         "I save it."
     )
     assert response.proposed_memory_action is not None
-    assert response.proposed_memory_action.content == "Shopping list: milk, bread."
+    assert response.proposed_memory_action.content is None
+    assert response.proposed_memory_action.list_operation == _add_items(
+        "shopping", "milk", "bread"
+    )
     assert response.metadata["policy_guard"] == "shopping_list_add_confirmation"
 
 
@@ -477,13 +501,14 @@ def test_policy_guard_keeps_confirmed_action_with_confirmation_wording() -> None
         needs_confirmation=True,
         proposed_memory_action=MemoryAction(
             action="update",
-            content="shopping_list:add:milk and bread",
+            content=None,
             rationale="User asked to add shopping list items.",
             target=MemoryTarget(
                 memory_id=7,
                 memory_key="list:shopping",
                 expected_revision=2,
             ),
+            list_operation=_add_items("shopping", "milk", "bread"),
         ),
         confidence="medium",
     )
@@ -518,7 +543,10 @@ def test_policy_guard_stores_first_task_list_item() -> None:
     assert response.needs_confirmation is True
     assert response.proposed_memory_action is not None
     assert response.proposed_memory_action.action == "store"
-    assert response.proposed_memory_action.content == "Task list: call the dentist."
+    assert response.proposed_memory_action.content is None
+    assert response.proposed_memory_action.list_operation == _add_items(
+        "task", "call the dentist"
+    )
     assert response.proposed_memory_action.target == MemoryTarget(
         memory_key="list:tasks"
     )
@@ -545,7 +573,10 @@ def test_policy_guard_updates_existing_task_list() -> None:
 
     assert response.proposed_memory_action is not None
     assert response.proposed_memory_action.action == "update"
-    assert response.proposed_memory_action.content == ("task_list:add:call the dentist")
+    assert response.proposed_memory_action.content is None
+    assert response.proposed_memory_action.list_operation == _add_items(
+        "task", "call the dentist"
+    )
     assert response.proposed_memory_action.target == MemoryTarget(
         memory_id=9,
         memory_key="list:tasks",
@@ -580,6 +611,28 @@ def test_policy_guard_adds_memory_store_action() -> None:
     assert response.proposed_memory_action is not None
     assert response.proposed_memory_action.action == "store"
     assert response.proposed_memory_action.content == "I prefer short answers"
+
+
+def test_policy_guard_replaces_list_operation_for_non_list_memory_request() -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(transcript="Remember that I prefer short answers."),
+        ReasoningResponse(
+            spoken_response="Please confirm before I save it.",
+            needs_confirmation=True,
+            proposed_memory_action=MemoryAction(
+                action="store",
+                content=None,
+                rationale="Model returned the wrong mutation type.",
+                target=MemoryTarget(memory_key="list:shopping"),
+                list_operation=_add_items("shopping", "short answers"),
+            ),
+            required_information_source="user_input",
+        ),
+    )
+
+    assert response.proposed_memory_action is not None
+    assert response.proposed_memory_action.content == "I prefer short answers"
+    assert response.proposed_memory_action.list_operation is None
 
 
 def test_policy_guard_requires_user_input_source_for_memory_fact() -> None:

@@ -16,6 +16,7 @@ from voice_concierge.reasoning.types import (
     MemoryReference,
     MemoryTarget,
     ReasoningResponse,
+    StructuredListOperation,
 )
 
 
@@ -174,20 +175,29 @@ def test_failed_embedding_rolls_back_confirmed_memory_record(tmp_path) -> None:
 
 @pytest.mark.integration
 @pytest.mark.parametrize(
-    ("scope", "memory_key", "first_content", "update_content", "expected"),
+    (
+        "scope",
+        "list_name",
+        "memory_key",
+        "initial_item",
+        "additional_item",
+        "expected",
+    ),
     (
         (
             "list_relevant",
+            "shopping",
             "list:shopping",
-            "Shopping list: milk.",
-            "shopping_list:add:bread",
+            "milk",
+            "bread",
             "Shopping list: milk, bread.",
         ),
         (
             "task_relevant_only",
+            "task",
             "list:tasks",
-            "Task list: call the dentist.",
-            "task_list:add:buy stamps",
+            "call the dentist",
+            "buy stamps",
             "Task list: call the dentist, buy stamps.",
         ),
     ),
@@ -195,9 +205,10 @@ def test_failed_embedding_rolls_back_confirmed_memory_record(tmp_path) -> None:
 def test_first_structured_list_item_is_stored_then_later_items_are_updated(
     tmp_path,
     scope,
+    list_name,
     memory_key,
-    first_content,
-    update_content,
+    initial_item,
+    additional_item,
     expected,
 ) -> None:
     config = LocalMemoryConfig(
@@ -212,25 +223,35 @@ def test_first_structured_list_item_is_stored_then_later_items_are_updated(
     )
     gateway = MemoryManagerGateway(manager)
 
-    first_item = MemoryAction(
+    first_action = MemoryAction(
         action="store",
-        content=first_content,
+        content=None,
         rationale="User added the first structured-list item.",
         target=MemoryTarget(memory_key=memory_key),
+        list_operation=StructuredListOperation(
+            list_name=list_name,
+            operation="add_items",
+            items=(initial_item,),
+        ),
     )
-    later_item = MemoryAction(
+    later_action = MemoryAction(
         action="update",
-        content=update_content,
+        content=None,
         rationale="User added another structured-list item.",
         target=MemoryTarget(memory_key=memory_key, expected_revision=1),
+        list_operation=StructuredListOperation(
+            list_name=list_name,
+            operation="add_items",
+            items=(additional_item,),
+        ),
     )
 
     try:
-        assert gateway.apply(first_item, scope) == (
+        assert gateway.apply(first_action, scope) == (
             True,
             "stored_successfully",
         )
-        assert gateway.apply(later_item, scope) == (
+        assert gateway.apply(later_action, scope) == (
             True,
             "updated_successfully",
         )

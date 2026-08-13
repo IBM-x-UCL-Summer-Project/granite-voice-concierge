@@ -23,6 +23,7 @@ from voice_concierge.reasoning import (
     ReasoningConstraints,
     ReasoningRequest,
     ReasoningRequestError,
+    StructuredListOperation,
 )
 
 
@@ -282,6 +283,45 @@ def test_ollama_engine_rejects_mutation_without_exact_target() -> None:
 
     assert response.proposed_memory_action is None
     assert response.metadata["structured_parse_error"] == ("schema_validation_failed")
+
+
+def test_ollama_engine_parses_typed_structured_list_operation() -> None:
+    engine, _ = _engine_with_response(
+        _structured_content(
+            "I can add milk and bread. Please confirm before I save it.",
+            needs_confirmation=True,
+            proposed_memory_action={
+                "action": "store",
+                "content": None,
+                "rationale": "User asked to add shopping items.",
+                "target": {"memory_key": "list:shopping"},
+                "list_operation": {
+                    "list_name": "shopping",
+                    "operation": "add_items",
+                    "items": ["milk", "bread"],
+                },
+                "requires_confirmation": True,
+            },
+            required_information_source="user_input",
+        )
+    )
+
+    response = engine.generate(
+        ReasoningRequest(
+            transcript="Add milk and bread to my shopping list.",
+            mode="shopping",
+        )
+    )
+
+    assert response.proposed_memory_action is not None
+    assert response.proposed_memory_action.content is None
+    assert response.proposed_memory_action.list_operation == (
+        StructuredListOperation(
+            list_name="shopping",
+            operation="add_items",
+            items=("milk", "bread"),
+        )
+    )
 
 
 def test_ollama_engine_maps_connection_errors() -> None:

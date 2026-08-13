@@ -13,7 +13,19 @@ from voice_concierge.memory import (
     MemoryValidator,
     VectorStore,
 )
-from voice_concierge.reasoning.types import MemoryAction, MemoryTarget
+from voice_concierge.reasoning.types import (
+    MemoryAction,
+    MemoryTarget,
+    StructuredListOperation,
+)
+
+
+def _shopping_add(*items: str) -> StructuredListOperation:
+    return StructuredListOperation(
+        list_name="shopping",
+        operation="add_items",
+        items=items,
+    )
 
 
 @pytest.fixture
@@ -141,13 +153,14 @@ class TestMemoryManagerBasic:
         )
         action = MemoryAction(
             action="update",
-            content="shopping_list:add:milk",
+            content=None,
             rationale="User asked to add milk.",
             target=MemoryTarget(
                 memory_id=shopping_id,
                 memory_key="list:shopping",
                 expected_revision=1,
             ),
+            list_operation=_shopping_add("milk"),
         )
 
         success, reason = memory_manager.process_memory_action(action)
@@ -174,13 +187,14 @@ class TestMemoryManagerBasic:
         )
         action = MemoryAction(
             action="update",
-            content="shopping_list:add:Milk and eggs",
+            content=None,
             rationale="User asked to add milk and eggs.",
             target=MemoryTarget(
                 memory_id=shopping_id,
                 memory_key="list:shopping",
                 expected_revision=1,
             ),
+            list_operation=_shopping_add("Milk", "eggs"),
         )
 
         success, reason = memory_manager.process_memory_action(action)
@@ -192,6 +206,32 @@ class TestMemoryManagerBasic:
             == "Shopping list: bread, milk, eggs."
         )
 
+    def test_structured_list_operation_rejects_exact_non_list_target(
+        self,
+        memory_manager,
+    ):
+        _, _, preference_id = memory_manager.store_memory(
+            content="I prefer tea",
+            layer="profile",
+            validate=False,
+            check_duplicates=False,
+        )
+        action = MemoryAction(
+            action="update",
+            content=None,
+            rationale="Incorrect exact target supplied for a list operation.",
+            target=MemoryTarget(memory_id=preference_id, expected_revision=1),
+            list_operation=_shopping_add("milk"),
+        )
+
+        success, reason = memory_manager.process_memory_action(action)
+
+        assert success is False
+        assert reason == "structured_list_target_mismatch"
+        assert memory_manager.memory_store.get_memory_by_id(preference_id)[
+            "content"
+        ] == ("I prefer tea")
+
     def test_process_update_without_stable_target_fails_closed(self, memory_manager):
         _, _, preference_id = memory_manager.store_memory(
             content="I prefer tea",
@@ -202,8 +242,9 @@ class TestMemoryManagerBasic:
         with pytest.raises(ValueError, match="requires an exact target"):
             MemoryAction(
                 action="update",
-                content="shopping_list:add:milk",
+                content=None,
                 rationale="User asked to add milk.",
+                list_operation=_shopping_add("milk"),
             )
 
         assert (
@@ -277,13 +318,14 @@ class TestMemoryManagerBasic:
         ) == (True, "updated_successfully")
         stale_action = MemoryAction(
             action="update",
-            content="shopping_list:add:milk",
+            content=None,
             rationale="User acted on an old list view.",
             target=MemoryTarget(
                 memory_id=shopping_id,
                 memory_key="list:shopping",
                 expected_revision=1,
             ),
+            list_operation=_shopping_add("milk"),
         )
 
         success, reason = memory_manager.process_memory_action(stale_action)

@@ -61,6 +61,7 @@ from voice_concierge.reasoning.types import (
     ReasoningRequest,
     ReasoningResponse,
     ReasoningTrace,
+    StructuredListOperation,
 )
 from voice_concierge.reasoning.validation import validate_reasoning_request
 
@@ -107,6 +108,7 @@ __all__ = [
     "ReasoningResponse",
     "ReasoningTrace",
     "ReasoningTimeoutError",
+    "StructuredListOperation",
     "TraceableReasoningEngine",
     "apply_spoken_word_limit",
     "build_granite_messages",

@@ -152,12 +152,17 @@ type AppPipelineState = {
 
   pending_memory_action: null | {
     action: 'store' | 'delete' | 'update';
-    content: string;
+    content: string | null;
     rationale: string;
     target?: {
       memory_id?: number;
       memory_key?: string;
       expected_revision?: number;
+    };
+    list_operation?: {
+      list_name: 'shopping' | 'task';
+      operation: 'add_items';
+      items: string[];
     };
     requires_confirmation: boolean;
   };
@@ -178,6 +183,12 @@ confirmation from overwriting a newer value. A `store` may include only a
 `memory_key` when it is creating the first value for that scoped record. The UI
 must round-trip these fields unchanged and must not choose a target from memory
 content.
+
+Shopping-list and task-list writes use `list_operation`; their `content` is
+`null`. The typed item array is the only mutation payload for those actions.
+The memory domain creates canonical persisted content for a first item and
+applies later additions itself. Command strings embedded in `content` are not
+part of the contract.
 
 When a memory action is pending, the next transcript is interpreted as a
 confirmation reply. Only a complete, explicit answer such as `yes`, `confirm`,

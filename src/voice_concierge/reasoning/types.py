@@ -18,6 +18,8 @@ from typing import Literal
 
 Confidence = Literal["low", "medium", "high"]
 MemoryActionKind = Literal["store", "delete", "update"]
+StructuredListName = Literal["shopping", "task"]
+StructuredListOperationKind = Literal["add_items"]
 InformationSource = Literal[
     "none",
     "user_input",
@@ -104,6 +106,45 @@ class MemoryReference:
 
 
 @dataclass(frozen=True)
+class StructuredListOperation:
+    """Typed domain operation for changing a project-owned structured list."""
+
+    list_name: StructuredListName
+    operation: StructuredListOperationKind
+    items: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if self.list_name not in {"shopping", "task"}:
+            raise ValueError(f"Unsupported structured list: {self.list_name!r}.")
+        if self.operation != "add_items":
+            raise ValueError(
+                f"Unsupported structured-list operation: {self.operation!r}."
+            )
+        if not isinstance(self.items, tuple) or not self.items:
+            raise ValueError("Structured-list items must be a non-empty tuple.")
+
+        normalized_items: list[str] = []
+        seen: set[str] = set()
+        for item in self.items:
+            if not isinstance(item, str) or not item.strip(" ."):
+                raise ValueError("Structured-list items must not be blank.")
+            normalized = item.strip(" .")
+            comparison_key = normalized.casefold()
+            if comparison_key not in seen:
+                normalized_items.append(normalized)
+                seen.add(comparison_key)
+        object.__setattr__(self, "items", tuple(normalized_items))
+
+    @property
+    def memory_key(self) -> str:
+        """Return the stable memory key owned by this list."""
+
+        if self.list_name == "shopping":
+            return "list:shopping"
+        return "list:tasks"
+
+
+@dataclass(frozen=True)
 class ReasoningConstraints:
     """Runtime limits and policy flags applied to a reasoning request.
 
@@ -159,26 +200,33 @@ class MemoryAction:
 
     #: Requested operation type.
     action: MemoryActionKind
-    #: User-facing memory content or target description.
-    content: str
+    #: Memory content or delete-target description; absent for typed list changes.
+    content: str | None
     #: Short explanation of why this operation was proposed.
     rationale: str
     #: Exact ID/key and optional expected revision for the affected record.
     target: MemoryTarget | None = None
+    #: Typed structured-list mutation, used instead of encoding commands in content.
+    list_operation: StructuredListOperation | None = None
     #: Whether another component should confirm with the user before execution.
     requires_confirmation: bool = True
 
     def __post_init__(self) -> None:
         if self.action not in {"store", "update", "delete"}:
             raise ValueError(f"Unsupported memory action: {self.action!r}.")
-        if not isinstance(self.content, str) or not self.content.strip():
-            raise ValueError("Memory action content must not be blank.")
         if not isinstance(self.rationale, str) or not self.rationale.strip():
             raise ValueError("Memory action rationale must not be blank.")
         if self.target is not None and not isinstance(self.target, MemoryTarget):
             raise ValueError("Memory action target must be a MemoryTarget.")
         if not isinstance(self.requires_confirmation, bool):
             raise ValueError("Memory action confirmation flag must be boolean.")
+        if self.list_operation is not None and not isinstance(
+            self.list_operation,
+            StructuredListOperation,
+        ):
+            raise ValueError(
+                "Memory action list operation must be a StructuredListOperation."
+            )
         if self.action in {"update", "delete"} and self.target is None:
             raise ValueError(f"Memory {self.action} requires an exact target.")
         if (
@@ -187,6 +235,29 @@ class MemoryAction:
             and self.target.memory_id is not None
         ):
             raise ValueError("A memory store cannot target an existing memory ID.")
+        if self.list_operation is None:
+            if not isinstance(self.content, str) or not self.content.strip():
+                raise ValueError("Memory action content must not be blank.")
+            if (
+                self.action in {"store", "update"}
+                and self.target is not None
+                and self.target.memory_key in {"list:shopping", "list:tasks"}
+            ):
+                raise ValueError(
+                    "Structured-list writes require a typed list operation."
+                )
+            return
+
+        if self.action not in {"store", "update"}:
+            raise ValueError("Structured-list operations support store or update only.")
+        if self.content is not None:
+            raise ValueError(
+                "Structured-list operations must not duplicate items in content."
+            )
+        if self.target is None:
+            raise ValueError("Structured-list operations require an exact target.")
+        if self.target.memory_key not in {None, self.list_operation.memory_key}:
+            raise ValueError("Structured-list operation does not match target key.")
 
 
 @dataclass(frozen=True)

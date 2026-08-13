@@ -38,6 +38,12 @@ confirmation fails on a concurrent change instead of overwriting it. Semantic
 retrieval may select evidence for a response, but it is never used by the memory
 component to select a mutation target.
 
+Structured shopping and task lists use a typed `StructuredListOperation` on the
+memory action. An `add_items` operation carries the list kind and item tuple; it
+is used for both first-item creation and later updates. `MemoryAction.content`
+is `None` for these operations, so commands are never encoded into a content
+field and reparsed by persistence code.
+
 ### Information provenance policy
 
 Freshness policy is based on the source required to fulfil the user's intent,

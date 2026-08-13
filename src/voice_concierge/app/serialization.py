@@ -20,7 +20,11 @@ from voice_concierge.context.types import (
     AccessibilityProfile,
     ContextState,
 )
-from voice_concierge.reasoning.types import MemoryAction, MemoryTarget
+from voice_concierge.reasoning.types import (
+    MemoryAction,
+    MemoryTarget,
+    StructuredListOperation,
+)
 
 JsonDict = dict[str, Any]
 
@@ -290,9 +294,12 @@ def memory_action_from_dict(payload: object) -> MemoryAction | None:
                 _MEMORY_ACTIONS,
                 "memory action",
             ),
-            content=_required_string(action_payload, "content"),
+            content=_optional_string(action_payload, "content"),
             rationale=_required_string(action_payload, "rationale"),
             target=_memory_target_from_dict(action_payload.get("target")),
+            list_operation=_structured_list_operation_from_dict(
+                action_payload.get("list_operation")
+            ),
             requires_confirmation=_optional_bool(
                 action_payload,
                 "requires_confirmation",
@@ -317,6 +324,10 @@ def memory_action_to_dict(action: MemoryAction | None) -> JsonDict | None:
     }
     if action.target is not None:
         payload["target"] = _memory_target_to_dict(action.target)
+    if action.list_operation is not None:
+        payload["list_operation"] = _structured_list_operation_to_dict(
+            action.list_operation
+        )
     return payload
 
 
@@ -346,6 +357,45 @@ def _memory_target_to_dict(target: MemoryTarget) -> JsonDict:
     if target.expected_revision is not None:
         payload["expected_revision"] = target.expected_revision
     return payload
+
+
+def _structured_list_operation_from_dict(
+    payload: object,
+) -> StructuredListOperation | None:
+    if payload is None:
+        return None
+    operation_payload = _mapping(payload, "structured-list operation")
+    items = _required(operation_payload, "items")
+    if not isinstance(items, list) or not all(isinstance(item, str) for item in items):
+        raise PayloadValidationError("items must be an array of strings.")
+    try:
+        return StructuredListOperation(
+            list_name=_required_literal(
+                operation_payload,
+                "list_name",
+                {"shopping", "task"},
+                "structured list",
+            ),
+            operation=_required_literal(
+                operation_payload,
+                "operation",
+                {"add_items"},
+                "structured-list operation",
+            ),
+            items=tuple(items),
+        )
+    except ValueError as exc:
+        raise PayloadValidationError(str(exc)) from exc
+
+
+def _structured_list_operation_to_dict(
+    operation: StructuredListOperation,
+) -> JsonDict:
+    return {
+        "list_name": operation.list_name,
+        "operation": operation.operation,
+        "items": list(operation.items),
+    }
 
 
 def captured_audio_to_dict(audio: CapturedAudio | None) -> JsonDict | None:

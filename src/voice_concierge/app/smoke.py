@@ -12,6 +12,10 @@ from voice_concierge.app.pipeline import VoiceConciergePipeline
 from voice_concierge.app.reasoning import ReasoningTurnContext, ReasoningTurnResult
 from voice_concierge.app.serialization import JsonDict
 from voice_concierge.context.types import MemoryScope
+from voice_concierge.memory.structured_lists import (
+    apply_structured_list_operation,
+    create_structured_list,
+)
 from voice_concierge.reasoning.types import (
     MemoryAction,
     MemoryReference,
@@ -95,11 +99,23 @@ class SmokeMemoryGateway:
     def apply(self, action: MemoryAction, scope: MemoryScope) -> tuple[bool, str]:
         if scope == "none":
             return False, "memory_scope_none"
+        if action.list_operation is not None:
+            expected_scope: MemoryScope = (
+                "list_relevant"
+                if action.list_operation.list_name == "shopping"
+                else "task_relevant_only"
+            )
+            if scope != expected_scope:
+                return False, "structured_list_scope_mismatch"
         if action.action == "store":
+            content = action.content
+            if action.list_operation is not None:
+                content = create_structured_list(action.list_operation)
+            assert content is not None
             self.memories.append(
                 MemoryReference(
                     memory_id=self._next_memory_id,
-                    content=action.content,
+                    content=content,
                     layer="feedback",
                     revision=1,
                     memory_key=(
@@ -124,9 +140,20 @@ class SmokeMemoryGateway:
             del self.memories[index]
             return True, "deleted_from_smoke_memory"
 
+        content = action.content
+        if action.list_operation is not None:
+            if existing.memory_key != action.list_operation.memory_key:
+                return False, "structured_list_target_mismatch"
+            content = apply_structured_list_operation(
+                existing.content,
+                action.list_operation,
+            )
+            if content is None:
+                return False, "invalid_structured_list_content"
+        assert content is not None
         self.memories[index] = MemoryReference(
             memory_id=existing.memory_id,
-            content=action.content,
+            content=content,
             layer=existing.layer,
             revision=existing.revision + 1,
             memory_key=existing.memory_key,

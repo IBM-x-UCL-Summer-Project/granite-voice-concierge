@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 from voice_concierge.app.memory import MemoryManagerGateway, NullMemoryGateway
-from voice_concierge.reasoning.types import MemoryAction, MemoryReference, MemoryTarget
+from voice_concierge.reasoning.types import (
+    MemoryAction,
+    MemoryReference,
+    MemoryTarget,
+    StructuredListOperation,
+)
 
 
 class FakeMemoryManager:
@@ -171,6 +176,48 @@ def test_memory_manager_gateway_delegates_update_and_delete_actions() -> None:
 
     assert gateway.apply(action, "personal_relevant") == (True, "processed")
     assert manager.processed_actions == [action]
+
+
+def test_memory_manager_gateway_delegates_typed_list_store() -> None:
+    manager = FakeMemoryManager()
+    gateway = MemoryManagerGateway(manager)
+    action = MemoryAction(
+        action="store",
+        content=None,
+        rationale="User added the first shopping item.",
+        target=MemoryTarget(memory_key="list:shopping"),
+        list_operation=StructuredListOperation(
+            list_name="shopping",
+            operation="add_items",
+            items=("milk",),
+        ),
+    )
+
+    assert gateway.apply(action, "list_relevant") == (True, "processed")
+    assert manager.processed_actions == [action]
+    assert manager.store_calls == []
+
+
+def test_memory_manager_gateway_rejects_list_scope_mismatch() -> None:
+    manager = FakeMemoryManager()
+    gateway = MemoryManagerGateway(manager)
+    action = MemoryAction(
+        action="store",
+        content=None,
+        rationale="User added the first task.",
+        target=MemoryTarget(memory_key="list:tasks"),
+        list_operation=StructuredListOperation(
+            list_name="task",
+            operation="add_items",
+            items=("call the dentist",),
+        ),
+    )
+
+    assert gateway.apply(action, "list_relevant") == (
+        False,
+        "structured_list_scope_mismatch",
+    )
+    assert manager.processed_actions == []
 
 
 def test_memory_manager_gateway_blocks_apply_when_scope_is_none() -> None:

@@ -105,6 +105,8 @@ def test_granite_system_prompt_includes_memory_action_examples() -> None:
     assert "When is the next GTA game coming out?" in system_prompt
     assert '"action":"store"' in system_prompt
     assert '"action":"update"' in system_prompt
+    assert '"list_operation":{"list_name":"shopping"' in system_prompt
+    assert '"items":["milk","bread"]' in system_prompt
     assert "do not invent list items" in system_prompt
 
 

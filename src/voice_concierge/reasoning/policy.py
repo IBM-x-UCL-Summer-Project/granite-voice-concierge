@@ -12,6 +12,7 @@ from voice_concierge.reasoning.types import (
     MemoryTarget,
     ReasoningRequest,
     ReasoningResponse,
+    StructuredListOperation,
 )
 
 SHOPPING_LIST_MEMORY_KEY = "list:shopping"
@@ -113,37 +114,39 @@ def apply_reasoning_policy_guards(
     if request.mode.lower() == "shopping" and shopping_items:
         shopping_list_memory = _shopping_list_memory(request.memories)
         action = "update" if shopping_list_memory is not None else "store"
-        expected_content = (
-            f"shopping_list:add:{shopping_items}"
-            if action == "update"
-            else _new_shopping_list_content(shopping_items)
+        list_operation = StructuredListOperation(
+            list_name="shopping",
+            operation="add_items",
+            items=shopping_items,
         )
         if _has_confirmed_action_response(
             response,
             action,
-            expected_content=expected_content,
             expected_target=_structured_memory_target(
                 shopping_list_memory,
                 SHOPPING_LIST_MEMORY_KEY,
             ),
+            expected_list_operation=list_operation,
         ):
             return response
 
+        spoken_items = _format_items_for_speech(shopping_items)
         return _replace_response(
             response,
             spoken_response=(
-                f"I can add {shopping_items} to your shopping list. Please "
+                f"I can add {spoken_items} to your shopping list. Please "
                 "confirm before I save it."
             ),
             needs_confirmation=True,
             proposed_memory_action=MemoryAction(
                 action=action,
-                content=expected_content,
+                content=None,
                 rationale="User asked to add shopping list items.",
                 target=_structured_memory_target(
                     shopping_list_memory,
                     SHOPPING_LIST_MEMORY_KEY,
                 ),
+                list_operation=list_operation,
             ),
             confidence="high",
             guard="shopping_list_add_confirmation",
@@ -152,37 +155,39 @@ def apply_reasoning_policy_guards(
     if task_items:
         task_list_memory = _task_list_memory(request.memories)
         action = "update" if task_list_memory is not None else "store"
-        expected_content = (
-            f"task_list:add:{task_items}"
-            if action == "update"
-            else _new_structured_list_content("Task list", task_items)
+        list_operation = StructuredListOperation(
+            list_name="task",
+            operation="add_items",
+            items=task_items,
         )
         if _has_confirmed_action_response(
             response,
             action,
-            expected_content=expected_content,
             expected_target=_structured_memory_target(
                 task_list_memory,
                 TASK_LIST_MEMORY_KEY,
             ),
+            expected_list_operation=list_operation,
         ):
             return response
 
+        spoken_items = _format_items_for_speech(task_items)
         return _replace_response(
             response,
             spoken_response=(
-                f"I can add {task_items} to your task list. Please confirm "
+                f"I can add {spoken_items} to your task list. Please confirm "
                 "before I save it."
             ),
             needs_confirmation=True,
             proposed_memory_action=MemoryAction(
                 action=action,
-                content=expected_content,
+                content=None,
                 rationale="User asked to add task list items.",
                 target=_structured_memory_target(
                     task_list_memory,
                     TASK_LIST_MEMORY_KEY,
                 ),
+                list_operation=list_operation,
             ),
             confidence="high",
             guard="task_list_add_confirmation",
@@ -315,6 +320,7 @@ def _has_confirmed_action_response(
     *,
     expected_content: str | None = None,
     expected_target: MemoryTarget | None = None,
+    expected_list_operation: StructuredListOperation | None = None,
 ) -> bool:
     memory_action = response.proposed_memory_action
     return (
@@ -324,18 +330,25 @@ def _has_confirmed_action_response(
         and _has_confirmation_wording(response.spoken_response)
         and (
             expected_content is None
-            or _normalized_content(memory_action.content)
-            == _normalized_content(expected_content)
+            or (
+                isinstance(memory_action.content, str)
+                and _normalized_content(memory_action.content)
+                == _normalized_content(expected_content)
+            )
         )
         and (expected_target is None or memory_action.target == expected_target)
+        and (
+            expected_list_operation is None
+            or memory_action.list_operation == expected_list_operation
+        )
     )
 
 
 def _memory_change_requested(
     *,
     response: ReasoningResponse,
-    shopping_items: str | None,
-    task_items: str | None,
+    shopping_items: tuple[str, ...] | None,
+    task_items: tuple[str, ...] | None,
     accessibility_preference: tuple[str, str] | None,
     memory_write_requested: bool,
     delete_target: str | None,
@@ -420,7 +433,10 @@ def _memory_recall_requested(text: str) -> bool:
     return any(phrase in text for phrase in phrases)
 
 
-def _shopping_items_to_add(transcript: str, text: str) -> str | None:
+def _shopping_items_to_add(
+    transcript: str,
+    text: str,
+) -> tuple[str, ...] | None:
     if "shopping list" not in text or not re.search(r"\badd\b", text):
         return None
 
@@ -436,10 +452,10 @@ def _shopping_items_to_add(transcript: str, text: str) -> str | None:
         cleaned,
         flags=re.IGNORECASE,
     )
-    return cleaned.strip(" .") or None
+    return _split_list_items(cleaned)
 
 
-def _task_items_to_add(transcript: str, text: str) -> str | None:
+def _task_items_to_add(transcript: str, text: str) -> tuple[str, ...] | None:
     list_name = r"(?:task|to-do|todo)\s+list"
     if not re.search(rf"\b{list_name}\b", text) or not re.search(r"\badd\b", text):
         return None
@@ -456,17 +472,21 @@ def _task_items_to_add(transcript: str, text: str) -> str | None:
         cleaned,
         flags=re.IGNORECASE,
     )
-    return cleaned.strip(" .") or None
+    return _split_list_items(cleaned)
 
 
-def _new_shopping_list_content(items: str) -> str:
-    return _new_structured_list_content("Shopping list", items)
+def _split_list_items(value: str) -> tuple[str, ...] | None:
+    parts = re.split(r"\s*,\s*|\s+and\s+", value, flags=re.IGNORECASE)
+    normalized = tuple(part.strip(" .") for part in parts if part.strip(" ."))
+    return normalized or None
 
 
-def _new_structured_list_content(label: str, items: str) -> str:
-    parts = re.split(r"\s*,\s*|\s+and\s+", items, flags=re.IGNORECASE)
-    normalized = [part.strip(" .") for part in parts if part.strip(" .")]
-    return f"{label}: {', '.join(normalized)}."
+def _format_items_for_speech(items: tuple[str, ...]) -> str:
+    if len(items) == 1:
+        return items[0]
+    if len(items) == 2:
+        return f"{items[0]} and {items[1]}"
+    return f"{', '.join(items[:-1])}, and {items[-1]}"
 
 
 def _accessibility_preference(text: str) -> tuple[str, str] | None:

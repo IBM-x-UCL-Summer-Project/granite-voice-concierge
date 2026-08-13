@@ -37,6 +37,7 @@ from voice_concierge.reasoning.types import (
     MemoryAction,
     MemoryTarget,
     ReasoningResponse,
+    StructuredListOperation,
 )
 
 
@@ -106,12 +107,17 @@ def test_exact_memory_target_round_trips_with_pending_mutation() -> None:
     state = AppPipelineState(
         pending_memory_action=MemoryAction(
             action="update",
-            content="Shopping list: milk, bread.",
+            content=None,
             rationale="User confirmed an exact list update.",
             target=MemoryTarget(
                 memory_id=8,
                 memory_key="list:shopping",
                 expected_revision=3,
+            ),
+            list_operation=StructuredListOperation(
+                list_name="shopping",
+                operation="add_items",
+                items=("bread",),
             ),
         ),
         pending_memory_scope="list_relevant",
@@ -123,6 +129,11 @@ def test_exact_memory_target_round_trips_with_pending_mutation() -> None:
         "memory_id": 8,
         "memory_key": "list:shopping",
         "expected_revision": 3,
+    }
+    assert payload["pending_memory_action"]["list_operation"] == {
+        "list_name": "shopping",
+        "operation": "add_items",
+        "items": ["bread"],
     }
     assert app_pipeline_state_from_dict(payload) == state
 

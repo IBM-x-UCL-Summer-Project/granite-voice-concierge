@@ -1,23 +1,18 @@
 """High-level memory management orchestrating storage, validation, and retrieval."""
 
-import re
 from typing import Optional, Tuple
 
 from voice_concierge.memory.embedding_service import EmbeddingService
 from voice_concierge.memory.memory_retriever import MemoryRetriever
 from voice_concierge.memory.memory_store import MemoryStore
 from voice_concierge.memory.memory_validator import MemoryValidator
+from voice_concierge.memory.structured_lists import (
+    apply_structured_list_operation,
+    create_structured_list,
+    structured_list_topic,
+)
 from voice_concierge.memory.vector_store import VectorStore
 from voice_concierge.reasoning.types import MemoryAction, MemoryTarget
-
-SHOPPING_LIST_MEMORY_KEY = "list:shopping"
-SHOPPING_LIST_ADD_PREFIX = "shopping_list:add:"
-TASK_LIST_MEMORY_KEY = "list:tasks"
-TASK_LIST_ADD_PREFIX = "task_list:add:"
-STRUCTURED_LISTS = {
-    SHOPPING_LIST_MEMORY_KEY: (SHOPPING_LIST_ADD_PREFIX, "Shopping list"),
-    TASK_LIST_MEMORY_KEY: (TASK_LIST_ADD_PREFIX, "Task list"),
-}
 
 
 class MemoryManager:
@@ -329,7 +324,11 @@ class MemoryManager:
         """
         action_type = action.action
 
+        if action.list_operation is not None:
+            return self._process_structured_list_action(action)
+
         if action_type == "store":
+            assert action.content is not None
             memory_key = action.target.memory_key if action.target is not None else None
             success, reason, _ = self.store_memory(
                 content=action.content,
@@ -340,25 +339,11 @@ class MemoryManager:
             return success, reason
 
         elif action_type == "update":
+            assert action.content is not None
             assert action.target is not None
             target, error = self._resolve_memory_target(action.target)
             if target is None:
                 return False, error
-            if target["memory_key"] in STRUCTURED_LISTS:
-                action_prefix, label = STRUCTURED_LISTS[target["memory_key"]]
-                updated_content = _append_structured_list_items(
-                    target["content"],
-                    action.content,
-                    action_prefix=action_prefix,
-                    label=label,
-                )
-                if updated_content is None:
-                    return False, "invalid_structured_list_action"
-                return self.update_memory(
-                    target["id"],
-                    content=updated_content,
-                    expected_revision=action.target.expected_revision,
-                )
             return self.update_memory(
                 target["id"],
                 content=action.content,
@@ -377,6 +362,45 @@ class MemoryManager:
 
         else:
             return False, f"unknown_action: {action_type}"
+
+    def _process_structured_list_action(
+        self,
+        action: MemoryAction,
+    ) -> Tuple[bool, str]:
+        operation = action.list_operation
+        target = action.target
+        assert operation is not None
+        assert target is not None
+
+        if action.action == "store":
+            success, reason, _ = self.store_memory(
+                content=create_structured_list(operation),
+                layer="feedback",
+                memory_key=operation.memory_key,
+                topic=structured_list_topic(operation),
+                validate=False,
+                auto_classify=False,
+                auto_extract=False,
+            )
+            return success, reason
+
+        memory, error = self._resolve_memory_target(target)
+        if memory is None:
+            return False, error
+        if memory.get("memory_key") != operation.memory_key:
+            return False, "structured_list_target_mismatch"
+
+        updated_content = apply_structured_list_operation(
+            memory["content"],
+            operation,
+        )
+        if updated_content is None:
+            return False, "invalid_structured_list_content"
+        return self.update_memory(
+            memory["id"],
+            content=updated_content,
+            expected_revision=target.expected_revision,
+        )
 
     def _resolve_memory_target(
         self,
@@ -431,56 +455,3 @@ class MemoryManager:
         """Close all storage connections."""
         self.memory_store.close()
         self.vector_store.close()
-
-
-def _append_structured_list_items(
-    existing_content: str,
-    action_content: str,
-    *,
-    action_prefix: str,
-    label: str,
-) -> str | None:
-    if not action_content.lower().startswith(action_prefix):
-        return None
-
-    existing_items = _structured_list_items(
-        existing_content,
-        action_prefix=action_prefix,
-        label=label,
-    )
-    added_items = _structured_list_items(
-        action_content,
-        action_prefix=action_prefix,
-        label=label,
-    )
-    if existing_items is None or not added_items:
-        return None
-
-    combined = list(existing_items)
-    seen = {item.casefold() for item in existing_items}
-    for item in added_items:
-        normalized = item.casefold()
-        if normalized not in seen:
-            combined.append(item)
-            seen.add(normalized)
-
-    return f"{label}: {', '.join(combined)}."
-
-
-def _structured_list_items(
-    content: str,
-    *,
-    action_prefix: str,
-    label: str,
-) -> list[str] | None:
-    normalized = content.strip()
-    lowered = normalized.lower()
-    if lowered.startswith(action_prefix):
-        item_text = normalized[len(action_prefix) :]
-    elif lowered.startswith(f"{label.lower()}:"):
-        item_text = normalized.partition(":")[2]
-    else:
-        return None
-
-    parts = re.split(r"\s*,\s*|\s+and\s+", item_text, flags=re.IGNORECASE)
-    return [part.strip(" .") for part in parts if part.strip(" .")]

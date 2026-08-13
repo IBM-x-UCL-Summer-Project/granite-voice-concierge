@@ -253,7 +253,11 @@ success, reason = manager.delete_memory(1)
 Process memory actions proposed by the reasoning engine.
 
 ```python
-from voice_concierge.reasoning.types import MemoryAction, MemoryTarget
+from voice_concierge.reasoning.types import (
+    MemoryAction,
+    MemoryTarget,
+    StructuredListOperation,
+)
 
 success, reason = manager.process_memory_action(
     action: MemoryAction
@@ -265,9 +269,10 @@ success, reason = manager.process_memory_action(
 ```python
 MemoryAction(
     action: str,  # "store" / "update" / "delete"
-    content: str,  # Content of the action
+    content: Optional[str],  # None when list_operation carries the mutation
     rationale: str,  # Why this action should be taken
     target: Optional[MemoryTarget],  # Required for update/delete
+    list_operation: Optional[StructuredListOperation],
     requires_confirmation: bool,  # Whether confirmation is required
 )
 ```
@@ -276,6 +281,12 @@ MemoryAction(
 memory ID or an explicit scoped key. Targets derived from retrieved memories
 should also carry `expected_revision`. Semantic retrieval is not used to choose
 which record is mutated.
+
+Shopping and task additions use
+`StructuredListOperation(operation="add_items")` with a tuple of items. The
+same typed operation creates the first persisted list or updates an existing
+exact target. The memory domain owns rendering and item deduplication; callers
+must not encode commands in `content`.
 
 **Example:**
 
