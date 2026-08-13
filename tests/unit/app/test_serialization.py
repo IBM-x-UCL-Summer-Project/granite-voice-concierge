@@ -230,6 +230,7 @@ def test_app_turn_result_to_dict_matches_frontend_shape() -> None:
         "reasoning": {
             "confidence": "high",
             "required_information_source": "none",
+            "information_evidence": [],
             "freshness_requirement": "not_required",
             "needs_confirmation": True,
             "proposed_memory_action": {

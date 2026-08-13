@@ -49,6 +49,7 @@ from voice_concierge.reasoning.prompting import (
     load_prompt_template,
 )
 from voice_concierge.reasoning.types import (
+    InformationEvidence,
     MemoryAction,
     MemoryTarget,
     ReasoningRequest,
@@ -121,6 +122,27 @@ class _StructuredMemoryTarget(BaseModel):
     def require_identity(self) -> _StructuredMemoryTarget:
         if self.memory_id is None and self.memory_key is None:
             raise ValueError("memory target requires an ID or stable key")
+        return self
+
+
+class _StructuredInformationEvidence(BaseModel):
+    """Validated citation of context supplied in the current request."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
+
+    source: Literal["memory", "conversation_summary"]
+    quote: str = Field(min_length=1)
+    memory_id: int | None = Field(default=None, gt=0)
+    memory_revision: int | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def require_source_identity(self) -> _StructuredInformationEvidence:
+        if self.source == "memory":
+            if self.memory_id is None or self.memory_revision is None:
+                raise ValueError("memory evidence requires ID and revision")
+            return self
+        if self.memory_id is not None or self.memory_revision is not None:
+            raise ValueError("conversation evidence cannot carry memory identity")
         return self
 
 
@@ -214,6 +236,12 @@ class _StructuredReasoningResponse(BaseModel):
         "runtime_live",
         "external_live",
     ]
+    information_evidence: tuple[_StructuredInformationEvidence, ...] = Field(
+        description=(
+            "Exact supplied memory or conversation-summary quotes supporting a "
+            "local_context answer; empty for every other source."
+        )
+    )
     freshness_requirement: Literal["not_required", "current"]
 
     @field_validator("mode_suggestion", mode="before")
@@ -611,6 +639,15 @@ def _response_from_structured_payload(
         mode_suggestion=payload.mode_suggestion,
         confidence=payload.confidence,
         required_information_source=payload.required_information_source,
+        information_evidence=tuple(
+            InformationEvidence(
+                source=evidence.source,
+                quote=evidence.quote,
+                memory_id=evidence.memory_id,
+                memory_revision=evidence.memory_revision,
+            )
+            for evidence in payload.information_evidence
+        ),
         freshness_requirement=payload.freshness_requirement,
         metadata=metadata,
     )

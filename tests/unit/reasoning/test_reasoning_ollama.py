@@ -42,6 +42,7 @@ def _structured_content(
     mode_suggestion: str | None = None,
     confidence: str = "medium",
     required_information_source: str = "none",
+    information_evidence: list[dict[str, object]] | None = None,
     freshness_requirement: str = "not_required",
 ) -> str:
     return json.dumps(
@@ -52,6 +53,7 @@ def _structured_content(
             "mode_suggestion": mode_suggestion,
             "confidence": confidence,
             "required_information_source": required_information_source,
+            "information_evidence": information_evidence or [],
             "freshness_requirement": freshness_requirement,
         }
     )
@@ -161,6 +163,7 @@ def test_ollama_engine_sends_chat_messages_and_generated_schema() -> None:
     assert call["format"]["type"] == "object"
     assert call["format"]["additionalProperties"] is False
     assert "required_information_source" in call["format"]["required"]
+    assert "information_evidence" in call["format"]["required"]
     assert "freshness_requirement" in call["format"]["required"]
     assert call["keep_alive"] == "5m"
     assert call["options"] == {

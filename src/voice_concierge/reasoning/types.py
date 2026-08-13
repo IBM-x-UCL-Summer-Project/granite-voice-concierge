@@ -28,6 +28,7 @@ InformationSource = Literal[
     "runtime_live",
     "external_live",
 ]
+InformationEvidenceSource = Literal["memory", "conversation_summary"]
 FreshnessRequirement = Literal["not_required", "current"]
 
 
@@ -103,6 +104,50 @@ class MemoryReference:
             memory_key=self.memory_key,
             expected_revision=self.revision,
         )
+
+    def information_evidence(self) -> InformationEvidence:
+        """Return an exact evidence citation for this supplied record."""
+
+        return InformationEvidence(
+            source="memory",
+            quote=self.content,
+            memory_id=self.memory_id,
+            memory_revision=self.revision,
+        )
+
+
+@dataclass(frozen=True)
+class InformationEvidence:
+    """Verifiable local-context evidence cited by a reasoning response."""
+
+    source: InformationEvidenceSource
+    quote: str
+    memory_id: int | None = None
+    memory_revision: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.source not in {"memory", "conversation_summary"}:
+            raise ValueError(f"Unsupported information evidence: {self.source!r}.")
+        if not isinstance(self.quote, str) or not self.quote.strip():
+            raise ValueError("Information evidence quote must not be blank.")
+        if self.source == "memory":
+            if (
+                not isinstance(self.memory_id, int)
+                or isinstance(self.memory_id, bool)
+                or self.memory_id <= 0
+            ):
+                raise ValueError("Memory evidence ID must be positive.")
+            if (
+                not isinstance(self.memory_revision, int)
+                or isinstance(self.memory_revision, bool)
+                or self.memory_revision <= 0
+            ):
+                raise ValueError("Memory evidence revision must be positive.")
+            return
+        if self.memory_id is not None or self.memory_revision is not None:
+            raise ValueError(
+                "Conversation-summary evidence cannot carry memory identity."
+            )
 
 
 @dataclass(frozen=True)
@@ -283,6 +328,8 @@ class ReasoningResponse:
     confidence: Confidence = "medium"
     #: Source required to fulfil this request, declared by the reasoning backend.
     required_information_source: InformationSource = "none"
+    #: Exact supplied local evidence used when the declared source is local context.
+    information_evidence: tuple[InformationEvidence, ...] = ()
     #: Whether correctness depends on the information being current.
     freshness_requirement: FreshnessRequirement = "not_required"
     #: Backend-specific diagnostics that should not affect core behavior.

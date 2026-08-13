@@ -40,6 +40,7 @@
   "reasoning": {
     "confidence": "high",
     "required_information_source": "user_input",
+    "information_evidence": [],
     "freshness_requirement": "not_required",
     "needs_confirmation": true,
     "proposed_memory_action": {

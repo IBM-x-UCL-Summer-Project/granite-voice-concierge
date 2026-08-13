@@ -25,6 +25,8 @@ It contains:
 - `mode_suggestion`: optional future mode switch hint;
 - `confidence`: coarse confidence label;
 - `required_information_source`: typed provenance required to fulfil the turn;
+- `information_evidence`: exact supplied memory or conversation-summary
+  citations supporting a `local_context` answer;
 - `freshness_requirement`: whether correctness depends on current information;
 - `metadata`: backend-specific details.
 
@@ -59,11 +61,20 @@ reasoning boundary declares one of these sources:
 
 `freshness_requirement` is `current` only when live accuracy is necessary to
 fulfil the request. The deterministic information policy validates that the
-declared source is available: external live data is rejected under offline
-constraints, runtime state is rejected until such context is explicitly
-provided, missing local context fails closed, and current claims based only on
-stable knowledge are rejected. Current information supplied by the user or
-local context is attributed with a freshness caveat.
+declared source is available. A `local_context` answer must cite a verbatim
+fragment of the supplied context; memory evidence must also match the supplied
+memory ID and revision. Missing, invented, stale, or misquoted evidence fails
+closed. Evidence is rejected for other declared sources rather than being
+silently ignored. External live data is rejected under offline constraints,
+runtime state is rejected until such context is explicitly provided, missing
+local context fails closed, and current claims based only on stable knowledge
+are rejected. Current information supplied by the user or local context is
+attributed with a freshness caveat.
+
+This evidence check binds a response to context that was actually supplied; it
+does not by itself prove that every generated claim logically follows from the
+cited text. The citations make that grounding inspectable in app output and
+benchmark reports instead of leaving provenance as an unverifiable model label.
 
 Memory commands have an additional invariant: a direct store is created only
 for content classified as supplied by the user. A lookup phrased as a memory

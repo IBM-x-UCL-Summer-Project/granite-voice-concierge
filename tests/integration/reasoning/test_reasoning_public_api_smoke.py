@@ -94,6 +94,7 @@ def _structured_content(
     mode_suggestion: str | None = None,
     confidence: str = "medium",
     required_information_source: str = "none",
+    information_evidence: list[dict[str, object]] | None = None,
     freshness_requirement: str = "not_required",
 ) -> str:
     return json.dumps(
@@ -104,6 +105,7 @@ def _structured_content(
             "mode_suggestion": mode_suggestion,
             "confidence": confidence,
             "required_information_source": required_information_source,
+            "information_evidence": information_evidence or [],
             "freshness_requirement": freshness_requirement,
         }
     )
@@ -152,6 +154,14 @@ def test_selected_runtime_bounds_generation_and_exposes_metadata(
             "Your appointment is at noon.",
             confidence="high",
             required_information_source="local_context",
+            information_evidence=[
+                {
+                    "source": "memory",
+                    "quote": "Appointment is at noon.",
+                    "memory_id": 1,
+                    "memory_revision": 1,
+                }
+            ],
         )
     )
     engine, manager, client_constructions = _build_selected_runtime(
@@ -197,6 +207,9 @@ def test_selected_runtime_bounds_generation_and_exposes_metadata(
     assert response.spoken_response == "Your appointment is at noon."
     assert response.confidence == "high"
     assert response.required_information_source == "local_context"
+    assert response.information_evidence == (
+        memory_reference("Appointment is at noon.").information_evidence(),
+    )
     assert response.freshness_requirement == "not_required"
     assert response.metadata["num_ctx"] == "4096"
     assert response.metadata["num_predict"] == "164"

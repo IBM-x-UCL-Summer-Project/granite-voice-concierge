@@ -56,6 +56,8 @@ def test_granite_messages_include_offline_policy() -> None:
     assert "stable public facts" in system_prompt
     assert "built-in general knowledge" in system_prompt
     assert "information source required" in system_prompt
+    assert "information_evidence" in system_prompt
+    assert "memory_revision" in system_prompt
     assert "freshness_requirement" in system_prompt
     assert "external_live" in system_prompt
     assert "classify the source and intent" in system_prompt

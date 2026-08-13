@@ -7,6 +7,7 @@ import pytest
 from tests.support import memory_reference
 from voice_concierge.reasoning.policy import apply_reasoning_policy_guards
 from voice_concierge.reasoning.types import (
+    InformationEvidence,
     MemoryAction,
     MemoryTarget,
     ReasoningConstraints,
@@ -171,15 +172,17 @@ def test_policy_guard_blocks_time_sensitive_info_with_unrelated_memory() -> None
 
 
 def test_policy_guard_uses_relevant_local_time_sensitive_context() -> None:
+    saved_date = memory_reference("Saved GTA date: 26 May.")
     response = apply_reasoning_policy_guards(
         ReasoningRequest(
             transcript="When is the next GTA game coming out?",
-            memories=(memory_reference("Saved GTA date: 26 May."),),
+            memories=(saved_date,),
         ),
         ReasoningResponse(
             spoken_response="It is coming out on 26 May.",
             confidence="medium",
             required_information_source="local_context",
+            information_evidence=(saved_date.information_evidence(),),
             freshness_requirement="current",
         ),
     )
@@ -205,6 +208,12 @@ def test_policy_guard_uses_relevant_conversation_summary() -> None:
             spoken_response="The parcel is delayed.",
             confidence="medium",
             required_information_source="local_context",
+            information_evidence=(
+                InformationEvidence(
+                    source="conversation_summary",
+                    quote="parcel delayed",
+                ),
+            ),
             freshness_requirement="current",
         ),
     )
@@ -216,6 +225,25 @@ def test_policy_guard_uses_relevant_conversation_summary() -> None:
     assert response.metadata["policy_guard"] == (
         "unverified_current_supplied_information"
     )
+
+
+def test_policy_guard_fails_closed_when_local_evidence_is_missing() -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(
+            transcript="When is my appointment?",
+            memories=(memory_reference("Appointment is at noon."),),
+        ),
+        ReasoningResponse(
+            spoken_response="Your appointment is at noon.",
+            required_information_source="local_context",
+        ),
+    )
+
+    assert response.spoken_response == (
+        "I could not verify which local information supports that answer."
+    )
+    assert response.information_evidence == ()
+    assert response.metadata["policy_guard"] == "missing_local_context_evidence"
 
 
 def test_policy_guard_attributes_current_information_supplied_by_user() -> None:
@@ -255,22 +283,22 @@ def test_policy_guard_allows_user_supplied_appointment_today() -> None:
 
 
 def test_policy_guard_allows_cooking_now_from_local_ingredients() -> None:
+    ingredients = memory_reference(
+        "Available ingredients: eggs, tomato, cheese.",
+        topic="ingredients",
+    )
     original = ReasoningResponse(
         spoken_response="You can make a tomato and cheese omelette.",
         confidence="medium",
         required_information_source="local_context",
+        information_evidence=(ingredients.information_evidence(),),
     )
 
     response = apply_reasoning_policy_guards(
         ReasoningRequest(
             transcript="What can I cook now?",
             mode="cooking",
-            memories=(
-                memory_reference(
-                    "Available ingredients: eggs, tomato, cheese.",
-                    topic="ingredients",
-                ),
-            ),
+            memories=(ingredients,),
         ),
         original,
     )

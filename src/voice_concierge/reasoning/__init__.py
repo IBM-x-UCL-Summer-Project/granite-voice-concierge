@@ -53,6 +53,8 @@ from voice_concierge.reasoning.prompting import (
 )
 from voice_concierge.reasoning.types import (
     FreshnessRequirement,
+    InformationEvidence,
+    InformationEvidenceSource,
     InformationSource,
     MemoryAction,
     MemoryReference,
@@ -77,6 +79,8 @@ __all__ = [
     "LocalModelDetails",
     "LocalModelInfo",
     "FreshnessRequirement",
+    "InformationEvidence",
+    "InformationEvidenceSource",
     "InformationSource",
     "MemoryAction",
     "MemoryReference",

@@ -231,6 +231,18 @@ type AppTurnResponse = {
       | 'stable_knowledge'
       | 'runtime_live'
       | 'external_live';
+    information_evidence: Array<
+      | {
+          source: 'memory';
+          quote: string;
+          memory_id: number;
+          memory_revision: number;
+        }
+      | {
+          source: 'conversation_summary';
+          quote: string;
+        }
+    >;
     freshness_requirement: 'not_required' | 'current';
     needs_confirmation: boolean;
     proposed_memory_action: AppPipelineState['pending_memory_action'];

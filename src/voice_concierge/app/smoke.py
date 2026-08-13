@@ -67,6 +67,9 @@ class SmokeReasoningService:
                     ),
                     confidence="high",
                     required_information_source="local_context",
+                    information_evidence=(
+                        turn_context.memories[0].information_evidence(),
+                    ),
                 )
             )
 

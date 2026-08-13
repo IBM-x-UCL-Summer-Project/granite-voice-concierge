@@ -11,6 +11,7 @@ from typing import Any, Iterable, Literal
 
 from voice_concierge.reasoning.engine import ReasoningEngine, TraceableReasoningEngine
 from voice_concierge.reasoning.types import (
+    InformationEvidence,
     MemoryReference,
     ReasoningConstraints,
     ReasoningRequest,
@@ -45,6 +46,7 @@ class BenchmarkEvaluation:
     proposed_memory_action: str | None
     confidence: str
     required_information_source: str
+    information_evidence: tuple[InformationEvidence, ...]
     freshness_requirement: str
     metadata: dict[str, str]
     passed_checks: bool
@@ -69,6 +71,7 @@ class BenchmarkResult:
     proposed_memory_action: str | None
     confidence: str
     required_information_source: str
+    information_evidence: tuple[InformationEvidence, ...]
     freshness_requirement: str
     metadata: dict[str, str]
     passed_checks: bool
@@ -190,6 +193,7 @@ def run_reasoning_benchmark(
                 required_information_source=(
                     primary_evaluation.required_information_source
                 ),
+                information_evidence=primary_evaluation.information_evidence,
                 freshness_requirement=primary_evaluation.freshness_requirement,
                 metadata=primary_evaluation.metadata,
                 passed_checks=primary_evaluation.passed_checks,
@@ -295,6 +299,7 @@ def _evaluate_response(
         proposed_memory_action=proposed_action,
         confidence=response.confidence,
         required_information_source=response.required_information_source,
+        information_evidence=response.information_evidence,
         freshness_requirement=response.freshness_requirement,
         metadata=response.metadata,
         passed_checks=not issues,

@@ -260,6 +260,21 @@ def reasoning_result_to_dict(result: AppTurnResult) -> JsonDict | None:
     return {
         "confidence": response.confidence,
         "required_information_source": response.required_information_source,
+        "information_evidence": [
+            {
+                "source": evidence.source,
+                "quote": evidence.quote,
+                **(
+                    {
+                        "memory_id": evidence.memory_id,
+                        "memory_revision": evidence.memory_revision,
+                    }
+                    if evidence.source == "memory"
+                    else {}
+                ),
+            }
+            for evidence in response.information_evidence
+        ],
         "freshness_requirement": response.freshness_requirement,
         "needs_confirmation": response.needs_confirmation,
         "proposed_memory_action": memory_action_to_dict(

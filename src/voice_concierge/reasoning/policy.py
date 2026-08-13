@@ -7,6 +7,8 @@ from dataclasses import replace
 
 from voice_concierge.reasoning.information_policy import decide_information_policy
 from voice_concierge.reasoning.types import (
+    InformationEvidence,
+    InformationSource,
     MemoryAction,
     MemoryReference,
     MemoryTarget,
@@ -43,6 +45,8 @@ def apply_reasoning_policy_guards(
                 proposed_memory_action=None,
                 confidence="high",
                 guard="missing_shopping_list_memory",
+                required_information_source="local_context",
+                information_evidence=(),
             )
 
         return _replace_response(
@@ -54,6 +58,8 @@ def apply_reasoning_policy_guards(
             proposed_memory_action=None,
             confidence="high",
             guard="supplied_shopping_list_memory",
+            required_information_source="local_context",
+            information_evidence=(shopping_list_memory.information_evidence(),),
         )
 
     information_decision = decide_information_policy(request, response)
@@ -66,6 +72,7 @@ def apply_reasoning_policy_guards(
             proposed_memory_action=None,
             confidence="high",
             guard=information_decision.disposition,
+            information_evidence=(),
         )
 
     if information_decision.attribution_prefix is not None:
@@ -384,6 +391,8 @@ def _replace_response(
     proposed_memory_action: MemoryAction | None,
     confidence: str,
     guard: str,
+    required_information_source: InformationSource | None = None,
+    information_evidence: tuple[InformationEvidence, ...] | None = None,
 ) -> ReasoningResponse:
     return ReasoningResponse(
         spoken_response=spoken_response,
@@ -391,7 +400,16 @@ def _replace_response(
         proposed_memory_action=proposed_memory_action,
         mode_suggestion=response.mode_suggestion,
         confidence=confidence,
-        required_information_source=response.required_information_source,
+        required_information_source=(
+            response.required_information_source
+            if required_information_source is None
+            else required_information_source
+        ),
+        information_evidence=(
+            response.information_evidence
+            if information_evidence is None
+            else information_evidence
+        ),
         freshness_requirement=response.freshness_requirement,
         metadata={**response.metadata, "policy_guard": guard},
     )

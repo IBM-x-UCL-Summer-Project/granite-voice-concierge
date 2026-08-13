@@ -5,11 +5,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from voice_concierge.reasoning.types import ReasoningRequest, ReasoningResponse
+from voice_concierge.reasoning.types import (
+    InformationEvidence,
+    ReasoningRequest,
+    ReasoningResponse,
+)
 
 InformationDisposition = Literal[
     "allow",
     "missing_local_context",
+    "missing_local_context_evidence",
+    "invalid_local_context_evidence",
+    "unexpected_local_context_evidence",
     "runtime_source_unavailable",
     "external_source_unavailable_offline",
     "unsupported_current_claim",
@@ -50,6 +57,33 @@ def decide_information_policy(
             ),
         )
 
+    if source == "local_context" and not response.information_evidence:
+        return InformationPolicyDecision(
+            disposition="missing_local_context_evidence",
+            spoken_response=(
+                "I could not verify which local information supports that answer."
+            ),
+        )
+
+    if source == "local_context" and not all(
+        _is_supplied_local_evidence(request, evidence)
+        for evidence in response.information_evidence
+    ):
+        return InformationPolicyDecision(
+            disposition="invalid_local_context_evidence",
+            spoken_response=(
+                "I could not verify which local information supports that answer."
+            ),
+        )
+
+    if source != "local_context" and response.information_evidence:
+        return InformationPolicyDecision(
+            disposition="unexpected_local_context_evidence",
+            spoken_response=(
+                "I could not verify the information source for that answer."
+            ),
+        )
+
     if source == "runtime_live":
         return InformationPolicyDecision(
             disposition="runtime_source_unavailable",
@@ -85,3 +119,31 @@ def decide_information_policy(
         needs_freshness_caveat=current_supplied_source,
         attribution_prefix=attribution_prefix,
     )
+
+
+def _is_supplied_local_evidence(request: ReasoningRequest, evidence: object) -> bool:
+    """Return whether one citation exactly identifies supplied local context."""
+
+    if not isinstance(evidence, InformationEvidence):
+        return False
+
+    if evidence.source == "conversation_summary":
+        return bool(
+            request.conversation_summary
+            and _contains_quote(request.conversation_summary, evidence.quote)
+        )
+
+    for memory in request.memories:
+        if (
+            memory.memory_id == evidence.memory_id
+            and memory.revision == evidence.memory_revision
+            and _contains_quote(memory.content, evidence.quote)
+        ):
+            return True
+    return False
+
+
+def _contains_quote(source: str, quote: str) -> bool:
+    """Return whether a quote is a verbatim fragment of supplied context."""
+
+    return quote in source

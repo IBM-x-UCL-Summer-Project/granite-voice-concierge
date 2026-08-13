@@ -52,6 +52,7 @@ def test_benchmark_report_contains_core_metrics() -> None:
     assert first_result["response_words"] > 0
     assert "spoken_response" in first_result
     assert "required_information_source" in first_result
+    assert "information_evidence" in first_result
     assert "freshness_requirement" in first_result
     assert "passed_checks" in first_result
     assert "issues" in first_result
