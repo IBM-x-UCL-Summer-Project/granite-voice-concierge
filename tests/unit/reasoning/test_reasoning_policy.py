@@ -363,6 +363,46 @@ def test_policy_guard_keeps_confirmed_action_with_confirmation_wording() -> None
     assert response is original
 
 
+def test_policy_guard_stores_first_task_list_item() -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(transcript="Add call the dentist to my task list."),
+        ReasoningResponse(spoken_response="Okay.", confidence="medium"),
+    )
+
+    assert response.needs_confirmation is True
+    assert response.proposed_memory_action is not None
+    assert response.proposed_memory_action.action == "store"
+    assert response.proposed_memory_action.content == "Task list: call the dentist."
+    assert response.proposed_memory_action.target_key == "list:tasks"
+    assert response.metadata["policy_guard"] == "task_list_add_confirmation"
+
+
+def test_policy_guard_updates_existing_task_list() -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(
+            transcript="Add call the dentist to my to-do list.",
+            memories=("Task list: buy stamps.",),
+        ),
+        ReasoningResponse(spoken_response="Okay.", confidence="medium"),
+    )
+
+    assert response.proposed_memory_action is not None
+    assert response.proposed_memory_action.action == "update"
+    assert response.proposed_memory_action.content == ("task_list:add:call the dentist")
+    assert response.proposed_memory_action.target_key == "list:tasks"
+
+
+def test_policy_guard_targets_task_list_delete_by_stable_key() -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(transcript="Delete my task list."),
+        ReasoningResponse(spoken_response="Okay.", confidence="medium"),
+    )
+
+    assert response.proposed_memory_action is not None
+    assert response.proposed_memory_action.action == "delete"
+    assert response.proposed_memory_action.target_key == "list:tasks"
+
+
 def test_policy_guard_adds_memory_store_action() -> None:
     response = apply_reasoning_policy_guards(
         ReasoningRequest(transcript="Remember that I prefer short answers."),

@@ -11,6 +11,7 @@ from voice_concierge.reasoning.types import (
 )
 
 SHOPPING_LIST_MEMORY_KEY = "list:shopping"
+TASK_LIST_MEMORY_KEY = "list:tasks"
 
 
 def apply_reasoning_policy_guards(
@@ -22,6 +23,7 @@ def apply_reasoning_policy_guards(
     transcript = request.transcript.strip()
     text = transcript.lower()
     shopping_items = _shopping_items_to_add(transcript, text)
+    task_items = _task_items_to_add(transcript, text)
     accessibility_preference = _accessibility_preference(text)
     memory_write_requested = _memory_write_requested(text)
     delete_target = memory_delete_target(transcript)
@@ -91,6 +93,7 @@ def apply_reasoning_policy_guards(
     if not request.constraints.allow_memory_writes and _memory_change_requested(
         response=response,
         shopping_items=shopping_items,
+        task_items=task_items,
         accessibility_preference=accessibility_preference,
         memory_write_requested=memory_write_requested,
         delete_target=delete_target,
@@ -128,6 +131,39 @@ def apply_reasoning_policy_guards(
             ),
             confidence="high",
             guard="shopping_list_add_confirmation",
+        )
+
+    if task_items:
+        task_list_memory = _task_list_memory(request.memories)
+        action = "update" if task_list_memory is not None else "store"
+        expected_content = (
+            f"task_list:add:{task_items}"
+            if action == "update"
+            else _new_structured_list_content("Task list", task_items)
+        )
+        if _has_confirmed_action_response(
+            response,
+            action,
+            expected_content=expected_content,
+            expected_target_key=TASK_LIST_MEMORY_KEY,
+        ):
+            return response
+
+        return _replace_response(
+            response,
+            spoken_response=(
+                f"I can add {task_items} to your task list. Please confirm "
+                "before I save it."
+            ),
+            needs_confirmation=True,
+            proposed_memory_action=MemoryAction(
+                action=action,
+                content=expected_content,
+                rationale="User asked to add task list items.",
+                target_key=TASK_LIST_MEMORY_KEY,
+            ),
+            confidence="high",
+            guard="task_list_add_confirmation",
         )
 
     if accessibility_preference and not memory_write_requested:
@@ -249,6 +285,7 @@ def _memory_change_requested(
     *,
     response: ReasoningResponse,
     shopping_items: str | None,
+    task_items: str | None,
     accessibility_preference: tuple[str, str] | None,
     memory_write_requested: bool,
     delete_target: str | None,
@@ -256,6 +293,7 @@ def _memory_change_requested(
     return (
         response.proposed_memory_action is not None
         or shopping_items is not None
+        or task_items is not None
         or accessibility_preference is not None
         or memory_write_requested
         or delete_target is not None
@@ -404,6 +442,13 @@ def _shopping_list_memory(memories: tuple[str, ...]) -> str | None:
     return None
 
 
+def _task_list_memory(memories: tuple[str, ...]) -> str | None:
+    for memory in memories:
+        if "task list" in memory.lower():
+            return memory
+    return None
+
+
 def _memory_recall_requested(text: str) -> bool:
     phrases = (
         "what do you remember",
@@ -434,10 +479,34 @@ def _shopping_items_to_add(transcript: str, text: str) -> str | None:
     return cleaned.strip(" .") or None
 
 
+def _task_items_to_add(transcript: str, text: str) -> str | None:
+    list_name = r"(?:task|to-do|todo)\s+list"
+    if not re.search(rf"\b{list_name}\b", text) or not re.search(r"\badd\b", text):
+        return None
+
+    cleaned = re.sub(
+        r"^\s*(please\s+)?add\s+",
+        "",
+        transcript,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(
+        rf"\s+to\s+(?:my|the)\s+{list_name}\.?\s*$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    return cleaned.strip(" .") or None
+
+
 def _new_shopping_list_content(items: str) -> str:
+    return _new_structured_list_content("Shopping list", items)
+
+
+def _new_structured_list_content(label: str, items: str) -> str:
     parts = re.split(r"\s*,\s*|\s+and\s+", items, flags=re.IGNORECASE)
     normalized = [part.strip(" .") for part in parts if part.strip(" .")]
-    return f"Shopping list: {', '.join(normalized)}."
+    return f"{label}: {', '.join(normalized)}."
 
 
 def _accessibility_preference(text: str) -> tuple[str, str] | None:
@@ -459,6 +528,8 @@ def _delete_target_key(target: str) -> str | None:
     normalized = target.lower()
     if "shopping list" in normalized:
         return SHOPPING_LIST_MEMORY_KEY
+    if re.search(r"\b(task|to-do|todo)\s+list\b", normalized):
+        return TASK_LIST_MEMORY_KEY
     if "short answer" in normalized or "verbosity" in normalized:
         return "preference:accessibility.verbosity"
     if "speak" in normalized and "slow" in normalized:
@@ -482,7 +553,8 @@ def memory_delete_target(transcript: str) -> str | None:
         return None
 
     storage_context = (
-        r"\b(memory|memories|remembered|saved|profile|preference|shopping list)\b"
+        r"\b(memory|memories|remembered|saved|profile|preference|"
+        r"shopping list|task list|to-do list|todo list)\b"
         r"|\bfrom\s+(my\s+)?(local\s+)?memory\b"
     )
     forget_context = r"\bforget\s+(that|what|everything|all|my)\b"

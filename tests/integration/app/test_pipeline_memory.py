@@ -161,7 +161,33 @@ def test_failed_embedding_rolls_back_confirmed_memory_record(tmp_path) -> None:
 
 
 @pytest.mark.integration
-def test_first_shopping_item_is_stored_then_later_items_are_updated(tmp_path) -> None:
+@pytest.mark.parametrize(
+    ("scope", "memory_key", "first_content", "update_content", "expected"),
+    (
+        (
+            "list_relevant",
+            "list:shopping",
+            "Shopping list: milk.",
+            "shopping_list:add:bread",
+            "Shopping list: milk, bread.",
+        ),
+        (
+            "task_relevant_only",
+            "list:tasks",
+            "Task list: call the dentist.",
+            "task_list:add:buy stamps",
+            "Task list: call the dentist, buy stamps.",
+        ),
+    ),
+)
+def test_first_structured_list_item_is_stored_then_later_items_are_updated(
+    tmp_path,
+    scope,
+    memory_key,
+    first_content,
+    update_content,
+    expected,
+) -> None:
     config = LocalMemoryConfig(
         memory_db_path=tmp_path / "memories.sqlite3",
         vector_db_path=tmp_path / "vectors.sqlite3",
@@ -176,29 +202,29 @@ def test_first_shopping_item_is_stored_then_later_items_are_updated(tmp_path) ->
 
     first_item = MemoryAction(
         action="store",
-        content="Shopping list: milk.",
-        rationale="User added the first shopping item.",
-        target_key="list:shopping",
+        content=first_content,
+        rationale="User added the first structured-list item.",
+        target_key=memory_key,
     )
     later_item = MemoryAction(
         action="update",
-        content="shopping_list:add:bread",
-        rationale="User added another shopping item.",
-        target_key="list:shopping",
+        content=update_content,
+        rationale="User added another structured-list item.",
+        target_key=memory_key,
     )
 
     try:
-        assert gateway.apply(first_item, "list_relevant") == (
+        assert gateway.apply(first_item, scope) == (
             True,
             "stored_successfully",
         )
-        assert gateway.apply(later_item, "list_relevant") == (
+        assert gateway.apply(later_item, scope) == (
             True,
             "updated_successfully",
         )
-        shopping_list = manager.memory_store.get_memory_by_key("list:shopping")
+        structured_list = manager.memory_store.get_memory_by_key(memory_key)
     finally:
         gateway.close()
 
-    assert shopping_list is not None
-    assert shopping_list["content"] == "Shopping list: milk, bread."
+    assert structured_list is not None
+    assert structured_list["content"] == expected

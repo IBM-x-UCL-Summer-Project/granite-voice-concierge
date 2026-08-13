@@ -12,6 +12,12 @@ from voice_concierge.reasoning.types import MemoryAction
 
 SHOPPING_LIST_MEMORY_KEY = "list:shopping"
 SHOPPING_LIST_ADD_PREFIX = "shopping_list:add:"
+TASK_LIST_MEMORY_KEY = "list:tasks"
+TASK_LIST_ADD_PREFIX = "task_list:add:"
+STRUCTURED_LISTS = {
+    SHOPPING_LIST_MEMORY_KEY: (SHOPPING_LIST_ADD_PREFIX, "Shopping list"),
+    TASK_LIST_MEMORY_KEY: (TASK_LIST_ADD_PREFIX, "Task list"),
+}
 
 
 class MemoryManager:
@@ -326,9 +332,13 @@ class MemoryManager:
             target = self.memory_store.get_memory_by_key(action.target_key)
             if target is None:
                 return False, "memory_target_not_found"
-            if action.target_key == SHOPPING_LIST_MEMORY_KEY:
-                updated_content = _append_shopping_list_items(
-                    target["content"], action.content
+            if action.target_key in STRUCTURED_LISTS:
+                action_prefix, label = STRUCTURED_LISTS[action.target_key]
+                updated_content = _append_structured_list_items(
+                    target["content"],
+                    action.content,
+                    action_prefix=action_prefix,
+                    label=label,
                 )
                 if updated_content is None:
                     return False, "invalid_structured_list_action"
@@ -377,15 +387,26 @@ class MemoryManager:
         self.vector_store.close()
 
 
-def _append_shopping_list_items(
+def _append_structured_list_items(
     existing_content: str,
     action_content: str,
+    *,
+    action_prefix: str,
+    label: str,
 ) -> str | None:
-    if not action_content.lower().startswith(SHOPPING_LIST_ADD_PREFIX):
+    if not action_content.lower().startswith(action_prefix):
         return None
 
-    existing_items = _shopping_list_items(existing_content)
-    added_items = _shopping_list_items(action_content)
+    existing_items = _structured_list_items(
+        existing_content,
+        action_prefix=action_prefix,
+        label=label,
+    )
+    added_items = _structured_list_items(
+        action_content,
+        action_prefix=action_prefix,
+        label=label,
+    )
     if existing_items is None or not added_items:
         return None
 
@@ -397,15 +418,20 @@ def _append_shopping_list_items(
             combined.append(item)
             seen.add(normalized)
 
-    return f"Shopping list: {', '.join(combined)}."
+    return f"{label}: {', '.join(combined)}."
 
 
-def _shopping_list_items(content: str) -> list[str] | None:
+def _structured_list_items(
+    content: str,
+    *,
+    action_prefix: str,
+    label: str,
+) -> list[str] | None:
     normalized = content.strip()
     lowered = normalized.lower()
-    if lowered.startswith(SHOPPING_LIST_ADD_PREFIX):
-        item_text = normalized[len(SHOPPING_LIST_ADD_PREFIX) :]
-    elif lowered.startswith("shopping list:"):
+    if lowered.startswith(action_prefix):
+        item_text = normalized[len(action_prefix) :]
+    elif lowered.startswith(f"{label.lower()}:"):
         item_text = normalized.partition(":")[2]
     else:
         return None
