@@ -9,6 +9,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from voice_concierge.memory import (
     MemoryManager,
+    MemoryOperationStatus,
+    MemorySearchResult,
     MemoryStore,
     MemoryValidator,
     VectorStore,
@@ -56,22 +58,22 @@ class TestMemoryManagerBasic:
     def test_store_and_retrieve(self, memory_manager):
         """Store a memory and retrieve it."""
         content = "user prefers short answers"
-        success, reason, memory_id = memory_manager.store_memory(
+        store_outcome = memory_manager.store_memory(
             content=content,
             layer="profile",
             validate=False,
         )
 
-        assert success is True
-        assert memory_id is not None
+        assert store_outcome.succeeded is True
+        assert store_outcome.memory_id is not None
 
         all_memories = memory_manager.get_all_memories()
         assert len(all_memories) == 1
-        assert all_memories[0]["content"] == content
+        assert all_memories[0].content == content
 
     def test_store_with_metadata(self, memory_manager):
         """Store a memory with metadata."""
-        success, reason, memory_id = memory_manager.store_memory(
+        store_outcome = memory_manager.store_memory(
             content="likes pizza",
             layer="profile",
             person="Kenny",
@@ -79,12 +81,12 @@ class TestMemoryManagerBasic:
             validate=False,
         )
 
-        assert success is True
+        assert store_outcome.succeeded is True
 
         memories = memory_manager.retriever.retrieve_by_person("Kenny")
         assert len(memories) == 1
-        assert memories[0]["person"] == "Kenny"
-        assert memories[0]["topic"] == "food"
+        assert memories[0].person == "Kenny"
+        assert memories[0].topic == "food"
 
     def test_get_memory_by_key_does_not_depend_on_semantic_ranking(
         self,
@@ -93,13 +95,15 @@ class TestMemoryManagerBasic:
     ):
         """Project-owned records remain addressable when vector search misses."""
 
-        _, _, memory_id = memory_manager.store_memory(
+        store_outcome = memory_manager.store_memory(
             content="Shopping list: milk.",
             layer="feedback",
             memory_key="list:shopping",
             topic="shopping",
             validate=False,
         )
+        memory_id = store_outcome.memory_id
+        assert memory_id is not None
         monkeypatch.setattr(
             memory_manager.vector_store,
             "search_similar",
@@ -109,37 +113,108 @@ class TestMemoryManagerBasic:
         memory = memory_manager.get_memory_by_key("list:shopping")
 
         assert memory is not None
-        assert memory["id"] == memory_id
-        assert memory["content"] == "Shopping list: milk."
+        assert memory.id == memory_id
+        assert memory.content == "Shopping list: milk."
 
     def test_update_memory(self, memory_manager):
         """Update an existing memory."""
-        _, _, memory_id = memory_manager.store_memory(
+        store_outcome = memory_manager.store_memory(
             content="old content",
             layer="profile",
             validate=False,
         )
+        memory_id = store_outcome.memory_id
+        assert memory_id is not None
 
-        success, reason = memory_manager.update_memory(
+        outcome = memory_manager.update_memory(
             memory_id=memory_id,
             content="new content",
         )
 
-        assert success is True
+        assert outcome.succeeded is True
 
         memories = memory_manager.get_all_memories()
-        assert memories[0]["content"] == "new content"
+        assert memories[0].content == "new content"
+
+    def test_invalid_memory_id_returns_typed_not_found(self, memory_manager):
+        update = memory_manager.update_memory(0, content="new content")
+        delete = memory_manager.delete_memory(False)
+
+        assert update.status is MemoryOperationStatus.MEMORY_NOT_FOUND
+        assert delete.status is MemoryOperationStatus.MEMORY_NOT_FOUND
+        assert update.memory_id is None
+        assert delete.memory_id is None
+
+    def test_invalid_update_is_typed_and_preserves_record(self, memory_manager):
+        store_outcome = memory_manager.store_memory(
+            content="valid content",
+            layer="profile",
+            validate=False,
+        )
+        memory_id = store_outcome.memory_id
+        assert memory_id is not None
+
+        outcome = memory_manager.update_memory(memory_id, content="  ")
+
+        assert outcome.status is MemoryOperationStatus.UPDATE_ERROR
+        memory = memory_manager.memory_store.get_memory_by_id(memory_id)
+        assert memory is not None
+        assert memory.content == "valid content"
+
+    def test_validator_exception_returns_typed_failure(
+        self,
+        memory_manager,
+        monkeypatch,
+    ):
+        def fail_validation(content):
+            raise RuntimeError("validator unavailable")
+
+        monkeypatch.setattr(
+            memory_manager.validator,
+            "should_store",
+            fail_validation,
+        )
+
+        outcome = memory_manager.store_memory("remember this", "profile")
+
+        assert outcome.status is MemoryOperationStatus.VALIDATION_FAILED
+        assert outcome.detail == "validator unavailable"
+
+    def test_optional_metadata_failure_does_not_block_storage(
+        self,
+        memory_manager,
+        monkeypatch,
+    ):
+        def fail_metadata(content):
+            raise RuntimeError("metadata unavailable")
+
+        monkeypatch.setattr(
+            memory_manager.validator,
+            "extract_metadata",
+            fail_metadata,
+        )
+
+        outcome = memory_manager.store_memory(
+            "remember this",
+            "profile",
+            validate=False,
+            auto_classify=False,
+        )
+
+        assert outcome.status is MemoryOperationStatus.STORED_SUCCESSFULLY
 
     def test_metadata_update_advances_indexed_revision_without_reembedding(
         self,
         memory_manager,
         monkeypatch,
     ):
-        _, _, memory_id = memory_manager.store_memory(
+        store_outcome = memory_manager.store_memory(
             content="Content stays the same",
             layer="profile",
             validate=False,
         )
+        memory_id = store_outcome.memory_id
+        assert memory_id is not None
 
         def fail_if_embedded(content):
             raise AssertionError("metadata-only update should not re-embed content")
@@ -150,28 +225,30 @@ class TestMemoryManagerBasic:
             fail_if_embedded,
         )
 
-        success, reason = memory_manager.update_memory(
+        outcome = memory_manager.update_memory(
             memory_id,
             strength=8,
             expected_revision=1,
         )
 
-        assert success is True
-        assert reason == "updated_successfully"
+        assert outcome.succeeded is True
+        assert outcome.status is MemoryOperationStatus.UPDATED_SUCCESSFULLY
         memory = memory_manager.memory_store.get_memory_by_id(memory_id)
-        assert memory["strength"] == 8
-        assert memory["indexed_revision"] == memory["revision"] == 2
+        assert memory.strength == 8
+        assert memory.indexed_revision == memory.revision == 2
 
     def test_delete_memory(self, memory_manager):
         """Delete a memory."""
-        _, _, memory_id = memory_manager.store_memory(
+        store_outcome = memory_manager.store_memory(
             content="to delete",
             layer="raw",
             validate=False,
         )
+        memory_id = store_outcome.memory_id
+        assert memory_id is not None
 
-        success, reason = memory_manager.delete_memory(memory_id)
-        assert success is True
+        outcome = memory_manager.delete_memory(memory_id)
+        assert outcome.succeeded is True
 
         memories = memory_manager.get_all_memories()
         assert len(memories) == 0
@@ -185,23 +262,25 @@ class TestMemoryManagerBasic:
             requires_confirmation=False,
         )
 
-        success, reason = memory_manager.process_memory_action(action)
-        assert success is True
+        outcome = memory_manager.process_memory_action(action)
+        assert outcome.succeeded is True
 
         memories = memory_manager.get_all_memories()
         assert len(memories) == 1
-        assert "call mom" in memories[0]["content"]
+        assert "call mom" in memories[0].content
 
     def test_process_update_targets_exact_key_not_semantic_match(self, memory_manager):
         """A shopping update cannot overwrite an unrelated preference."""
-        _, _, preference_id = memory_manager.store_memory(
+        preference_outcome = memory_manager.store_memory(
             content="I prefer tea",
             layer="profile",
             memory_key="preference:drink",
             validate=False,
             check_duplicates=False,
         )
-        _, _, shopping_id = memory_manager.store_memory(
+        preference_id = preference_outcome.memory_id
+        assert preference_id is not None
+        shopping_outcome = memory_manager.store_memory(
             content="Shopping list: bread.",
             layer="feedback",
             memory_key="list:shopping",
@@ -209,6 +288,8 @@ class TestMemoryManagerBasic:
             validate=False,
             check_duplicates=False,
         )
+        shopping_id = shopping_outcome.memory_id
+        assert shopping_id is not None
         action = MemoryAction(
             action="update",
             content=None,
@@ -221,21 +302,21 @@ class TestMemoryManagerBasic:
             list_operation=_shopping_add("milk"),
         )
 
-        success, reason = memory_manager.process_memory_action(action)
+        outcome = memory_manager.process_memory_action(action)
 
-        assert success is True
-        assert reason == "updated_successfully"
+        assert outcome.succeeded is True
+        assert outcome.status is MemoryOperationStatus.UPDATED_SUCCESSFULLY
         assert (
-            memory_manager.memory_store.get_memory_by_id(preference_id)["content"]
+            memory_manager.memory_store.get_memory_by_id(preference_id).content
             == "I prefer tea"
         )
         assert (
-            memory_manager.memory_store.get_memory_by_id(shopping_id)["content"]
+            memory_manager.memory_store.get_memory_by_id(shopping_id).content
             == "Shopping list: bread, milk."
         )
 
     def test_process_shopping_update_deduplicates_items(self, memory_manager):
-        _, _, shopping_id = memory_manager.store_memory(
+        store_outcome = memory_manager.store_memory(
             content="Shopping list: bread, milk.",
             layer="feedback",
             memory_key="list:shopping",
@@ -243,6 +324,8 @@ class TestMemoryManagerBasic:
             validate=False,
             check_duplicates=False,
         )
+        shopping_id = store_outcome.memory_id
+        assert shopping_id is not None
         action = MemoryAction(
             action="update",
             content=None,
@@ -255,12 +338,12 @@ class TestMemoryManagerBasic:
             list_operation=_shopping_add("Milk", "eggs"),
         )
 
-        success, reason = memory_manager.process_memory_action(action)
+        outcome = memory_manager.process_memory_action(action)
 
-        assert success is True
-        assert reason == "updated_successfully"
+        assert outcome.succeeded is True
+        assert outcome.status is MemoryOperationStatus.UPDATED_SUCCESSFULLY
         assert (
-            memory_manager.memory_store.get_memory_by_id(shopping_id)["content"]
+            memory_manager.memory_store.get_memory_by_id(shopping_id).content
             == "Shopping list: bread, milk, eggs."
         )
 
@@ -268,12 +351,14 @@ class TestMemoryManagerBasic:
         self,
         memory_manager,
     ):
-        _, _, preference_id = memory_manager.store_memory(
+        store_outcome = memory_manager.store_memory(
             content="I prefer tea",
             layer="profile",
             validate=False,
             check_duplicates=False,
         )
+        preference_id = store_outcome.memory_id
+        assert preference_id is not None
         action = MemoryAction(
             action="update",
             content=None,
@@ -282,21 +367,24 @@ class TestMemoryManagerBasic:
             list_operation=_shopping_add("milk"),
         )
 
-        success, reason = memory_manager.process_memory_action(action)
+        outcome = memory_manager.process_memory_action(action)
 
-        assert success is False
-        assert reason == "structured_list_target_mismatch"
-        assert memory_manager.memory_store.get_memory_by_id(preference_id)[
-            "content"
-        ] == ("I prefer tea")
+        assert outcome.succeeded is False
+        assert outcome.status is MemoryOperationStatus.STRUCTURED_LIST_TARGET_MISMATCH
+        assert (
+            memory_manager.memory_store.get_memory_by_id(preference_id).content
+            == "I prefer tea"
+        )
 
     def test_process_update_without_stable_target_fails_closed(self, memory_manager):
-        _, _, preference_id = memory_manager.store_memory(
+        store_outcome = memory_manager.store_memory(
             content="I prefer tea",
             layer="profile",
             validate=False,
             check_duplicates=False,
         )
+        preference_id = store_outcome.memory_id
+        assert preference_id is not None
         with pytest.raises(ValueError, match="requires an exact target"):
             MemoryAction(
                 action="update",
@@ -306,17 +394,19 @@ class TestMemoryManagerBasic:
             )
 
         assert (
-            memory_manager.memory_store.get_memory_by_id(preference_id)["content"]
+            memory_manager.memory_store.get_memory_by_id(preference_id).content
             == "I prefer tea"
         )
 
     def test_process_delete_without_stable_target_fails_closed(self, memory_manager):
-        _, _, preference_id = memory_manager.store_memory(
+        store_outcome = memory_manager.store_memory(
             content="I prefer tea",
             layer="profile",
             validate=False,
             check_duplicates=False,
         )
+        preference_id = store_outcome.memory_id
+        assert preference_id is not None
         with pytest.raises(ValueError, match="requires an exact target"):
             MemoryAction(
                 action="delete",
@@ -327,14 +417,16 @@ class TestMemoryManagerBasic:
         assert memory_manager.memory_store.get_memory_by_id(preference_id) is not None
 
     def test_process_delete_targets_exact_key(self, memory_manager):
-        _, _, preference_id = memory_manager.store_memory(
+        preference_outcome = memory_manager.store_memory(
             content="I prefer tea",
             layer="profile",
             memory_key="preference:drink",
             validate=False,
             check_duplicates=False,
         )
-        _, _, shopping_id = memory_manager.store_memory(
+        preference_id = preference_outcome.memory_id
+        assert preference_id is not None
+        shopping_outcome = memory_manager.store_memory(
             content="Shopping list: bread.",
             layer="feedback",
             memory_key="list:shopping",
@@ -342,6 +434,8 @@ class TestMemoryManagerBasic:
             validate=False,
             check_duplicates=False,
         )
+        shopping_id = shopping_outcome.memory_id
+        assert shopping_id is not None
         action = MemoryAction(
             action="delete",
             content="my shopping list",
@@ -353,15 +447,15 @@ class TestMemoryManagerBasic:
             ),
         )
 
-        success, reason = memory_manager.process_memory_action(action)
+        outcome = memory_manager.process_memory_action(action)
 
-        assert success is True
-        assert reason == "deleted_successfully"
+        assert outcome.succeeded is True
+        assert outcome.status is MemoryOperationStatus.DELETED_SUCCESSFULLY
         assert memory_manager.memory_store.get_memory_by_key("list:shopping") is None
         assert memory_manager.memory_store.get_memory_by_id(preference_id) is not None
 
     def test_process_update_rejects_stale_revision(self, memory_manager):
-        _, _, shopping_id = memory_manager.store_memory(
+        store_outcome = memory_manager.store_memory(
             content="Shopping list: bread.",
             layer="feedback",
             memory_key="list:shopping",
@@ -369,11 +463,14 @@ class TestMemoryManagerBasic:
             validate=False,
             check_duplicates=False,
         )
-        assert memory_manager.update_memory(
+        shopping_id = store_outcome.memory_id
+        assert shopping_id is not None
+        update_outcome = memory_manager.update_memory(
             shopping_id,
             content="Shopping list: bread, eggs.",
             expected_revision=1,
-        ) == (True, "updated_successfully")
+        )
+        assert update_outcome.status is MemoryOperationStatus.UPDATED_SUCCESSFULLY
         stale_action = MemoryAction(
             action="update",
             content=None,
@@ -386,11 +483,11 @@ class TestMemoryManagerBasic:
             list_operation=_shopping_add("milk"),
         )
 
-        success, reason = memory_manager.process_memory_action(stale_action)
+        outcome = memory_manager.process_memory_action(stale_action)
 
-        assert success is False
-        assert reason == "memory_revision_conflict"
-        assert memory_manager.memory_store.get_memory_by_id(shopping_id)["content"] == (
+        assert outcome.succeeded is False
+        assert outcome.status is MemoryOperationStatus.MEMORY_REVISION_CONFLICT
+        assert memory_manager.memory_store.get_memory_by_id(shopping_id).content == (
             "Shopping list: bread, eggs."
         )
 
@@ -416,7 +513,7 @@ class TestMemoryRetrieval:
         results = memory_manager.retrieve_similar("what food do you like", top_k=2)
 
         assert len(results) <= 2
-        assert all("distance" in r for r in results)
+        assert all(isinstance(result.distance, float) for result in results)
 
     def test_retrieve_by_person(self, memory_manager):
         """Test filtering memories by person."""
@@ -429,7 +526,7 @@ class TestMemoryRetrieval:
 
         kenny_memories = memory_manager.retriever.retrieve_by_person("Kenny")
         assert len(kenny_memories) == 1
-        assert "cats" in kenny_memories[0]["content"]
+        assert "cats" in kenny_memories[0].content
 
     def test_retrieve_by_topic(self, memory_manager):
         """Test filtering memories by topic."""
@@ -442,7 +539,7 @@ class TestMemoryRetrieval:
 
         food_memories = memory_manager.retriever.retrieve_by_topic("food")
         assert len(food_memories) == 1
-        assert "pizza" in food_memories[0]["content"]
+        assert "pizza" in food_memories[0].content
 
     def test_metadata_filtering(self, memory_manager):
         """Test combined metadata filtering."""
@@ -461,7 +558,7 @@ class TestMemoryRetrieval:
             person="Kenny", topic="food"
         )
         assert len(results) == 1
-        assert "pizza" in results[0]["content"]
+        assert "pizza" in results[0].content
 
     def test_retrieve_by_layer(self, memory_manager):
         """Test filtering memories by layer."""
@@ -472,7 +569,7 @@ class TestMemoryRetrieval:
 
         shopping_memories = memory_manager.retriever.retrieve_by_layer("shopping-list")
         assert len(shopping_memories) == 1
-        assert "Milk and eggs" in shopping_memories[0]["content"]
+        assert "Milk and eggs" in shopping_memories[0].content
 
     def test_layer_and_source_type_separate(self, memory_manager):
         """Test that layer and source_type filters are independent."""
@@ -494,11 +591,11 @@ class TestMemoryRetrieval:
         # Filter by layer should not be affected by source_type
         shopping = memory_manager.retriever.retrieve_by_layer("shopping-list")
         assert len(shopping) == 1
-        assert shopping[0]["layer"] == "shopping-list"
+        assert shopping[0].layer == "shopping-list"
 
         profile = memory_manager.retriever.retrieve_by_layer("profile")
         assert len(profile) == 1
-        assert profile[0]["layer"] == "profile"
+        assert profile[0].layer == "profile"
 
     def test_metadata_filtering_with_layer(self, memory_manager):
         """Test metadata filtering including layer."""
@@ -521,8 +618,8 @@ class TestMemoryRetrieval:
             person="Kenny", layer="shopping-list"
         )
         assert len(results) == 1
-        assert results[0]["person"] == "Kenny"
-        assert results[0]["layer"] == "shopping-list"
+        assert results[0].person == "Kenny"
+        assert results[0].layer == "shopping-list"
 
 
 class TestMemoryValidation:
@@ -530,34 +627,36 @@ class TestMemoryValidation:
 
     def test_reject_empty_memory(self, memory_manager):
         """Validator should reject empty memory."""
-        success, reason, memory_id = memory_manager.store_memory(
+        store_outcome = memory_manager.store_memory(
             content="",
             layer="raw",
             validate=True,
         )
 
-        assert success is False
-        assert "empty" in reason.lower() or "validation" in reason.lower()
+        assert store_outcome.succeeded is False
+        assert store_outcome.status is MemoryOperationStatus.VALIDATION_FAILED
+        assert store_outcome.detail == "empty_content"
 
     def test_reject_short_memory(self, memory_manager):
         """Validator should reject very short memory."""
-        success, reason, memory_id = memory_manager.store_memory(
+        store_outcome = memory_manager.store_memory(
             content="ab",
             layer="raw",
             validate=True,
         )
 
-        assert success is False
+        assert store_outcome.succeeded is False
+        assert store_outcome.status is MemoryOperationStatus.VALIDATION_FAILED
 
     def test_skip_validation_flag(self, memory_manager):
         """Can skip validation with validate=False."""
-        success, reason, memory_id = memory_manager.store_memory(
+        store_outcome = memory_manager.store_memory(
             content="x",
             layer="raw",
             validate=False,
         )
 
-        assert success is True
+        assert store_outcome.succeeded is True
 
 
 class TestDuplicatePrevention:
@@ -568,19 +667,19 @@ class TestDuplicatePrevention:
         content = "I prefer tea"
 
         # Store first time
-        success1, reason1, id1 = memory_manager.store_memory(
+        first_outcome = memory_manager.store_memory(
             content=content,
             layer="profile",
             validate=False,
             check_duplicates=False,  # First one, no check
         )
-        assert success1 is True
+        assert first_outcome.succeeded is True
 
         all_memories = memory_manager.get_all_memories()
         assert len(all_memories) == 1
 
         # Store second time (same content)
-        success2, reason2, id2 = memory_manager.store_memory(
+        second_outcome = memory_manager.store_memory(
             content=content,
             layer="profile",
             validate=False,
@@ -588,8 +687,8 @@ class TestDuplicatePrevention:
         )
 
         # Should reject as duplicate
-        assert success2 is False
-        assert "duplicate" in reason2.lower()
+        assert second_outcome.succeeded is False
+        assert second_outcome.status is MemoryOperationStatus.DUPLICATE_FOUND
 
         # Count should still be 1 (not 2)
         all_memories = memory_manager.get_all_memories()
@@ -607,17 +706,17 @@ class TestDuplicatePrevention:
         content = "I prefer tea"
 
         # Store first time
-        success1, _, id1 = memory_manager.store_memory(
+        first_outcome = memory_manager.store_memory(
             content=content,
             layer="profile",
             validate=False,
             check_duplicates=False,
         )
-        assert success1 is True
+        assert first_outcome.succeeded is True
         assert len(memory_manager.get_all_memories()) == 1
 
         # Store duplicate with check disabled
-        success2, _, id2 = memory_manager.store_memory(
+        second_outcome = memory_manager.store_memory(
             content=content,
             layer="profile",
             validate=False,
@@ -625,8 +724,8 @@ class TestDuplicatePrevention:
         )
 
         # Should allow it
-        assert success2 is True
-        assert id1 != id2
+        assert second_outcome.succeeded is True
+        assert first_outcome.memory_id != second_outcome.memory_id
 
         # Count should be 2 (both stored)
         assert len(memory_manager.get_all_memories()) == 2
@@ -661,11 +760,11 @@ class TestContextMemories:
 
         assert len(context) <= 2
         assert all(
-            isinstance(memory, dict)
-            and isinstance(memory.get("id"), int)
-            and isinstance(memory.get("content"), str)
-            and isinstance(memory.get("revision"), int)
-            for memory in context
+            isinstance(result, MemorySearchResult)
+            and isinstance(result.memory.id, int)
+            and isinstance(result.memory.content, str)
+            and isinstance(result.memory.revision, int)
+            for result in context
         )
 
 
@@ -674,34 +773,37 @@ class TestSQLVectorConsistency:
 
     def test_store_creates_both_sql_and_vector(self, memory_manager):
         """Storing a memory should create both SQL record and vector."""
-        success, reason, memory_id = memory_manager.store_memory(
+        store_outcome = memory_manager.store_memory(
             content="I like coffee",
             layer="profile",
             validate=False,
         )
 
-        assert success is True
+        assert store_outcome.succeeded is True
+        memory_id = store_outcome.memory_id
         assert memory_id is not None
 
         # Verify SQL record exists
         memory = memory_manager.memory_store.get_memory_by_id(memory_id)
         assert memory is not None
-        assert memory["content"] == "I like coffee"
+        assert memory.content == "I like coffee"
 
         # Verify vector exists (by checking if search finds it)
         results = memory_manager.retrieve_similar("coffee", top_k=5)
-        assert any(r["id"] == memory_id for r in results)
+        assert any(result.memory.id == memory_id for result in results)
 
     def test_failed_vector_replacement_preserves_previous_entry(
         self,
         memory_manager,
         monkeypatch,
     ):
-        _, _, memory_id = memory_manager.store_memory(
+        store_outcome = memory_manager.store_memory(
             content="Keep the existing vector",
             layer="profile",
             validate=False,
         )
+        memory_id = store_outcome.memory_id
+        assert memory_id is not None
 
         def fail_serialization(embedding):
             raise RuntimeError("serialization failed after delete statement")
@@ -719,16 +821,18 @@ class TestSQLVectorConsistency:
     def test_delete_removes_both_sql_and_vector(self, memory_manager):
         """Deleting a memory should remove both SQL record and vector."""
         # Create a memory
-        success, reason, memory_id = memory_manager.store_memory(
+        store_outcome = memory_manager.store_memory(
             content="Remember this",
             layer="profile",
             validate=False,
         )
-        assert success is True
+        assert store_outcome.succeeded is True
+        memory_id = store_outcome.memory_id
+        assert memory_id is not None
 
         # Delete it
-        success, reason = memory_manager.delete_memory(memory_id)
-        assert success is True
+        outcome = memory_manager.delete_memory(memory_id)
+        assert outcome.succeeded is True
 
         # Verify SQL record is deleted
         memory = memory_manager.memory_store.get_memory_by_id(memory_id)
@@ -736,33 +840,35 @@ class TestSQLVectorConsistency:
 
         # Verify vector is deleted (search should not find it)
         results = memory_manager.retrieve_similar("Remember this", top_k=10)
-        assert not any(r["id"] == memory_id for r in results)
+        assert not any(result.memory.id == memory_id for result in results)
 
     def test_update_keeps_sql_and_vector_in_sync(self, memory_manager):
         """Updating a memory should update both SQL and vector."""
         # Create a memory
-        success, reason, memory_id = memory_manager.store_memory(
+        store_outcome = memory_manager.store_memory(
             content="I prefer tea",
             layer="profile",
             validate=False,
         )
-        assert success is True
+        assert store_outcome.succeeded is True
+        memory_id = store_outcome.memory_id
+        assert memory_id is not None
 
         # Update the content
-        success, reason = memory_manager.update_memory(
+        outcome = memory_manager.update_memory(
             memory_id=memory_id,
             content="I prefer coffee",
         )
-        assert success is True
+        assert outcome.succeeded is True
 
         # Verify SQL record is updated
         memory = memory_manager.memory_store.get_memory_by_id(memory_id)
-        assert memory["content"] == "I prefer coffee"
+        assert memory.content == "I prefer coffee"
 
         # Verify vector still exists (by checking we can retrieve it)
         results = memory_manager.retrieve_similar("I prefer", top_k=10)
-        assert any(r["id"] == memory_id for r in results)
-        assert results[0]["content"] == "I prefer coffee"
+        assert any(result.memory.id == memory_id for result in results)
+        assert results[0].memory.content == "I prefer coffee"
 
     def test_store_survives_vector_failure_and_reconciles(
         self,
@@ -782,20 +888,21 @@ class TestSQLVectorConsistency:
         )
 
         # Try to store a memory
-        success, reason, memory_id = memory_manager.store_memory(
+        store_outcome = memory_manager.store_memory(
             content="This should fail",
             layer="profile",
             validate=False,
         )
 
-        assert success is True
-        assert reason == "stored_pending_index"
+        assert store_outcome.succeeded is True
+        assert store_outcome.status is MemoryOperationStatus.STORED_PENDING_INDEX
+        memory_id = store_outcome.memory_id
         assert memory_id is not None
         memory = memory_manager.memory_store.get_memory_by_id(memory_id)
         assert memory is not None
-        assert memory["content"] == "This should fail"
-        assert memory["indexed_revision"] == 0
-        assert memory["revision"] == 1
+        assert memory.content == "This should fail"
+        assert memory.indexed_revision == 0
+        assert memory.revision == 1
 
         monkeypatch.setattr(memory_manager.vector_store, "save_vector", save_vector)
         result = memory_manager.reconcile_index()
@@ -803,7 +910,7 @@ class TestSQLVectorConsistency:
         assert result.indexed_memories == 1
         assert result.failures == 0
         memory = memory_manager.memory_store.get_memory_by_id(memory_id)
-        assert memory["indexed_revision"] == memory["revision"] == 1
+        assert memory.indexed_revision == memory.revision == 1
         assert memory_manager.vector_store.has_vector(memory_id)
 
     def test_update_failure_preserves_latest_revision_for_reconciliation(
@@ -813,12 +920,14 @@ class TestSQLVectorConsistency:
     ):
         """A derived-write failure cannot restore over a later SQL revision."""
         # Create a memory
-        success, reason, memory_id = memory_manager.store_memory(
+        store_outcome = memory_manager.store_memory(
             content="Original content",
             layer="profile",
             validate=False,
         )
-        assert success is True
+        assert store_outcome.succeeded is True
+        memory_id = store_outcome.memory_id
+        assert memory_id is not None
         save_vector = memory_manager.vector_store.save_vector
 
         # Mock vector_store to fail on save
@@ -832,44 +941,46 @@ class TestSQLVectorConsistency:
         )
 
         # Try to update the memory with new content
-        success, reason = memory_manager.update_memory(
+        outcome = memory_manager.update_memory(
             memory_id=memory_id,
             content="New content",
         )
 
-        assert success is True
-        assert reason == "updated_pending_index"
+        assert outcome.succeeded is True
+        assert outcome.status is MemoryOperationStatus.UPDATED_PENDING_INDEX
         memory = memory_manager.memory_store.get_memory_by_id(memory_id)
-        assert memory["content"] == "New content"
-        assert memory["indexed_revision"] == 1
-        assert memory["revision"] == 2
+        assert memory.content == "New content"
+        assert memory.indexed_revision == 1
+        assert memory.revision == 2
 
-        success, reason = memory_manager.update_memory(
+        outcome = memory_manager.update_memory(
             memory_id=memory_id,
             content="Newest content",
             expected_revision=2,
         )
-        assert success is True
-        assert reason == "updated_pending_index"
+        assert outcome.succeeded is True
+        assert outcome.status is MemoryOperationStatus.UPDATED_PENDING_INDEX
 
         monkeypatch.setattr(memory_manager.vector_store, "save_vector", save_vector)
         result = memory_manager.reconcile_index()
 
         assert result.indexed_memories == 1
         memory = memory_manager.memory_store.get_memory_by_id(memory_id)
-        assert memory["content"] == "Newest content"
-        assert memory["indexed_revision"] == memory["revision"] == 3
+        assert memory.content == "Newest content"
+        assert memory.indexed_revision == memory.revision == 3
 
     def test_delete_tombstone_hides_memory_until_vector_cleanup(
         self,
         memory_manager,
         monkeypatch,
     ):
-        _, _, memory_id = memory_manager.store_memory(
+        store_outcome = memory_manager.store_memory(
             content="Delete this safely",
             layer="profile",
             validate=False,
         )
+        memory_id = store_outcome.memory_id
+        assert memory_id is not None
         delete_vector = memory_manager.vector_store.delete_vector
 
         def failing_delete_vector(memory_id):
@@ -881,16 +992,16 @@ class TestSQLVectorConsistency:
             failing_delete_vector,
         )
 
-        success, reason = memory_manager.delete_memory(memory_id)
+        outcome = memory_manager.delete_memory(memory_id)
 
-        assert success is True
-        assert reason == "deleted_pending_index_cleanup"
+        assert outcome.succeeded is True
+        assert outcome.status is MemoryOperationStatus.DELETED_PENDING_INDEX_CLEANUP
         assert memory_manager.memory_store.get_memory_by_id(memory_id) is None
         tombstone = memory_manager.memory_store.get_memory_by_id_including_deleted(
             memory_id
         )
         assert tombstone is not None
-        assert tombstone["deleted_at"] is not None
+        assert tombstone.deleted_at is not None
         assert (
             memory_manager.retriever.retrieve_similar(
                 "Delete this safely",
@@ -915,11 +1026,13 @@ class TestSQLVectorConsistency:
         assert not memory_manager.vector_store.has_vector(memory_id)
 
     def test_reconciliation_rebuilds_missing_vector(self, memory_manager):
-        _, _, memory_id = memory_manager.store_memory(
+        store_outcome = memory_manager.store_memory(
             content="Rebuild this index entry",
             layer="profile",
             validate=False,
         )
+        memory_id = store_outcome.memory_id
+        assert memory_id is not None
         memory_manager.vector_store.delete_vector(memory_id)
         assert not memory_manager.vector_store.has_vector(memory_id)
 
@@ -930,11 +1043,13 @@ class TestSQLVectorConsistency:
         assert memory_manager.vector_store.has_vector(memory_id)
 
     def test_reconciliation_removes_orphan_vector(self, memory_manager):
-        _, _, memory_id = memory_manager.store_memory(
+        store_outcome = memory_manager.store_memory(
             content="Legacy partial deletion",
             layer="profile",
             validate=False,
         )
+        memory_id = store_outcome.memory_id
+        assert memory_id is not None
         assert memory_manager.memory_store.tombstone_memory(memory_id)
         assert memory_manager.memory_store.purge_tombstone(memory_id)
         assert memory_manager.vector_store.has_vector(memory_id)

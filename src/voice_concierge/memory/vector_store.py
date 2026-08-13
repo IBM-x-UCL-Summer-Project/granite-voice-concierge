@@ -1,12 +1,15 @@
+from collections.abc import Sequence
 from pathlib import Path
 
 import pysqlite3 as sqlite3
 import sqlite_vec
 from sqlite_vec import serialize_float32
 
+from voice_concierge.memory.types import VectorSearchResult
+
 
 class VectorStore:
-    def __init__(self, db_path, dimension=768):
+    def __init__(self, db_path: str | Path, dimension: int = 768) -> None:
         self.db_path = Path(db_path)
         self.dimension = dimension
 
@@ -14,7 +17,7 @@ class VectorStore:
         self._load_sqlite_vec()
         self._create_vector_table()
 
-    def _load_sqlite_vec(self):
+    def _load_sqlite_vec(self) -> None:
         if not hasattr(self.con, "enable_load_extension"):
             raise RuntimeError(
                 "This SQLite connection does not support extension loading."
@@ -24,7 +27,7 @@ class VectorStore:
         sqlite_vec.load(self.con)
         self.con.enable_load_extension(False)
 
-    def _create_vector_table(self):
+    def _create_vector_table(self) -> None:
         create_table_sql = f"""
             CREATE VIRTUAL TABLE IF NOT EXISTS memory_vectors
             USING vec0(
@@ -35,7 +38,11 @@ class VectorStore:
         self.con.execute(create_table_sql)
         self.con.commit()
 
-    def save_vector(self, memory_id, embedding):
+    def save_vector(
+        self,
+        memory_id: int,
+        embedding: Sequence[float],
+    ) -> None:
         if len(embedding) != self.dimension:
             raise ValueError(
                 f"Expected embedding dimension {self.dimension}, got {len(embedding)}."
@@ -61,7 +68,11 @@ class VectorStore:
             self.con.rollback()
             raise
 
-    def search_similar(self, query_embedding, top_k=3):
+    def search_similar(
+        self,
+        query_embedding: Sequence[float],
+        top_k: int = 3,
+    ) -> list[VectorSearchResult]:
         if len(query_embedding) != self.dimension:
             raise ValueError(
                 f"Expected query dimension {self.dimension}, "
@@ -79,15 +90,9 @@ class VectorStore:
             (serialize_float32(query_embedding), top_k),
         ).fetchall()
 
-        return [
-            {
-                "memory_id": row[0],
-                "distance": row[1],
-            }
-            for row in rows
-        ]
+        return [VectorSearchResult(memory_id=row[0], distance=row[1]) for row in rows]
 
-    def delete_vector(self, memory_id):
+    def delete_vector(self, memory_id: int) -> None:
         """Delete a vector by memory_id."""
         try:
             self.con.execute(
@@ -99,7 +104,7 @@ class VectorStore:
             self.con.rollback()
             raise
 
-    def has_vector(self, memory_id):
+    def has_vector(self, memory_id: int) -> bool:
         """Return whether a derived vector exists for one memory ID."""
 
         row = self.con.execute(
@@ -108,11 +113,11 @@ class VectorStore:
         ).fetchone()
         return row is not None
 
-    def list_memory_ids(self):
+    def list_memory_ids(self) -> set[int]:
         """Return every memory ID currently present in the vector index."""
 
         rows = self.con.execute("SELECT memory_id FROM memory_vectors").fetchall()
         return {row[0] for row in rows}
 
-    def close(self):
+    def close(self) -> None:
         self.con.close()

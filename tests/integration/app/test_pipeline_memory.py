@@ -10,7 +10,11 @@ from voice_concierge.app.reasoning import (
     ReasoningTurnContext,
     ReasoningTurnResult,
 )
-from voice_concierge.memory import LocalMemoryConfig, build_memory_manager
+from voice_concierge.memory import (
+    LocalMemoryConfig,
+    MemoryOperationStatus,
+    build_memory_manager,
+)
 from voice_concierge.reasoning.types import (
     MemoryAction,
     MemoryReference,
@@ -171,7 +175,7 @@ def test_failed_embedding_is_reconciled_after_reopen(tmp_path) -> None:
         assert confirmation.errors == ()
         memories = manager.get_all_memories()
         assert len(memories) == 1
-        assert memories[0]["indexed_revision"] == 0
+        assert memories[0].indexed_revision == 0
     finally:
         pipeline.close()
 
@@ -183,9 +187,9 @@ def test_failed_embedding_is_reconciled_after_reopen(tmp_path) -> None:
     try:
         memories = reopened_manager.get_all_memories()
         assert len(memories) == 1
-        assert memories[0]["content"] == "User prefers tea."
-        assert memories[0]["indexed_revision"] == memories[0]["revision"] == 1
-        assert reopened_manager.vector_store.has_vector(memories[0]["id"])
+        assert memories[0].content == "User prefers tea."
+        assert memories[0].indexed_revision == memories[0].revision == 1
+        assert reopened_manager.vector_store.has_vector(memories[0].id)
     finally:
         reopened_manager.close()
 
@@ -264,17 +268,15 @@ def test_first_structured_list_item_is_stored_then_later_items_are_updated(
     )
 
     try:
-        assert gateway.apply(first_action, scope) == (
-            True,
-            "stored_successfully",
+        assert gateway.apply(first_action, scope).status is (
+            MemoryOperationStatus.STORED_SUCCESSFULLY
         )
-        assert gateway.apply(later_action, scope) == (
-            True,
-            "updated_successfully",
+        assert gateway.apply(later_action, scope).status is (
+            MemoryOperationStatus.UPDATED_SUCCESSFULLY
         )
         structured_list = manager.memory_store.get_memory_by_key(memory_key)
     finally:
         gateway.close()
 
     assert structured_list is not None
-    assert structured_list["content"] == expected
+    assert structured_list.content == expected

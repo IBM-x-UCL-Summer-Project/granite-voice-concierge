@@ -244,6 +244,9 @@ def test_app_turn_result_to_dict_matches_frontend_shape() -> None:
         "memory_operation": {
             "attempted": False,
             "succeeded": False,
+            "status": None,
+            "memory_id": None,
+            "detail": None,
             "reason": "",
         },
         "errors": ["tts_failed"],

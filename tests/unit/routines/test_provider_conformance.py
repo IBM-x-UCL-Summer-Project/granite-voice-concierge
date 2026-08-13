@@ -12,6 +12,7 @@ from collections.abc import Callable
 import pytest
 
 # Local
+from voice_concierge.memory import MemoryRecord, MemorySearchResult
 from voice_concierge.reasoning.engine import DeterministicReasoningFake
 from voice_concierge.reasoning.types import ReasoningResponse
 from voice_concierge.routines.fakes import StaticRoutineProvider
@@ -32,10 +33,16 @@ _MISS = "something never stored"
 class _FakeMemory:
     """Memory retrieval double returning a fixed row set."""
 
-    def __init__(self, rows: list[dict]) -> None:
+    def __init__(self, rows: list[MemorySearchResult]) -> None:
         self._rows = rows
 
-    def retrieve_similar(self, *, query: str, top_k: int, topic: str) -> list[dict]:
+    def retrieve_similar(
+        self,
+        *,
+        query: str,
+        top_k: int,
+        topic: str,
+    ) -> list[MemorySearchResult]:
         return self._rows
 
 
@@ -53,8 +60,30 @@ def _llm(*, hit: bool) -> RoutineProvider:
 
 
 def _memory(*, hit: bool) -> RoutineProvider:
-    rows = [{"content": serialize_routine(_ROUTINE)}] if hit else []
+    rows = [_memory_result(serialize_routine(_ROUTINE))] if hit else []
     return MemoryRoutineProvider(_FakeMemory(rows))
+
+
+def _memory_result(content: str) -> MemorySearchResult:
+    return MemorySearchResult(
+        memory=MemoryRecord(
+            id=1,
+            content=content,
+            layer="profile",
+            memory_key=None,
+            revision=1,
+            indexed_revision=1,
+            deleted_at=None,
+            created_at=1,
+            event_time=None,
+            last_accessed=None,
+            strength=1,
+            person=None,
+            source_type=None,
+            topic="routine",
+        ),
+        distance=0.1,
+    )
 
 
 _MAKERS: list[Callable[..., RoutineProvider]] = [_static, _chained, _llm, _memory]

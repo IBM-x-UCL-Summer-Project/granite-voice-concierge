@@ -8,6 +8,7 @@ from typing import Literal, Protocol
 from voice_concierge.app.reasoning import ReasoningTurnResult
 from voice_concierge.audio.types import CapturedAudio
 from voice_concierge.context.types import ContextDecision, ContextState, MemoryScope
+from voice_concierge.memory.types import MemoryOperationOutcome
 from voice_concierge.reasoning.types import MemoryAction
 
 AppTurnError = Literal[
@@ -100,8 +101,27 @@ class MemoryOperationResult:
     """Result of attempting to apply a pending memory action."""
 
     attempted: bool = False
-    succeeded: bool = False
-    reason: str = ""
+    outcome: MemoryOperationOutcome | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.attempted, bool):
+            raise TypeError("Memory operation attempted must be a boolean.")
+        if self.attempted != (self.outcome is not None):
+            raise ValueError(
+                "Attempted memory results require an outcome and idle results do not."
+            )
+
+    @property
+    def succeeded(self) -> bool:
+        """Return success without duplicating status-owned semantics."""
+
+        return self.outcome.succeeded if self.outcome is not None else False
+
+    @property
+    def reason(self) -> str:
+        """Return the outcome's compatibility display reason."""
+
+        return self.outcome.reason if self.outcome is not None else ""
 
 
 @dataclass(frozen=True)

@@ -4,6 +4,7 @@ from typing import Optional
 
 from voice_concierge.memory.embedding_service import EmbeddingService
 from voice_concierge.memory.memory_store import MemoryStore
+from voice_concierge.memory.types import MemoryRecord, MemorySearchResult
 from voice_concierge.memory.vector_store import VectorStore
 
 
@@ -15,7 +16,7 @@ class MemoryRetriever:
         memory_store: MemoryStore,
         vector_store: VectorStore,
         embedding_service: EmbeddingService,
-    ):
+    ) -> None:
         """
         Initialize retriever with required components.
 
@@ -35,7 +36,7 @@ class MemoryRetriever:
         person: Optional[str] = None,
         topic: Optional[str] = None,
         layer: Optional[str] = None,
-    ) -> list[dict]:
+    ) -> list[MemorySearchResult]:
         """
         Retrieve similar memories using semantic search with optional filters.
 
@@ -47,7 +48,7 @@ class MemoryRetriever:
             layer: Filter by layer (optional)
 
         Returns:
-            List of memory dicts with distance scores, sorted by similarity
+            Typed memory search results sorted by similarity
         """
         try:
             # Generate embedding for query
@@ -59,27 +60,28 @@ class MemoryRetriever:
             )
 
             indexed_memories = {
-                memory["id"]: memory
+                memory.id: memory
                 for memory in self.memory_store.get_memories()
-                if memory["indexed_revision"] == memory["revision"]
+                if memory.indexed_revision == memory.revision
             }
-            memories = []
+            memories: list[MemorySearchResult] = []
             for result in vector_results:
-                memory_id = result["memory_id"]
+                memory_id = result.memory_id
                 memory = indexed_memories.get(memory_id)
                 if not memory:
                     continue
 
                 # Apply filters
-                if person and memory.get("person") != person:
+                if person and memory.person != person:
                     continue
-                if topic and memory.get("topic") != topic:
+                if topic and memory.topic != topic:
                     continue
-                if layer and memory.get("layer") != layer:
+                if layer and memory.layer != layer:
                     continue
 
-                memory_with_score = {**memory, "distance": result["distance"]}
-                memories.append(memory_with_score)
+                memories.append(
+                    MemorySearchResult(memory=memory, distance=result.distance)
+                )
 
                 if len(memories) >= top_k:
                     break
@@ -94,7 +96,7 @@ class MemoryRetriever:
         person: Optional[str] = None,
         topic: Optional[str] = None,
         layer: Optional[str] = None,
-    ) -> list[dict]:
+    ) -> list[MemoryRecord]:
         """
         Retrieve memories by metadata filters only (no semantic search).
 
@@ -104,25 +106,37 @@ class MemoryRetriever:
             layer: Filter by layer
 
         Returns:
-            List of matching memory dicts
+            Validated matching memory records
         """
         return self.memory_store.get_memories(person=person, topic=topic, layer=layer)
 
-    def retrieve_by_person(self, person: str, top_k: int = 10) -> list[dict]:
+    def retrieve_by_person(
+        self,
+        person: str,
+        top_k: int = 10,
+    ) -> list[MemoryRecord]:
         """Get all memories for a specific person."""
         memories = self.memory_store.get_memories(person=person)
         return memories[:top_k]
 
-    def retrieve_by_topic(self, topic: str, top_k: int = 10) -> list[dict]:
+    def retrieve_by_topic(
+        self,
+        topic: str,
+        top_k: int = 10,
+    ) -> list[MemoryRecord]:
         """Get all memories for a specific topic."""
         memories = self.memory_store.get_memories(topic=topic)
         return memories[:top_k]
 
-    def retrieve_by_layer(self, layer: str, top_k: int = 10) -> list[dict]:
+    def retrieve_by_layer(
+        self,
+        layer: str,
+        top_k: int = 10,
+    ) -> list[MemoryRecord]:
         """Get all memories from a specific layer."""
         memories = self.memory_store.get_memories(layer=layer)
         return memories[:top_k]
 
-    def retrieve_all(self) -> list[dict]:
+    def retrieve_all(self) -> list[MemoryRecord]:
         """Retrieve all memories."""
         return self.memory_store.get_memories()

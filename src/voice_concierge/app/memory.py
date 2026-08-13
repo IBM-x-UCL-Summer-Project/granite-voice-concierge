@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Protocol
 
 from voice_concierge.context.types import MemoryScope
 from voice_concierge.memory import LocalMemoryConfig, build_memory_manager
+from voice_concierge.memory.types import (
+    MemoryOperationOutcome,
+    MemoryOperationStatus,
+    MemoryRecord,
+    MemorySearchResult,
+)
 from voice_concierge.reasoning.types import (
     SHOPPING_LIST_MEMORY_KEY,
     TASK_LIST_MEMORY_KEY,
@@ -26,7 +32,11 @@ class MemoryGateway(Protocol):
     ) -> tuple[MemoryReference, ...]:
         """Return identified memory evidence relevant to one user query."""
 
-    def apply(self, action: MemoryAction, scope: MemoryScope) -> tuple[bool, str]:
+    def apply(
+        self,
+        action: MemoryAction,
+        scope: MemoryScope,
+    ) -> MemoryOperationOutcome:
         """Apply a previously confirmed memory action."""
 
     def close(self) -> None:
@@ -45,8 +55,12 @@ class NullMemoryGateway:
     ) -> tuple[MemoryReference, ...]:
         return ()
 
-    def apply(self, action: MemoryAction, scope: MemoryScope) -> tuple[bool, str]:
-        return False, "memory_not_configured"
+    def apply(
+        self,
+        action: MemoryAction,
+        scope: MemoryScope,
+    ) -> MemoryOperationOutcome:
+        return MemoryOperationOutcome(MemoryOperationStatus.MEMORY_NOT_CONFIGURED)
 
     def close(self) -> None:
         """Release no resources for the no-op gateway."""
@@ -55,7 +69,7 @@ class NullMemoryGateway:
 class MemoryManagerGateway:
     """Adapter from the app pipeline boundary to the current MemoryManager."""
 
-    def __init__(self, manager: Any) -> None:
+    def __init__(self, manager: MemoryManagerPort) -> None:
         self._manager = manager
 
     def retrieve(
@@ -100,9 +114,13 @@ class MemoryManagerGateway:
         )
         return (*exact_memories, *semantic_memories[:semantic_limit])
 
-    def apply(self, action: MemoryAction, scope: MemoryScope) -> tuple[bool, str]:
+    def apply(
+        self,
+        action: MemoryAction,
+        scope: MemoryScope,
+    ) -> MemoryOperationOutcome:
         if scope == "none":
-            return False, "memory_scope_none"
+            return MemoryOperationOutcome(MemoryOperationStatus.MEMORY_SCOPE_NONE)
 
         if action.list_operation is not None:
             expected_scope: MemoryScope = (
@@ -111,14 +129,16 @@ class MemoryManagerGateway:
                 else "task_relevant_only"
             )
             if scope != expected_scope:
-                return False, "structured_list_scope_mismatch"
+                return MemoryOperationOutcome(
+                    MemoryOperationStatus.STRUCTURED_LIST_SCOPE_MISMATCH
+                )
             return self._manager.process_memory_action(action)
 
         if action.action == "store":
             assert action.content is not None
             layer, topic = _storage_metadata(scope)
             memory_key = action.target.memory_key if action.target is not None else None
-            success, reason, _memory_id = self._manager.store_memory(
+            return self._manager.store_memory(
                 content=action.content,
                 layer=layer,
                 memory_key=memory_key,
@@ -127,7 +147,6 @@ class MemoryManagerGateway:
                 auto_classify=False,
                 auto_extract=False,
             )
-            return success, reason
 
         return self._manager.process_memory_action(action)
 
@@ -165,34 +184,53 @@ def _storage_metadata(scope: MemoryScope) -> tuple[str, str | None]:
     return metadata[scope]
 
 
-def _memory_reference(value: object) -> MemoryReference | None:
-    if not isinstance(value, dict):
+def _memory_reference(
+    value: MemoryRecord | MemorySearchResult | None,
+) -> MemoryReference | None:
+    if isinstance(value, MemorySearchResult):
+        memory = value.memory
+    elif isinstance(value, MemoryRecord):
+        memory = value
+    else:
         return None
-    memory_id = value.get("id")
-    content = value.get("content")
-    layer = value.get("layer")
-    revision = value.get("revision")
-    memory_key = value.get("memory_key")
-    topic = value.get("topic")
-    if (
-        not isinstance(memory_id, int)
-        or isinstance(memory_id, bool)
-        or not isinstance(content, str)
-        or not isinstance(layer, str)
-        or not isinstance(revision, int)
-        or isinstance(revision, bool)
-        or (memory_key is not None and not isinstance(memory_key, str))
-        or (topic is not None and not isinstance(topic, str))
-    ):
-        return None
-    try:
-        return MemoryReference(
-            memory_id=memory_id,
-            content=content,
-            layer=layer,
-            revision=revision,
-            memory_key=memory_key,
-            topic=topic,
-        )
-    except ValueError:
-        return None
+    return MemoryReference(
+        memory_id=memory.id,
+        content=memory.content,
+        layer=memory.layer,
+        revision=memory.revision,
+        memory_key=memory.memory_key,
+        topic=memory.topic,
+    )
+
+
+class MemoryManagerPort(Protocol):
+    """Typed manager operations consumed by the app memory gateway."""
+
+    def get_memory_by_key(self, memory_key: str) -> MemoryRecord | None: ...
+
+    def retrieve_similar(
+        self,
+        *,
+        query: str,
+        top_k: int,
+        topic: str | None,
+    ) -> list[MemorySearchResult]: ...
+
+    def store_memory(
+        self,
+        *,
+        content: str,
+        layer: str,
+        memory_key: str | None,
+        topic: str | None,
+        validate: bool,
+        auto_classify: bool,
+        auto_extract: bool,
+    ) -> MemoryOperationOutcome: ...
+
+    def process_memory_action(
+        self,
+        action: MemoryAction,
+    ) -> MemoryOperationOutcome: ...
+
+    def close(self) -> None: ...

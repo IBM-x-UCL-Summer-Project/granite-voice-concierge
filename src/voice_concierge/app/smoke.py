@@ -16,6 +16,10 @@ from voice_concierge.memory.structured_lists import (
     apply_structured_list_operation,
     create_structured_list,
 )
+from voice_concierge.memory.types import (
+    MemoryOperationOutcome,
+    MemoryOperationStatus,
+)
 from voice_concierge.reasoning.types import (
     MemoryAction,
     MemoryReference,
@@ -99,9 +103,13 @@ class SmokeMemoryGateway:
             return ()
         return tuple(reversed(self.memories[-limit:]))
 
-    def apply(self, action: MemoryAction, scope: MemoryScope) -> tuple[bool, str]:
+    def apply(
+        self,
+        action: MemoryAction,
+        scope: MemoryScope,
+    ) -> MemoryOperationOutcome:
         if scope == "none":
-            return False, "memory_scope_none"
+            return MemoryOperationOutcome(MemoryOperationStatus.MEMORY_SCOPE_NONE)
         if action.list_operation is not None:
             expected_scope: MemoryScope = (
                 "list_relevant"
@@ -109,7 +117,9 @@ class SmokeMemoryGateway:
                 else "task_relevant_only"
             )
             if scope != expected_scope:
-                return False, "structured_list_scope_mismatch"
+                return MemoryOperationOutcome(
+                    MemoryOperationStatus.STRUCTURED_LIST_SCOPE_MISMATCH
+                )
         if action.action == "store":
             content = action.content
             if action.list_operation is not None:
@@ -127,32 +137,47 @@ class SmokeMemoryGateway:
                 )
             )
             self._next_memory_id += 1
-            return True, "stored_in_smoke_memory"
+            return MemoryOperationOutcome(
+                MemoryOperationStatus.STORED_SUCCESSFULLY,
+                memory_id=self._next_memory_id - 1,
+            )
 
         assert action.target is not None
         index = self._target_index(action)
         if index is None:
-            return False, "memory_target_not_found"
+            return MemoryOperationOutcome(MemoryOperationStatus.MEMORY_TARGET_NOT_FOUND)
         existing = self.memories[index]
         if (
             action.target.expected_revision is not None
             and existing.revision != action.target.expected_revision
         ):
-            return False, "memory_revision_conflict"
+            return MemoryOperationOutcome(
+                MemoryOperationStatus.MEMORY_REVISION_CONFLICT,
+                memory_id=existing.memory_id,
+            )
         if action.action == "delete":
             del self.memories[index]
-            return True, "deleted_from_smoke_memory"
+            return MemoryOperationOutcome(
+                MemoryOperationStatus.DELETED_SUCCESSFULLY,
+                memory_id=existing.memory_id,
+            )
 
         content = action.content
         if action.list_operation is not None:
             if existing.memory_key != action.list_operation.memory_key:
-                return False, "structured_list_target_mismatch"
+                return MemoryOperationOutcome(
+                    MemoryOperationStatus.STRUCTURED_LIST_TARGET_MISMATCH,
+                    memory_id=existing.memory_id,
+                )
             content = apply_structured_list_operation(
                 existing.content,
                 action.list_operation,
             )
             if content is None:
-                return False, "invalid_structured_list_content"
+                return MemoryOperationOutcome(
+                    MemoryOperationStatus.INVALID_STRUCTURED_LIST_CONTENT,
+                    memory_id=existing.memory_id,
+                )
         assert content is not None
         self.memories[index] = MemoryReference(
             memory_id=existing.memory_id,
@@ -162,7 +187,10 @@ class SmokeMemoryGateway:
             memory_key=existing.memory_key,
             topic=existing.topic,
         )
-        return True, "updated_in_smoke_memory"
+        return MemoryOperationOutcome(
+            MemoryOperationStatus.UPDATED_SUCCESSFULLY,
+            memory_id=existing.memory_id,
+        )
 
     def _target_index(self, action: MemoryAction) -> int | None:
         assert action.target is not None

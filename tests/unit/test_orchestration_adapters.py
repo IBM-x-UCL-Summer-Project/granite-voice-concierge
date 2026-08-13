@@ -5,6 +5,12 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from voice_concierge.memory import (
+    MemoryOperationOutcome,
+    MemoryOperationStatus,
+    MemoryRecord,
+    MemorySearchResult,
+)
 from voice_concierge.orchestration import MemoryManagerGateway, OfflineTTSSpeechGateway
 from voice_concierge.reasoning.types import (
     MemoryAction,
@@ -38,24 +44,37 @@ class FakeMemoryManager:
             }
         )
         return [
-            {
-                "id": 1,
-                "content": "remembered item",
-                "layer": "profile",
-                "revision": 1,
-                "memory_key": None,
-                "topic": None,
-            },
-            {"missing": "content"},
+            MemorySearchResult(
+                memory=MemoryRecord(
+                    id=1,
+                    content="remembered item",
+                    layer="profile",
+                    memory_key=None,
+                    revision=1,
+                    indexed_revision=1,
+                    deleted_at=None,
+                    created_at=1,
+                    event_time=None,
+                    last_accessed=None,
+                    strength=1,
+                    person=None,
+                    source_type=None,
+                    topic=None,
+                ),
+                distance=0.1,
+            ),
         ]
 
     def store_memory(self, **kwargs):
         self.store_calls.append(kwargs)
-        return True, "stored_successfully", 123
+        return MemoryOperationOutcome(
+            MemoryOperationStatus.STORED_SUCCESSFULLY,
+            memory_id=123,
+        )
 
     def process_memory_action(self, action):
         self.process_calls.append(action)
-        return True, "processed"
+        return MemoryOperationOutcome(MemoryOperationStatus.UPDATED_SUCCESSFULLY)
 
 
 class FakeTTS:
@@ -122,7 +141,7 @@ class OrchestrationAdaptersTest(unittest.TestCase):
 
         result = gateway.apply(action, "list_relevant")
 
-        self.assertEqual(result, (True, "stored_successfully"))
+        self.assertEqual(result.status, MemoryOperationStatus.STORED_SUCCESSFULLY)
         self.assertEqual(
             manager.store_calls,
             [
@@ -152,7 +171,7 @@ class OrchestrationAdaptersTest(unittest.TestCase):
 
         result = gateway.apply(action, "personal_relevant")
 
-        self.assertEqual(result, (True, "processed"))
+        self.assertEqual(result.status, MemoryOperationStatus.UPDATED_SUCCESSFULLY)
         self.assertEqual(manager.process_calls, [action])
 
     def test_speech_gateway_maps_pace_to_length_scale_and_stop(self) -> None:

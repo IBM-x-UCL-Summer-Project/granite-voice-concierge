@@ -43,6 +43,22 @@ embedding service.
 The app pipeline normally wraps this manager with `MemoryManagerGateway` by
 calling `build_voice_concierge_pipeline(load_memory=True)`.
 
+The memory package uses explicit types at its boundaries. `MemoryStore` returns
+validated `MemoryRecord` instances, vector search returns
+`VectorSearchResult`, and semantic retrieval returns `MemorySearchResult`
+instead of adding a `distance` key to a storage dictionary. Mutations return
+`MemoryOperationOutcome`; callers branch on its `MemoryOperationStatus` and
+`succeeded` properties instead of positional tuple fields or parsing reason
+strings. The app gateway converts records to reasoning-owned
+`MemoryReference` values. Validator/model metadata is normalized through
+`ExtractedMemoryMetadata` before it can reach the SQL write boundary.
+
+Auto-extracted ISO date text is normalized to the integer UTC timestamp used by
+the SQL schema before writing. Opening a legacy database performs the same
+normalization for previously stored ISO event times; invalid legacy values are
+cleared rather than allowed to violate the typed record contract. Legacy
+strength values are bounded to the documented 1-10 range.
+
 Project-owned structured lists are identity-addressed records. The gateway
 loads `list:shopping` and `list:tasks` by their stable keys; it never uses a
 nearest semantic match as a substitute for a missing shopping list. Task mode
@@ -91,7 +107,7 @@ manager = MemoryManager(
 Store a new memory to the database and vector store.
 
 ```python
-success, reason, memory_id = manager.store_memory(
+outcome = manager.store_memory(
     content: str,              # Required - Memory content
     layer: str,                # Required - profile/raw/feedback
     person: Optional[str] = None,        # Related person (auto-extracted if None)
@@ -107,15 +123,17 @@ success, reason, memory_id = manager.store_memory(
 
 **Return values:**
 
-- `success: bool` - Whether successful
-- `reason: str` - Status description
-- `memory_id: Optional[int]` - Memory ID (None if failed)
+- `MemoryOperationOutcome.status`: a `MemoryOperationStatus` enum value
+- `MemoryOperationOutcome.succeeded`: whether the authoritative operation succeeded
+- `MemoryOperationOutcome.memory_id`: affected memory ID, when available
+- `MemoryOperationOutcome.detail`: optional diagnostic detail
+- `MemoryOperationOutcome.reason`: display string derived from status and detail
 
 **Example:**
 
 ```python
 # Option 1: Full auto-extraction (recommended)
-success, reason, mid = manager.store_memory(
+outcome = manager.store_memory(
     "Had coffee at Starbucks with John on Monday",
     "profile",
     validate=True,
@@ -124,7 +142,7 @@ success, reason, mid = manager.store_memory(
 )
 
 # Option 2: Manual metadata specification
-success, reason, mid = manager.store_memory(
+outcome = manager.store_memory(
     "User likes coffee",
     "profile",
     person="Kenny",
@@ -133,10 +151,10 @@ success, reason, mid = manager.store_memory(
     auto_extract=False,  # Don't override provided values
 )
 
-if success:
-    print(f"Stored with ID: {mid}")
+if outcome.succeeded:
+    print(f"Stored with ID: {outcome.memory_id}")
 else:
-    print(f"Failed: {reason}")
+    print(f"Failed: {outcome.reason}")
 ```
 
 **Possible reason values:**
@@ -167,25 +185,21 @@ memories = manager.retrieve_similar(
 **Return values:**
 
 ```python
-List[dict]  # Memory list sorted by similarity
+list[MemorySearchResult]
 
-# Structure of each memory:
-{
-    'id': 1,              # Memory ID
-    'content': 'content', # Memory content
-    'layer': 'profile',   # Layer
-    'memory_key': None,   # Optional stable scoped key
-    'revision': 1,        # Optimistic-concurrency revision
-    'indexed_revision': 1,# Revision currently represented in sqlite-vec
-    'deleted_at': None,   # Tombstone time; active queries exclude tombstones
-    'created_at': 1234567,# Creation timestamp
-    'person': 'Kenny',    # Related person
-    'topic': 'semantic',  # Memory type or topic
-    'distance': 0.23,     # Similarity distance (lower = more similar)
-    'strength': 1,        # Importance/strength
-    'event_time': None,   # Event occurrence time
-    'last_accessed': None,# Last access time
-}
+# Each result keeps semantic ranking separate from the authoritative record:
+MemorySearchResult(
+    memory=MemoryRecord(
+        id=1,
+        content="content",
+        layer="profile",
+        memory_key=None,
+        revision=1,
+        indexed_revision=1,
+        # ... timestamps and metadata
+    ),
+    distance=0.23,
+)
 ```
 
 **Example:**
@@ -198,7 +212,7 @@ results = manager.retrieve_similar(
 )
 
 for mem in results:
-    print(f"{mem['content']} (distance: {mem['distance']:.3f})")
+    print(f"{mem.memory.content} (distance: {mem.distance:.3f})")
 ```
 
 **Exceptions:**
@@ -216,7 +230,7 @@ semantic ranking.
 memory = manager.get_memory_by_key("list:shopping")
 ```
 
-This returns the stored memory dictionary or `None`. Use it for stable keys;
+This returns a validated `MemoryRecord` or `None`. Use it for stable keys;
 use `retrieve_similar()` only when relevance discovery is actually intended.
 
 ---
@@ -226,7 +240,7 @@ use `retrieve_similar()` only when relevance discovery is actually intended.
 Update an existing memory.
 
 ```python
-success, reason = manager.update_memory(
+outcome = manager.update_memory(
     memory_id: int,            # Required - Memory ID
     content: Optional[str] = None,       # New content
     layer: Optional[str] = None,         # New layer
@@ -237,15 +251,12 @@ success, reason = manager.update_memory(
 )
 ```
 
-**Return values:**
-
-- `success: bool` - Whether successful
-- `reason: str` - Status description
+Returns `MemoryOperationOutcome`.
 
 **Example:**
 
 ```python
-success, reason = manager.update_memory(
+outcome = manager.update_memory(
     memory_id=1,
     content="Updated memory content",
     strength=3,
@@ -269,16 +280,13 @@ success, reason = manager.update_memory(
 Delete a memory and its vector.
 
 ```python
-success, reason = manager.delete_memory(
+outcome = manager.delete_memory(
     memory_id: int,
     expected_revision: Optional[int] = None,
 )
 ```
 
-**Return values:**
-
-- `success: bool`
-- `reason: str`
+Returns `MemoryOperationOutcome`.
 
 Deletion is logically successful once its SQL tombstone is durable. A
 `"deleted_pending_index_cleanup"` result means the record is already hidden and
@@ -287,7 +295,7 @@ reconciliation will retry vector deletion and final purging.
 **Example:**
 
 ```python
-success, reason = manager.delete_memory(1)
+outcome = manager.delete_memory(1)
 ```
 
 ---
@@ -321,7 +329,7 @@ from voice_concierge.reasoning.types import (
     StructuredListOperation,
 )
 
-success, reason = manager.process_memory_action(
+outcome = manager.process_memory_action(
     action: MemoryAction
 )
 ```
@@ -360,7 +368,7 @@ action = MemoryAction(
     requires_confirmation=False,
 )
 
-success, reason = manager.process_memory_action(action)
+outcome = manager.process_memory_action(action)
 ```
 
 ---
@@ -379,10 +387,7 @@ memories = manager.get_context_memories(
 **Return values:**
 
 ```python
-List[dict]  # Identified memory records
-
-# Example:
-[{"id": 1, "content": "User likes pasta", "revision": 1, ...}]
+list[MemorySearchResult]
 ```
 
 **Example:**
@@ -393,8 +398,8 @@ context = manager.get_context_memories(
     context_size=5,
 )
 
-# Application code should normally retrieve through MemoryManagerGateway,
-# which converts these records to typed MemoryReference values.
+# Application code should retrieve through MemoryManagerGateway, which converts
+# these results to the MemoryReference values accepted by reasoning requests.
 ```
 
 ---
@@ -410,7 +415,7 @@ memories = manager.get_all_memories()
 **Return values:**
 
 ```python
-List[dict]  # All memories, ordered by creation time (newest first)
+list[MemoryRecord]  # Ordered by creation time (newest first)
 ```
 
 ---
@@ -704,11 +709,8 @@ results = store.search_similar(
 **Return values:**
 
 ```python
-List[dict]  # Results
-# [
-#     {"memory_id": 1, "distance": 0.23},
-#     {"memory_id": 5, "distance": 0.45},
-# ]
+list[VectorSearchResult]
+# [VectorSearchResult(memory_id=1, distance=0.23)]
 ```
 
 #### `close()`
@@ -786,14 +788,9 @@ manager.close()
 ### Scenario 2: Integration with Reasoning Engine
 
 ```python
-# Get context
-context = manager.get_context_memories(user_input)
-
-# Create reasoning request
-request = ReasoningRequest(
-    transcript=user_input,
-    memories=tuple(context),
-)
+# Application code gets typed MemoryReference context through the gateway:
+references = gateway.retrieve(user_input, "personal_relevant")
+request = ReasoningRequest(transcript=user_input, memories=references)
 
 # Handle results
 if response.proposed_memory_action:
@@ -818,7 +815,7 @@ semantic_memories = manager.retriever.retrieve_by_topic("semantic")
 
 ```python
 # Store with automatic metadata extraction
-success, reason, mid = manager.store_memory(
+outcome = manager.store_memory(
     "Ran into Sarah at the coffee shop last Tuesday. She mentioned starting a new job at Google.",
     "profile",
     auto_extract=True,  # Automatically extract person, source_type, event_time, strength
@@ -840,9 +837,9 @@ sarah_memories = manager.retriever.retrieve_by_person("Sarah")
 
 ```python
 try:
-    success, reason, mid = manager.store_memory(...)
-    if not success:
-        print(f"Failed: {reason}")
+    outcome = manager.store_memory(...)
+    if not outcome.succeeded:
+        print(f"Failed: {outcome.reason}")
 
     memories = manager.retrieve_similar(...)
 except RuntimeError as e:

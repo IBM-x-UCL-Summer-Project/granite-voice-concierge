@@ -39,6 +39,10 @@ from voice_concierge.context.types import (
     ContextMode,
     ContextState,
 )
+from voice_concierge.memory.types import (
+    MemoryOperationOutcome,
+    MemoryOperationStatus,
+)
 from voice_concierge.reasoning.types import MemoryReference, ReasoningResponse
 
 _EMPTY_TRANSCRIPT_RESPONSE = "I didn't catch that. Could you say it again?"
@@ -351,21 +355,22 @@ class VoiceConciergePipeline:
             )
 
         try:
-            succeeded, reason = self._memory.apply(pending_action, pending_scope)
+            outcome = self._memory.apply(pending_action, pending_scope)
         except Exception as exc:
-            succeeded = False
-            reason = exc.__class__.__name__
+            outcome = MemoryOperationOutcome(
+                MemoryOperationStatus.MEMORY_GATEWAY_ERROR,
+                detail=exc.__class__.__name__,
+            )
 
         memory_operation = MemoryOperationResult(
             attempted=True,
-            succeeded=succeeded,
-            reason=reason,
+            outcome=outcome,
         )
         spoken_response = (
-            _MEMORY_SAVED_RESPONSE if succeeded else _MEMORY_FAILED_RESPONSE
+            _MEMORY_SAVED_RESPONSE if outcome.succeeded else _MEMORY_FAILED_RESPONSE
         )
         errors: tuple[AppTurnError, ...] = (
-            () if succeeded else ("memory_action_failed",)
+            () if outcome.succeeded else ("memory_action_failed",)
         )
         next_state = AppPipelineState(
             context=context_decision.state,
@@ -375,8 +380,8 @@ class VoiceConciergePipeline:
                 transcript,
                 spoken_response,
             ),
-            pending_memory_action=None if succeeded else pending_action,
-            pending_memory_scope=None if succeeded else pending_scope,
+            pending_memory_action=None if outcome.succeeded else pending_action,
+            pending_memory_scope=None if outcome.succeeded else pending_scope,
         )
         return self._finalize_result(
             state=next_state,

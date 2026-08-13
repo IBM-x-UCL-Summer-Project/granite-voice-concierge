@@ -1,5 +1,7 @@
 """Tests for app pipeline request and state types."""
 
+import pytest
+
 from voice_concierge.app.types import (
     AppPipelineState,
     AppTurnOptions,
@@ -7,6 +9,7 @@ from voice_concierge.app.types import (
     ConversationTurn,
     MemoryOperationResult,
 )
+from voice_concierge.memory import MemoryOperationOutcome, MemoryOperationStatus
 
 
 def test_app_pipeline_state_defaults_to_home_without_pending_actions() -> None:
@@ -46,3 +49,18 @@ def test_memory_operation_result_defaults_to_not_attempted() -> None:
     assert result.attempted is False
     assert result.succeeded is False
     assert result.reason == ""
+
+
+def test_memory_operation_result_derives_fields_from_typed_outcome() -> None:
+    result = MemoryOperationResult(
+        attempted=True,
+        outcome=MemoryOperationOutcome(MemoryOperationStatus.STORED_PENDING_INDEX),
+    )
+
+    assert result.succeeded is True
+    assert result.reason == "stored_pending_index"
+
+
+def test_memory_operation_result_rejects_contradictory_attempt_state() -> None:
+    with pytest.raises(ValueError, match="require an outcome"):
+        MemoryOperationResult(attempted=True)

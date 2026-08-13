@@ -3,6 +3,7 @@
 import pytest
 
 # Local
+from voice_concierge.memory import MemoryRecord, MemorySearchResult
 from voice_concierge.reasoning.engine import DeterministicReasoningFake
 from voice_concierge.reasoning.types import ReasoningResponse
 from voice_concierge.routines import RoutineCommandAdapter, build_routine_adapter
@@ -41,10 +42,27 @@ def test_built_adapter_asks_when_memory_has_multiple_matches() -> None:
     from voice_concierge.routines.providers import serialize_routine
     from voice_concierge.routines.types import Routine, RoutineStep
 
-    def _rec(name: str) -> dict:
-        return {
-            "content": serialize_routine(Routine(name=name, steps=(RoutineStep("a"),)))
-        }
+    def _rec(name: str) -> MemorySearchResult:
+        content = serialize_routine(Routine(name=name, steps=(RoutineStep("a"),)))
+        return MemorySearchResult(
+            memory=MemoryRecord(
+                id=1,
+                content=content,
+                layer="profile",
+                memory_key=None,
+                revision=1,
+                indexed_revision=1,
+                deleted_at=None,
+                created_at=1,
+                event_time=None,
+                last_accessed=None,
+                strength=1,
+                person=None,
+                source_type=None,
+                topic="routine",
+            ),
+            distance=0.1,
+        )
 
     class _Mem:
         def retrieve_similar(self, *, query, top_k, topic):

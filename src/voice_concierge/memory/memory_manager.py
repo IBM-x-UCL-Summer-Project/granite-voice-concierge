@@ -1,7 +1,7 @@
 """High-level memory management orchestrating storage, validation, and retrieval."""
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional
 
 from voice_concierge.memory.embedding_service import EmbeddingService
 from voice_concierge.memory.memory_retriever import MemoryRetriever
@@ -11,6 +11,13 @@ from voice_concierge.memory.structured_lists import (
     apply_structured_list_operation,
     create_structured_list,
     structured_list_topic,
+)
+from voice_concierge.memory.types import (
+    ExtractedMemoryMetadata,
+    MemoryOperationOutcome,
+    MemoryOperationStatus,
+    MemoryRecord,
+    MemorySearchResult,
 )
 from voice_concierge.memory.vector_store import VectorStore
 from voice_concierge.reasoning.types import MemoryAction, MemoryTarget
@@ -56,7 +63,7 @@ class MemoryManager:
         content: str,
         threshold: float = 0.85,
         top_k: int = 5,
-    ) -> Optional[dict]:
+    ) -> MemorySearchResult | None:
         """
         Find semantically similar existing memory.
 
@@ -66,11 +73,11 @@ class MemoryManager:
             top_k: Number of candidates to check
 
         Returns:
-            Most similar memory dict if found above threshold, else None
+            Most similar typed search result above the threshold, else None
         """
         try:
             results = self.retrieve_similar(content, top_k=top_k)
-            if results and results[0].get("distance", 1.0) < (1.0 - threshold):
+            if results and results[0].distance < (1.0 - threshold):
                 return results[0]
             return None
         except Exception:
@@ -90,7 +97,7 @@ class MemoryManager:
         auto_extract: bool = True,
         check_duplicates: bool = True,
         memory_key: Optional[str] = None,
-    ) -> Tuple[bool, str, Optional[int]]:
+    ) -> MemoryOperationOutcome:
         """
         Store a memory after validation and optional auto-classification.
         Prevents duplicate/similar memories from being stored.
@@ -110,37 +117,75 @@ class MemoryManager:
             memory_key: Stable key for an exact structured-memory record
 
         Returns:
-            Tuple of (success: bool, reason: str, memory_id: Optional[int])
+            Typed operation outcome with an optional affected memory ID
         """
+        if not isinstance(content, str):
+            return MemoryOperationOutcome(
+                MemoryOperationStatus.VALIDATION_FAILED,
+                detail="invalid_content_type",
+            )
+        if not content.strip():
+            return MemoryOperationOutcome(
+                MemoryOperationStatus.VALIDATION_FAILED,
+                detail="empty_content",
+            )
+
         if memory_key is not None:
-            keyed_memory = self.memory_store.get_memory_by_key(memory_key)
+            try:
+                keyed_memory = self.memory_store.get_memory_by_key(memory_key)
+            except Exception as error:
+                return MemoryOperationOutcome(
+                    MemoryOperationStatus.STORAGE_ERROR,
+                    detail=_exception_detail(error),
+                )
             if keyed_memory is not None:
-                return (
-                    False,
-                    f"duplicate_key: memory_id={keyed_memory['id']}",
-                    keyed_memory["id"],
+                return MemoryOperationOutcome(
+                    MemoryOperationStatus.DUPLICATE_KEY,
+                    memory_id=keyed_memory.id,
+                    detail=f"memory_id={keyed_memory.id}",
                 )
 
         # Check for semantic duplicates if enabled for unkeyed stores.
         if check_duplicates and memory_key is None:
             similar = self.find_similar_memory(content, threshold=0.9)
             if similar:
-                mem_id = similar["id"]
-                return False, f"duplicate_found: memory_id={mem_id}", mem_id
+                memory_id = similar.memory.id
+                return MemoryOperationOutcome(
+                    MemoryOperationStatus.DUPLICATE_FOUND,
+                    memory_id=memory_id,
+                    detail=f"memory_id={memory_id}",
+                )
 
         # Validate if enabled
         if validate:
-            should_store, reason = self.validator.should_store(content)
+            try:
+                should_store, reason = self.validator.should_store(content)
+            except Exception as error:
+                return MemoryOperationOutcome(
+                    MemoryOperationStatus.VALIDATION_FAILED,
+                    detail=_exception_detail(error),
+                )
             if not should_store:
-                return False, f"validation_failed: {reason}", None
+                return MemoryOperationOutcome(
+                    MemoryOperationStatus.VALIDATION_FAILED,
+                    detail=reason,
+                )
 
         # Auto-extract metadata if enabled
         if auto_extract:
-            extracted = self.validator.extract_metadata(content)
-            person = person or extracted.get("person")
-            source_type = source_type or extracted.get("source_type")
-            event_time = event_time or extracted.get("event_time")
-            strength = strength or extracted.get("strength", 1)
+            try:
+                extracted_value = self.validator.extract_metadata(content)
+            except Exception:
+                extracted_value = None
+            extracted = ExtractedMemoryMetadata.from_value(extracted_value)
+            if person is None:
+                person = extracted.person
+            if source_type is None:
+                source_type = extracted.source_type
+            if event_time is None:
+                event_time = extracted.event_time
+            if strength is None:
+                strength = extracted.strength
 
         # Set default strength if still None
         if strength is None:
@@ -148,8 +193,11 @@ class MemoryManager:
 
         # Auto-classify memory type if enabled and topic not provided
         classified_topic = topic
-        if auto_classify and not topic:
-            memory_type, _ = self.validator.classify_memory_type(content)
+        if auto_classify and topic is None:
+            try:
+                memory_type, _ = self.validator.classify_memory_type(content)
+            except Exception:
+                memory_type = None
             if memory_type:
                 classified_topic = memory_type.value
 
@@ -165,15 +213,24 @@ class MemoryManager:
                 strength=strength,
             )
         except Exception as e:
-            return False, f"storage_error: {str(e)}", None
+            return MemoryOperationOutcome(
+                MemoryOperationStatus.STORAGE_ERROR,
+                detail=_exception_detail(e),
+            )
 
         try:
             memory = self.memory_store.get_memory_by_id(memory_id)
             if memory is not None and self._index_memory(memory):
-                return True, "stored_successfully", memory_id
+                return MemoryOperationOutcome(
+                    MemoryOperationStatus.STORED_SUCCESSFULLY,
+                    memory_id=memory_id,
+                )
         except Exception:
             pass
-        return True, "stored_pending_index", memory_id
+        return MemoryOperationOutcome(
+            MemoryOperationStatus.STORED_PENDING_INDEX,
+            memory_id=memory_id,
+        )
 
     def reconcile_index(self) -> IndexReconciliationResult:
         """Repair derived vectors and finish tombstoned deletions safely."""
@@ -190,8 +247,8 @@ class MemoryManager:
             failures += 1
         for memory in tombstones:
             try:
-                self.vector_store.delete_vector(memory["id"])
-                if not self.memory_store.purge_tombstone(memory["id"]):
+                self.vector_store.delete_vector(memory.id)
+                if not self.memory_store.purge_tombstone(memory.id):
                     failures += 1
                     continue
                 cleaned_tombstones += 1
@@ -209,8 +266,8 @@ class MemoryManager:
             vector_ids = None
             failures += 1
         for memory in active_memories:
-            needs_index = memory["indexed_revision"] != memory["revision"] or (
-                vector_ids is not None and memory["id"] not in vector_ids
+            needs_index = memory.indexed_revision != memory.revision or (
+                vector_ids is not None and memory.id not in vector_ids
             )
             if not needs_index:
                 continue
@@ -218,7 +275,7 @@ class MemoryManager:
                 if self._index_memory(memory):
                     indexed_memories += 1
                     if vector_ids is not None:
-                        vector_ids.add(memory["id"])
+                        vector_ids.add(memory.id)
                 else:
                     failures += 1
             except Exception:
@@ -254,7 +311,7 @@ class MemoryManager:
         person: Optional[str] = None,
         topic: Optional[str] = None,
         layer: Optional[str] = None,
-    ) -> list[dict]:
+    ) -> list[MemorySearchResult]:
         """
         Retrieve semantically similar memories.
 
@@ -277,7 +334,7 @@ class MemoryManager:
             layer=layer,
         )
 
-    def get_memory_by_key(self, memory_key: str) -> Optional[dict]:
+    def get_memory_by_key(self, memory_key: str) -> MemoryRecord | None:
         """Retrieve one project-owned structured record by stable key."""
 
         return self.memory_store.get_memory_by_key(memory_key)
@@ -293,7 +350,7 @@ class MemoryManager:
         event_time: Optional[int] = None,
         strength: Optional[int] = None,
         expected_revision: Optional[int] = None,
-    ) -> Tuple[bool, str]:
+    ) -> MemoryOperationOutcome:
         """
         Update authoritative memory state and refresh its derived embedding.
 
@@ -309,12 +366,18 @@ class MemoryManager:
             expected_revision: Revision that must still be current (optional)
 
         Returns:
-            Tuple of (success: bool, reason: str)
+            Typed operation outcome
         """
+        if not _is_positive_int(memory_id):
+            return MemoryOperationOutcome(MemoryOperationStatus.MEMORY_NOT_FOUND)
+
         try:
             original_memory = self.memory_store.get_memory_by_id(memory_id)
             if not original_memory:
-                return False, "memory_not_found"
+                return MemoryOperationOutcome(
+                    MemoryOperationStatus.MEMORY_NOT_FOUND,
+                    memory_id=memory_id,
+                )
 
             # Update SQL
             success = self.memory_store.update_memory(
@@ -332,17 +395,29 @@ class MemoryManager:
             if not success:
                 current_memory = self.memory_store.get_memory_by_id(memory_id)
                 if current_memory is None:
-                    return False, "memory_not_found"
+                    return MemoryOperationOutcome(
+                        MemoryOperationStatus.MEMORY_NOT_FOUND,
+                        memory_id=memory_id,
+                    )
                 if (
                     expected_revision is not None
-                    and current_memory["revision"] != expected_revision
+                    and current_memory.revision != expected_revision
                 ):
-                    return False, "memory_revision_conflict"
-                return False, "no_changes"
+                    return MemoryOperationOutcome(
+                        MemoryOperationStatus.MEMORY_REVISION_CONFLICT,
+                        memory_id=memory_id,
+                    )
+                return MemoryOperationOutcome(
+                    MemoryOperationStatus.NO_CHANGES,
+                    memory_id=memory_id,
+                )
 
             current_memory = self.memory_store.get_memory_by_id(memory_id)
             if current_memory is None:
-                return False, "memory_not_found"
+                return MemoryOperationOutcome(
+                    MemoryOperationStatus.MEMORY_NOT_FOUND,
+                    memory_id=memory_id,
+                )
 
             try:
                 if content is not None:
@@ -350,7 +425,7 @@ class MemoryManager:
                 elif self._memory_index_is_current(original_memory):
                     indexed = self.memory_store.mark_memory_indexed(
                         memory_id,
-                        current_memory["revision"],
+                        current_memory.revision,
                     )
                 else:
                     indexed = False
@@ -358,17 +433,27 @@ class MemoryManager:
                 indexed = False
 
             if indexed:
-                return True, "updated_successfully"
-            return True, "updated_pending_index"
+                return MemoryOperationOutcome(
+                    MemoryOperationStatus.UPDATED_SUCCESSFULLY,
+                    memory_id=memory_id,
+                )
+            return MemoryOperationOutcome(
+                MemoryOperationStatus.UPDATED_PENDING_INDEX,
+                memory_id=memory_id,
+            )
 
         except Exception as e:
-            return False, f"update_error: {str(e)}"
+            return MemoryOperationOutcome(
+                MemoryOperationStatus.UPDATE_ERROR,
+                memory_id=memory_id,
+                detail=_exception_detail(e),
+            )
 
     def delete_memory(
         self,
         memory_id: int,
         expected_revision: Optional[int] = None,
-    ) -> Tuple[bool, str]:
+    ) -> MemoryOperationOutcome:
         """
         Delete a memory and its vector.
 
@@ -376,8 +461,11 @@ class MemoryManager:
             memory_id: ID of memory to delete
 
         Returns:
-            Tuple of (success: bool, reason: str)
+            Typed operation outcome
         """
+        if not _is_positive_int(memory_id):
+            return MemoryOperationOutcome(MemoryOperationStatus.MEMORY_NOT_FOUND)
+
         try:
             success = self.memory_store.tombstone_memory(
                 memory_id,
@@ -386,22 +474,41 @@ class MemoryManager:
             if not success:
                 current_memory = self.memory_store.get_memory_by_id(memory_id)
                 if current_memory is not None and expected_revision is not None:
-                    return False, "memory_revision_conflict"
-                return False, "memory_not_found"
+                    return MemoryOperationOutcome(
+                        MemoryOperationStatus.MEMORY_REVISION_CONFLICT,
+                        memory_id=memory_id,
+                    )
+                return MemoryOperationOutcome(
+                    MemoryOperationStatus.MEMORY_NOT_FOUND,
+                    memory_id=memory_id,
+                )
 
             try:
                 self.vector_store.delete_vector(memory_id)
                 if not self.memory_store.purge_tombstone(memory_id):
-                    return True, "deleted_pending_index_cleanup"
+                    return MemoryOperationOutcome(
+                        MemoryOperationStatus.DELETED_PENDING_INDEX_CLEANUP,
+                        memory_id=memory_id,
+                    )
             except Exception:
-                return True, "deleted_pending_index_cleanup"
+                return MemoryOperationOutcome(
+                    MemoryOperationStatus.DELETED_PENDING_INDEX_CLEANUP,
+                    memory_id=memory_id,
+                )
 
-            return True, "deleted_successfully"
+            return MemoryOperationOutcome(
+                MemoryOperationStatus.DELETED_SUCCESSFULLY,
+                memory_id=memory_id,
+            )
 
         except Exception as e:
-            return False, f"delete_error: {str(e)}"
+            return MemoryOperationOutcome(
+                MemoryOperationStatus.DELETE_ERROR,
+                memory_id=memory_id,
+                detail=_exception_detail(e),
+            )
 
-    def process_memory_action(self, action: MemoryAction) -> Tuple[bool, str]:
+    def process_memory_action(self, action: MemoryAction) -> MemoryOperationOutcome:
         """
         Process a proposed memory action from the reasoning engine.
 
@@ -409,60 +516,73 @@ class MemoryManager:
             action: MemoryAction from ReasoningResponse
 
         Returns:
-            Tuple of (success: bool, reason: str)
+            Typed operation outcome
         """
-        action_type = action.action
+        try:
+            return self._apply_memory_action(action)
+        except Exception as error:
+            return MemoryOperationOutcome(
+                MemoryOperationStatus.MEMORY_ACTION_ERROR,
+                detail=_exception_detail(error),
+            )
+
+    def _apply_memory_action(self, action: MemoryAction) -> MemoryOperationOutcome:
+        """Apply one already-validated memory proposal."""
 
         if action.list_operation is not None:
             return self._process_structured_list_action(action)
 
-        if action_type == "store":
+        if action.action == "store":
             assert action.content is not None
             memory_key = action.target.memory_key if action.target is not None else None
-            success, reason, _ = self.store_memory(
+            return self.store_memory(
                 content=action.content,
                 layer="feedback",
                 memory_key=memory_key,
                 validate=False,
             )
-            return success, reason
 
-        elif action_type == "update":
+        elif action.action == "update":
             assert action.content is not None
             assert action.target is not None
             target, error = self._resolve_memory_target(action.target)
             if target is None:
-                return False, error
+                assert error is not None
+                return MemoryOperationOutcome(error)
             return self.update_memory(
-                target["id"],
+                target.id,
                 content=action.content,
                 expected_revision=action.target.expected_revision,
             )
 
-        elif action_type == "delete":
+        elif action.action == "delete":
             assert action.target is not None
             target, error = self._resolve_memory_target(action.target)
             if target is None:
-                return False, error
+                assert error is not None
+                return MemoryOperationOutcome(error)
             return self.delete_memory(
-                target["id"],
+                target.id,
                 expected_revision=action.target.expected_revision,
             )
 
         else:
-            return False, f"unknown_action: {action_type}"
+            return MemoryOperationOutcome(
+                MemoryOperationStatus.UNKNOWN_ACTION,
+                detail=action.action,
+            )
 
     def _process_structured_list_action(
         self,
         action: MemoryAction,
-    ) -> Tuple[bool, str]:
+    ) -> MemoryOperationOutcome:
         operation = action.list_operation
         target = action.target
         assert operation is not None
         assert target is not None
 
         if action.action == "store":
-            success, reason, _ = self.store_memory(
+            return self.store_memory(
                 content=create_structured_list(operation),
                 layer="feedback",
                 memory_key=operation.memory_key,
@@ -471,22 +591,26 @@ class MemoryManager:
                 auto_classify=False,
                 auto_extract=False,
             )
-            return success, reason
 
         memory, error = self._resolve_memory_target(target)
         if memory is None:
-            return False, error
-        if memory.get("memory_key") != operation.memory_key:
-            return False, "structured_list_target_mismatch"
+            assert error is not None
+            return MemoryOperationOutcome(error)
+        if memory.memory_key != operation.memory_key:
+            return MemoryOperationOutcome(
+                MemoryOperationStatus.STRUCTURED_LIST_TARGET_MISMATCH
+            )
 
         updated_content = apply_structured_list_operation(
-            memory["content"],
+            memory.content,
             operation,
         )
         if updated_content is None:
-            return False, "invalid_structured_list_content"
+            return MemoryOperationOutcome(
+                MemoryOperationStatus.INVALID_STRUCTURED_LIST_CONTENT
+            )
         return self.update_memory(
-            memory["id"],
+            memory.id,
             content=updated_content,
             expected_revision=target.expected_revision,
         )
@@ -494,7 +618,7 @@ class MemoryManager:
     def _resolve_memory_target(
         self,
         target: MemoryTarget,
-    ) -> tuple[dict | None, str]:
+    ) -> tuple[MemoryRecord | None, MemoryOperationStatus | None]:
         if target.memory_id is not None:
             memory = self.memory_store.get_memory_by_id(target.memory_id)
         else:
@@ -502,24 +626,21 @@ class MemoryManager:
             memory = self.memory_store.get_memory_by_key(target.memory_key)
 
         if memory is None:
-            return None, "memory_target_not_found"
-        if (
-            target.memory_key is not None
-            and memory.get("memory_key") != target.memory_key
-        ):
-            return None, "memory_target_mismatch"
+            return None, MemoryOperationStatus.MEMORY_TARGET_NOT_FOUND
+        if target.memory_key is not None and memory.memory_key != target.memory_key:
+            return None, MemoryOperationStatus.MEMORY_TARGET_MISMATCH
         if (
             target.expected_revision is not None
-            and memory.get("revision") != target.expected_revision
+            and memory.revision != target.expected_revision
         ):
-            return None, "memory_revision_conflict"
-        return memory, ""
+            return None, MemoryOperationStatus.MEMORY_REVISION_CONFLICT
+        return memory, None
 
     def get_context_memories(
         self,
         query: str,
         context_size: int = 3,
-    ) -> list[dict]:
+    ) -> list[MemorySearchResult]:
         """
         Get relevant memory snippets for context (for reasoning engine).
 
@@ -536,27 +657,37 @@ class MemoryManager:
         except Exception:
             return []
 
-    def get_all_memories(self) -> list[dict]:
+    def get_all_memories(self) -> list[MemoryRecord]:
         """Get all stored memories."""
         return self.retriever.retrieve_all()
 
-    def _index_memory(self, memory: dict) -> bool:
+    def _index_memory(self, memory: MemoryRecord) -> bool:
         """Write one derived vector and mark only its still-current revision."""
 
-        embedding = self.embedding_service.get_embedding(memory["content"])
-        self.vector_store.save_vector(memory["id"], embedding)
+        embedding = self.embedding_service.get_embedding(memory.content)
+        self.vector_store.save_vector(memory.id, embedding)
         return self.memory_store.mark_memory_indexed(
-            memory["id"],
-            memory["revision"],
+            memory.id,
+            memory.revision,
         )
 
-    def _memory_index_is_current(self, memory: dict) -> bool:
+    def _memory_index_is_current(self, memory: MemoryRecord) -> bool:
         """Return whether SQL and the derived vector agree for one revision."""
 
-        revision_is_indexed = memory["indexed_revision"] == memory["revision"]
-        return revision_is_indexed and self.vector_store.has_vector(memory["id"])
+        revision_is_indexed = memory.indexed_revision == memory.revision
+        return revision_is_indexed and self.vector_store.has_vector(memory.id)
 
-    def close(self):
+    def close(self) -> None:
         """Close all storage connections."""
         self.memory_store.close()
         self.vector_store.close()
+
+
+def _is_positive_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _exception_detail(error: Exception) -> str:
+    """Return a non-blank diagnostic without changing the stable status code."""
+
+    return str(error).strip() or error.__class__.__name__

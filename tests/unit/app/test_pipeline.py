@@ -19,6 +19,7 @@ from voice_concierge.app.types import (
 )
 from voice_concierge.audio.types import CapturedAudio
 from voice_concierge.context.types import ContextState
+from voice_concierge.memory import MemoryOperationOutcome, MemoryOperationStatus
 from voice_concierge.reasoning.types import (
     MemoryAction,
     MemoryReference,
@@ -58,7 +59,9 @@ class FakeMemory:
         memories: tuple[MemoryReference, ...] = (),
         *,
         retrieve_error: Exception | None = None,
-        apply_result: tuple[bool, str] = (True, "stored_successfully"),
+        apply_result: MemoryOperationOutcome = MemoryOperationOutcome(
+            MemoryOperationStatus.STORED_SUCCESSFULLY
+        ),
     ) -> None:
         self.memories = memories
         self.retrieve_error = retrieve_error
@@ -79,7 +82,7 @@ class FakeMemory:
             raise self.retrieve_error
         return self.memories
 
-    def apply(self, action: MemoryAction, scope: str) -> tuple[bool, str]:
+    def apply(self, action: MemoryAction, scope: str) -> MemoryOperationOutcome:
         self.apply_calls.append({"action": action, "scope": scope})
         return self.apply_result
 
@@ -379,7 +382,9 @@ def test_pending_memory_confirmation_applies_and_clears_action() -> None:
         pending_memory_action=action,
         pending_memory_scope="personal_relevant",
     )
-    memory = FakeMemory(apply_result=(True, "stored_successfully"))
+    memory = FakeMemory(
+        apply_result=MemoryOperationOutcome(MemoryOperationStatus.STORED_SUCCESSFULLY)
+    )
     pipeline = VoiceConciergePipeline(FakeReasoning(), memory=memory)
 
     result = pipeline.process_transcript("yes please", state)

@@ -38,36 +38,39 @@ class TestMemoryStorageWithExtraction:
         """Test storing memory with automatic metadata extraction enabled."""
         content = "Had lunch with Bob at the Italian restaurant on Friday"
 
-        success, reason, memory_id = manager.store_memory(
+        outcome = manager.store_memory(
             content=content,
             layer="profile",
             auto_extract=True,
             validate=False,
         )
 
-        assert success
-        assert memory_id is not None
-        assert reason == "stored_successfully"
+        assert outcome.succeeded
+        assert outcome.memory_id is not None
+        assert outcome.reason == "stored_successfully"
+        memory = manager.memory_store.get_memory_by_id(outcome.memory_id)
+        assert memory is not None
+        assert isinstance(memory.event_time, int)
 
     def test_store_memory_without_auto_extract(self, manager):
         """Test storing memory with auto-extraction disabled."""
         content = "Had lunch with Bob at the Italian restaurant"
 
-        success, reason, memory_id = manager.store_memory(
+        outcome = manager.store_memory(
             content=content,
             layer="profile",
             auto_extract=False,
             validate=False,
         )
 
-        assert success
-        assert memory_id is not None
+        assert outcome.succeeded
+        assert outcome.memory_id is not None
 
     def test_store_memory_manual_override(self, manager):
         """Test that manually provided metadata overrides auto-extraction."""
         content = "Some memory content"
 
-        success, reason, memory_id = manager.store_memory(
+        outcome = manager.store_memory(
             content=content,
             layer="profile",
             person="ManualPerson",
@@ -77,22 +80,22 @@ class TestMemoryStorageWithExtraction:
             validate=False,
         )
 
-        assert success
-        assert memory_id is not None
+        assert outcome.succeeded
+        assert outcome.memory_id is not None
 
         # Retrieve and verify
         memories = manager.get_all_memories()
-        stored = [m for m in memories if m["id"] == memory_id]
+        stored = [m for m in memories if m.id == outcome.memory_id]
         assert len(stored) == 1
-        assert stored[0]["person"] == "ManualPerson"
-        assert stored[0]["source_type"] == "conversation"
-        assert stored[0]["strength"] == 9
+        assert stored[0].person == "ManualPerson"
+        assert stored[0].source_type == "conversation"
+        assert stored[0].strength == 9
 
     def test_store_memory_with_validation_and_extraction(self, manager):
         """Test storing memory with both validation and auto-extraction enabled."""
         content = "Learned that Alice joined the product team at work"
 
-        success, reason, memory_id = manager.store_memory(
+        outcome = manager.store_memory(
             content=content,
             layer="profile",
             validate=True,
@@ -101,14 +104,14 @@ class TestMemoryStorageWithExtraction:
         )
 
         # May fail if validator rejects, but the call should not error
-        assert isinstance(success, bool)
-        assert isinstance(reason, str)
-        if success:
-            assert memory_id is not None
+        assert isinstance(outcome.succeeded, bool)
+        assert isinstance(outcome.reason, str)
+        if outcome.succeeded:
+            assert outcome.memory_id is not None
 
     def test_auto_extract_with_empty_content(self, manager):
         """Test auto-extraction handles empty content gracefully."""
-        success, reason, memory_id = manager.store_memory(
+        outcome = manager.store_memory(
             content="",
             layer="profile",
             auto_extract=True,
@@ -116,4 +119,5 @@ class TestMemoryStorageWithExtraction:
         )
 
         # Should fail validation if validate=True, but test with validate=False
-        assert not success or memory_id is not None
+        assert not outcome.succeeded
+        assert outcome.memory_id is None

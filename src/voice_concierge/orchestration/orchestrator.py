@@ -13,7 +13,6 @@ from voice_concierge.app.types import AppPipelineState, AppTurnResult
 from voice_concierge.context import ContextManager, ContextState
 from voice_concierge.orchestration.types import (
     MemoryGateway,
-    MemoryOperationResult,
     SpeechGateway,
     TurnError,
     TurnResult,
@@ -83,11 +82,7 @@ class ConciergeOrchestrator:
             spoken_response=app_result.spoken_response,
             reasoning_response=reasoning_response,
             speech_succeeded=speech_succeeded,
-            memory_operation=MemoryOperationResult(
-                attempted=app_result.memory_operation.attempted,
-                succeeded=app_result.memory_operation.succeeded,
-                reason=app_result.memory_operation.reason,
-            ),
+            memory_operation=app_result.memory_operation,
             errors=tuple(errors),
         )
 

@@ -16,6 +16,18 @@ from voice_concierge.memory.memory_manager import (
 from voice_concierge.memory.memory_retriever import MemoryRetriever
 from voice_concierge.memory.memory_store import MemoryStore
 from voice_concierge.memory.memory_validator import MemoryValidator
+from voice_concierge.memory.types import (
+    ExtractedMemoryMetadata,
+    MemoryOperationOutcome,
+    MemoryOperationStatus,
+    MemoryRecord,
+    MemorySearchResult,
+    MemoryUpdate,
+    MemoryWrite,
+    VectorSearchResult,
+    normalize_event_time,
+    normalize_memory_strength,
+)
 from voice_concierge.memory.vector_store import VectorStore
 
 __all__ = [
@@ -24,12 +36,22 @@ __all__ = [
     "DEFAULT_MEMORY_DB_PATH",
     "DEFAULT_VECTOR_DB_PATH",
     "EmbeddingService",
+    "ExtractedMemoryMetadata",
     "IndexReconciliationResult",
     "LocalMemoryConfig",
     "MemoryManager",
+    "MemoryOperationOutcome",
+    "MemoryOperationStatus",
+    "MemoryRecord",
     "MemoryRetriever",
+    "MemorySearchResult",
     "MemoryStore",
+    "MemoryUpdate",
     "MemoryValidator",
+    "MemoryWrite",
     "VectorStore",
+    "VectorSearchResult",
     "build_memory_manager",
+    "normalize_event_time",
+    "normalize_memory_strength",
 ]

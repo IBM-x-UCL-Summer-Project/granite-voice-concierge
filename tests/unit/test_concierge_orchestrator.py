@@ -6,6 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tests.support import memory_reference
 from voice_concierge.context import ContextState
+from voice_concierge.memory import MemoryOperationOutcome, MemoryOperationStatus
 from voice_concierge.orchestration import ConciergeOrchestrator
 from voice_concierge.reasoning.types import (
     MemoryAction,
@@ -22,7 +23,9 @@ class RecordingMemoryGateway:
         self.memories = memories
         self.retrieve_calls: list[tuple[str, str, int]] = []
         self.apply_calls: list[tuple[MemoryAction, str]] = []
-        self.apply_result = (True, "stored_successfully")
+        self.apply_result = MemoryOperationOutcome(
+            MemoryOperationStatus.STORED_SUCCESSFULLY
+        )
 
     def retrieve(
         self,
@@ -33,7 +36,7 @@ class RecordingMemoryGateway:
         self.retrieve_calls.append((query, scope, limit))
         return self.memories
 
-    def apply(self, action: MemoryAction, scope: str) -> tuple[bool, str]:
+    def apply(self, action: MemoryAction, scope: str) -> MemoryOperationOutcome:
         self.apply_calls.append((action, scope))
         return self.apply_result
 
@@ -334,7 +337,9 @@ class ConciergeOrchestratorTest(unittest.TestCase):
             requires_confirmation=True,
         )
         memory = RecordingMemoryGateway()
-        memory.apply_result = (False, "storage_error")
+        memory.apply_result = MemoryOperationOutcome(
+            MemoryOperationStatus.STORAGE_ERROR
+        )
         reasoning = RecordingReasoningEngine(
             ReasoningResponse(
                 spoken_response="I'll remember that after you confirm.",

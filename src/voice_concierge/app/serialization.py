@@ -287,9 +287,13 @@ def reasoning_result_to_dict(result: AppTurnResult) -> JsonDict | None:
 def memory_operation_to_dict(operation: MemoryOperationResult) -> JsonDict:
     """Serialize the result of a pending memory operation."""
 
+    outcome = operation.outcome
     return {
         "attempted": operation.attempted,
         "succeeded": operation.succeeded,
+        "status": outcome.status.value if outcome is not None else None,
+        "memory_id": outcome.memory_id if outcome is not None else None,
+        "detail": outcome.detail if outcome is not None else None,
         "reason": operation.reason,
     }
 

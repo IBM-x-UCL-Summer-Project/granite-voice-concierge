@@ -203,6 +203,33 @@ A web backend wrapper should convert it to a browser-friendly representation
 such as the optional `audio` object shown below.
 
 ```ts
+type MemoryOperationStatus =
+  | 'stored_successfully'
+  | 'stored_pending_index'
+  | 'duplicate_key'
+  | 'duplicate_found'
+  | 'validation_failed'
+  | 'storage_error'
+  | 'updated_successfully'
+  | 'updated_pending_index'
+  | 'memory_not_found'
+  | 'memory_revision_conflict'
+  | 'no_changes'
+  | 'update_error'
+  | 'deleted_successfully'
+  | 'deleted_pending_index_cleanup'
+  | 'delete_error'
+  | 'memory_action_error'
+  | 'memory_target_not_found'
+  | 'memory_target_mismatch'
+  | 'structured_list_target_mismatch'
+  | 'invalid_structured_list_content'
+  | 'unknown_action'
+  | 'memory_not_configured'
+  | 'memory_scope_none'
+  | 'structured_list_scope_mismatch'
+  | 'memory_gateway_error';
+
 type AppTurnResponse = {
   state: AppPipelineState;
 
@@ -252,6 +279,9 @@ type AppTurnResponse = {
   memory_operation: {
     attempted: boolean;
     succeeded: boolean;
+    status: MemoryOperationStatus | null;
+    memory_id: number | null;
+    detail: string | null;
     reason: string;
   };
 
@@ -264,6 +294,11 @@ type AppTurnResponse = {
   } | null;
 };
 ```
+
+When `memory_operation.attempted` is true, `status` is the stable
+machine-readable memory status and `succeeded` is derived from that status.
+`memory_id` and `detail` carry optional structured context. `reason` is retained
+as a display/logging string; clients should not parse it to make decisions.
 
 ## Error Codes
 
@@ -320,6 +355,9 @@ Response:
   "memory_operation": {
     "attempted": false,
     "succeeded": false,
+    "status": null,
+    "memory_id": null,
+    "detail": null,
     "reason": ""
   },
   "errors": [],
