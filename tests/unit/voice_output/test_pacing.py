@@ -202,3 +202,131 @@ class TestBackendBuilders:
         paced = build_paced_text_to_speech(rate=SpeechRate(0))
 
         assert paced.rate.words_per_minute == PACE_LADDER[0]
+
+
+@pytest.mark.unit
+class TestRememberingThePace:
+    """A user who asked to slow down should not have to ask again next time."""
+
+    def test_a_changed_pace_is_saved_and_restored(self, tmp_path) -> None:
+        from voice_concierge.voice_output.factory import (
+            build_paced_text_to_speech,
+            say_backend_builder,
+        )
+
+        path = tmp_path / "speech-pace.json"
+        first = build_paced_text_to_speech(say_backend_builder(), pace_path=path)
+        first.slower()
+        first.slower()
+
+        second = build_paced_text_to_speech(say_backend_builder(), pace_path=path)
+
+        assert second.rate.level == first.rate.level
+        assert second.rate.level == DEFAULT_PACE_LEVEL - 2
+
+    def test_without_persistence_the_pace_resets(self, tmp_path) -> None:
+        from voice_concierge.voice_output.factory import (
+            build_paced_text_to_speech,
+            say_backend_builder,
+        )
+
+        path = tmp_path / "speech-pace.json"
+        first = build_paced_text_to_speech(
+            say_backend_builder(), persist=False, pace_path=path
+        )
+        first.slower()
+
+        second = build_paced_text_to_speech(
+            say_backend_builder(), persist=False, pace_path=path
+        )
+
+        assert second.rate.level == DEFAULT_PACE_LEVEL
+
+    def test_an_explicit_rate_wins_over_the_remembered_one(self, tmp_path) -> None:
+        from voice_concierge.voice_output.factory import (
+            build_paced_text_to_speech,
+            say_backend_builder,
+        )
+
+        path = tmp_path / "speech-pace.json"
+        build_paced_text_to_speech(say_backend_builder(), pace_path=path).slower()
+
+        forced = build_paced_text_to_speech(
+            say_backend_builder(), rate=SpeechRate(4), pace_path=path
+        )
+
+        assert forced.rate.level == 4
+
+    def test_on_change_fires_even_at_the_end_of_the_ladder(self) -> None:
+        """The caller persists without having to work out whether it moved."""
+        seen: list[int] = []
+        paced = PacedTextToSpeech(
+            lambda wpm: _Backend(wpm),
+            rate=SpeechRate(0),
+            on_change=lambda rate: seen.append(rate.level),
+        )
+
+        paced.slower()
+
+        assert seen == [0]
+
+    def test_restoring_a_rate_does_not_write_it_back(self) -> None:
+        seen: list[int] = []
+        paced = PacedTextToSpeech(
+            lambda wpm: _Backend(wpm), on_change=lambda rate: seen.append(rate.level)
+        )
+
+        paced.set_rate(SpeechRate(0))
+
+        assert seen == []  # restoring what was saved is not a change
+
+
+@pytest.mark.unit
+class TestPaceStore:
+    def test_a_missing_file_falls_back_to_the_default(self, tmp_path) -> None:
+        from voice_concierge.voice_output.pace_store import load_rate
+
+        assert load_rate(tmp_path / "absent.json").level == DEFAULT_PACE_LEVEL
+
+    def test_a_corrupt_file_falls_back_rather_than_failing(self, tmp_path) -> None:
+        """A bad preferences file must not stop the assistant speaking."""
+        from voice_concierge.voice_output.pace_store import load_rate
+
+        path = tmp_path / "speech-pace.json"
+        path.write_text("not json at all")
+
+        assert load_rate(path).level == DEFAULT_PACE_LEVEL
+
+    def test_a_file_missing_the_level_falls_back(self, tmp_path) -> None:
+        from voice_concierge.voice_output.pace_store import load_rate
+
+        path = tmp_path / "speech-pace.json"
+        path.write_text('{"words_per_minute": 140}')
+
+        assert load_rate(path).level == DEFAULT_PACE_LEVEL
+
+    def test_a_level_off_the_current_ladder_falls_back(self, tmp_path) -> None:
+        """A file written by a build with more rungs must not crash this one."""
+        from voice_concierge.voice_output.pace_store import load_rate
+
+        path = tmp_path / "speech-pace.json"
+        path.write_text('{"level": 99}')
+
+        assert load_rate(path).level == DEFAULT_PACE_LEVEL
+
+    def test_saving_then_loading_round_trips(self, tmp_path) -> None:
+        from voice_concierge.voice_output.pace_store import load_rate, save_rate
+
+        path = tmp_path / "nested" / "speech-pace.json"
+
+        assert save_rate(SpeechRate(1), path) is True
+        assert load_rate(path).level == 1
+
+    def test_an_unwritable_path_is_reported_not_raised(self, tmp_path) -> None:
+        """Failing to remember a preference must not interrupt the conversation."""
+        from voice_concierge.voice_output.pace_store import save_rate
+
+        blocked = tmp_path / "afile"
+        blocked.write_text("x")  # a file where a directory would need to be
+
+        assert save_rate(SpeechRate(1), blocked / "child" / "pace.json") is False

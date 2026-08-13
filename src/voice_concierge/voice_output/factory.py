@@ -2,9 +2,15 @@
 
 # Standard library
 from collections.abc import Callable
+from pathlib import Path
 
 # Local
 from voice_concierge.voice_output.interfaces import TextToSpeech
+from voice_concierge.voice_output.pace_store import (
+    DEFAULT_PACE_PATH,
+    load_rate,
+    save_rate,
+)
 from voice_concierge.voice_output.pacing import (
     DEFAULT_PACE_LEVEL,
     PACE_LADDER,
@@ -69,6 +75,23 @@ def build_paced_text_to_speech(
     build_backend: Callable[[int], TextToSpeech] | None = None,
     *,
     rate: SpeechRate | None = None,
+    persist: bool = True,
+    pace_path: Path | str = DEFAULT_PACE_PATH,
 ) -> PacedTextToSpeech:
-    """Build a voice whose speaking rate the user can change by saying so."""
-    return PacedTextToSpeech(build_backend or piper_backend_builder(), rate=rate)
+    """Build a voice whose speaking rate the user can change by saying so.
+
+    With persist set, the rate is restored from the last session and saved again
+    whenever it changes, so someone who has asked the assistant to slow down
+    does not have to ask again every time it starts. Saving is best effort: a
+    preferences file that cannot be written costs the memory of the setting, not
+    the ability to change it now.
+
+    An explicit rate wins over the remembered one, which is what a caller
+    forcing a rate for a test or a demo means.
+    """
+    starting = rate if rate is not None else (load_rate(pace_path) if persist else None)
+    return PacedTextToSpeech(
+        build_backend or piper_backend_builder(),
+        rate=starting,
+        on_change=(lambda moved: save_rate(moved, pace_path)) if persist else None,
+    )

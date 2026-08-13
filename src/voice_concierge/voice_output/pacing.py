@@ -94,10 +94,12 @@ class PacedTextToSpeech:
         build_backend: Callable[[int], TextToSpeech],
         *,
         rate: SpeechRate | None = None,
+        on_change: Callable[[SpeechRate], None] | None = None,
     ) -> None:
         self._build_backend = build_backend
         self._rate = rate or SpeechRate()
         self._backends: dict[int, TextToSpeech] = {}
+        self._on_change = on_change
 
     @property
     def rate(self) -> SpeechRate:
@@ -113,7 +115,11 @@ class PacedTextToSpeech:
         return self._move(self._rate.faster())
 
     def set_rate(self, rate: SpeechRate) -> None:
-        """Jump straight to a rung, for restoring a remembered preference."""
+        """Jump straight to a rung, for restoring a remembered preference.
+
+        Does not notify on_change: restoring what was already saved would be a
+        pointless write, and this is how a remembered pace is applied on start.
+        """
         self._rate = rate
 
     def synthesize(self, text: str) -> CapturedAudio:
@@ -126,4 +132,8 @@ class PacedTextToSpeech:
 
     def _move(self, target: SpeechRate) -> str:
         previous, self._rate = self._rate, target
+        # Notified even when the ladder did not move, so a caller that persists
+        # the preference does not have to work out whether anything changed.
+        if self._on_change is not None:
+            self._on_change(target)
         return acknowledgement(previous, target)
