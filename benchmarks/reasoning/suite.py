@@ -43,6 +43,8 @@ class BenchmarkEvaluation:
     needs_confirmation: bool
     proposed_memory_action: str | None
     confidence: str
+    required_information_source: str
+    freshness_requirement: str
     metadata: dict[str, str]
     passed_checks: bool
     issues: tuple[str, ...]
@@ -65,6 +67,8 @@ class BenchmarkResult:
     needs_confirmation: bool
     proposed_memory_action: str | None
     confidence: str
+    required_information_source: str
+    freshness_requirement: str
     metadata: dict[str, str]
     passed_checks: bool
     issues: tuple[str, ...]
@@ -177,6 +181,10 @@ def run_reasoning_benchmark(
                 needs_confirmation=primary_evaluation.needs_confirmation,
                 proposed_memory_action=primary_evaluation.proposed_memory_action,
                 confidence=primary_evaluation.confidence,
+                required_information_source=(
+                    primary_evaluation.required_information_source
+                ),
+                freshness_requirement=primary_evaluation.freshness_requirement,
                 metadata=primary_evaluation.metadata,
                 passed_checks=primary_evaluation.passed_checks,
                 issues=primary_evaluation.issues,
@@ -251,6 +259,8 @@ def _evaluate_response(
         max_words=max_words,
         needs_confirmation=response.needs_confirmation,
         proposed_memory_action=proposed_action,
+        required_information_source=response.required_information_source,
+        freshness_requirement=response.freshness_requirement,
     )
     return BenchmarkEvaluation(
         spoken_response=response.spoken_response,
@@ -258,6 +268,8 @@ def _evaluate_response(
         needs_confirmation=response.needs_confirmation,
         proposed_memory_action=proposed_action,
         confidence=response.confidence,
+        required_information_source=response.required_information_source,
+        freshness_requirement=response.freshness_requirement,
         metadata=response.metadata,
         passed_checks=not issues,
         issues=tuple(issues),
@@ -296,6 +308,8 @@ def _evaluate_case(
     max_words: int,
     needs_confirmation: bool,
     proposed_memory_action: str | None,
+    required_information_source: str,
+    freshness_requirement: str,
 ) -> list[str]:
     issues: list[str] = []
     checks = case.checks or {}
@@ -317,6 +331,20 @@ def _evaluate_case(
         expected_action = checks["memory_action"]
         if proposed_memory_action != expected_action:
             issues.append(f"memory_action_expected_{expected_action}")
+
+    expected_source = checks.get("information_source")
+    if (
+        isinstance(expected_source, str)
+        and required_information_source != expected_source
+    ):
+        issues.append(f"information_source_expected_{expected_source}")
+
+    expected_freshness = checks.get("freshness_requirement")
+    if (
+        isinstance(expected_freshness, str)
+        and freshness_requirement != expected_freshness
+    ):
+        issues.append(f"freshness_requirement_expected_{expected_freshness}")
 
     required_any = checks.get("must_contain_any")
     if isinstance(required_any, list) and required_any:

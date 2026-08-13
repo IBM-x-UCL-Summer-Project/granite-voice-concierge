@@ -39,6 +39,8 @@
   },
   "reasoning": {
     "confidence": "high",
+    "required_information_source": "user_input",
+    "freshness_requirement": "not_required",
     "needs_confirmation": true,
     "proposed_memory_action": {
       "action": "store",

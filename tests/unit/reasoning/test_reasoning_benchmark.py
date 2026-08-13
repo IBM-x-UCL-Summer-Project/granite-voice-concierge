@@ -28,7 +28,7 @@ def test_prompt_suite_loads_all_cases() -> None:
     suite = load_prompt_suite(PROMPT_SUITE)
     cases = list(iter_benchmark_cases(suite))
 
-    assert len(cases) == 15
+    assert len(cases) == 19
     assert cases[0].case_id == "cooking_scrambled_eggs_first_step"
     assert cases[0].category == "cooking"
     assert cases[0].mode == "cooking"
@@ -42,15 +42,17 @@ def test_benchmark_report_contains_core_metrics() -> None:
 
     assert report["suite"]["name"] == "reasoning_prompts_v0"
     assert report["engine"] == "DeterministicReasoningFake"
-    assert report["total_cases"] == 15
+    assert report["total_cases"] == 19
     assert report["elapsed_ms"] >= 0
-    assert len(report["results"]) == 15
+    assert len(report["results"]) == 19
 
     first_result = report["results"][0]
     assert first_result["case_id"] == "cooking_scrambled_eggs_first_step"
     assert first_result["latency_ms"] >= 0
     assert first_result["response_words"] > 0
     assert "spoken_response" in first_result
+    assert "required_information_source" in first_result
+    assert "freshness_requirement" in first_result
     assert "passed_checks" in first_result
     assert "issues" in first_result
 
@@ -78,6 +80,31 @@ def test_benchmark_report_flags_failed_checks() -> None:
     result = report["results"][0]
     assert result["passed_checks"] is False
     assert "memory_action_expected_store" in result["issues"]
+
+
+def test_benchmark_report_checks_information_source_and_freshness() -> None:
+    suite = {
+        "name": "test_suite",
+        "categories": {
+            "information_policy": [
+                {
+                    "transcript": "Is the pharmacy open?",
+                    "mode": "home",
+                    "expected_behavior": "Require current external information.",
+                    "checks": {
+                        "information_source": "external_live",
+                        "freshness_requirement": "current",
+                    },
+                }
+            ]
+        },
+    }
+
+    report = run_reasoning_benchmark(DeterministicReasoningFake(), suite)
+
+    issues = report["results"][0]["issues"]
+    assert "information_source_expected_external_live" in issues
+    assert "freshness_requirement_expected_current" in issues
 
 
 def test_benchmark_report_checks_all_required_terms() -> None:

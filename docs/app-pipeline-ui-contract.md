@@ -195,6 +195,14 @@ type AppTurnResponse = {
 
   reasoning: {
     confidence: 'low' | 'medium' | 'high';
+    required_information_source:
+      | 'none'
+      | 'user_input'
+      | 'local_context'
+      | 'stable_knowledge'
+      | 'runtime_live'
+      | 'external_live';
+    freshness_requirement: 'not_required' | 'current';
     needs_confirmation: boolean;
     proposed_memory_action: AppPipelineState['pending_memory_action'];
     mode_suggestion: string | null;

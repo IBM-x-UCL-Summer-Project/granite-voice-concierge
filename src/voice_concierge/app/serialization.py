@@ -255,6 +255,8 @@ def reasoning_result_to_dict(result: AppTurnResult) -> JsonDict | None:
     response = result.reasoning_result.response
     return {
         "confidence": response.confidence,
+        "required_information_source": response.required_information_source,
+        "freshness_requirement": response.freshness_requirement,
         "needs_confirmation": response.needs_confirmation,
         "proposed_memory_action": memory_action_to_dict(
             response.proposed_memory_action

@@ -46,6 +46,7 @@ class SmokeReasoningService:
                         rationale="Smoke runner detected a remember request.",
                     ),
                     confidence="high",
+                    required_information_source="user_input",
                 )
             )
 
@@ -56,6 +57,7 @@ class SmokeReasoningService:
                         "I found this in local memory: " f"{turn_context.memories[0]}"
                     ),
                     confidence="high",
+                    required_information_source="local_context",
                 )
             )
 

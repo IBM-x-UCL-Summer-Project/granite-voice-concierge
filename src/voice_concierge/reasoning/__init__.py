@@ -52,6 +52,8 @@ from voice_concierge.reasoning.prompting import (
     load_prompt_template,
 )
 from voice_concierge.reasoning.types import (
+    FreshnessRequirement,
+    InformationSource,
     MemoryAction,
     ReasoningConstraints,
     ReasoningRequest,
@@ -71,6 +73,8 @@ __all__ = [
     "DeterministicReasoningFake",
     "LocalModelDetails",
     "LocalModelInfo",
+    "FreshnessRequirement",
+    "InformationSource",
     "MemoryAction",
     "ModelDownloadProgress",
     "ModelManager",

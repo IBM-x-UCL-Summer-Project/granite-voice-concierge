@@ -18,6 +18,15 @@ from typing import Literal
 
 Confidence = Literal["low", "medium", "high"]
 MemoryActionKind = Literal["store", "delete", "update"]
+InformationSource = Literal[
+    "none",
+    "user_input",
+    "local_context",
+    "stable_knowledge",
+    "runtime_live",
+    "external_live",
+]
+FreshnessRequirement = Literal["not_required", "current"]
 
 
 @dataclass(frozen=True)
@@ -107,6 +116,10 @@ class ReasoningResponse:
     mode_suggestion: str | None = None
     #: Coarse confidence level for routing, logging, or fallback decisions.
     confidence: Confidence = "medium"
+    #: Source required to fulfil this request, declared by the reasoning backend.
+    required_information_source: InformationSource = "none"
+    #: Whether correctness depends on the information being current.
+    freshness_requirement: FreshnessRequirement = "not_required"
     #: Backend-specific diagnostics that should not affect core behavior.
     metadata: dict[str, str] = field(default_factory=dict)
 

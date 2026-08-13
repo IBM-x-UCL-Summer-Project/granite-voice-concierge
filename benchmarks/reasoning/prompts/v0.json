@@ -42,6 +42,18 @@
           "must_contain_all": ["whisk", "eggs"]
         },
         "notes": "This checks use of supplied conversation context. It does not require persistent memory."
+      },
+      {
+        "id": "cooking_now_with_local_ingredients",
+        "transcript": "What can I cook at the moment?",
+        "mode": "cooking",
+        "memories": ["Available ingredients: eggs, tomato, cheese."],
+        "expected_behavior": "Use supplied ingredients without treating conversational immediacy as a live-data request.",
+        "checks": {
+          "information_source": "local_context",
+          "freshness_requirement": "not_required",
+          "must_contain_any": ["eggs", "tomato", "cheese"]
+        }
       }
     ],
     "shopping": [
@@ -52,7 +64,9 @@
         "expected_behavior": "Propose a list update and confirm before saving.",
         "checks": {
           "needs_confirmation": true,
-          "memory_action": "update",
+          "memory_action": "store",
+          "information_source": "user_input",
+          "freshness_requirement": "not_required",
           "must_contain_any": ["confirm", "before I save", "should I save"]
         },
         "notes": "The spoken response should not imply that the list was already changed."
@@ -65,6 +79,7 @@
         "expected_behavior": "Say that no shopping list was supplied or saved; do not invent items.",
         "checks": {
           "memory_action": null,
+          "information_source": "local_context",
           "must_contain_any": ["no", "not", "don't", "do not", "not have", "not saved"]
         },
         "notes": "This is an unavailable-context test, not a memory retrieval test."
@@ -77,6 +92,7 @@
         "expected_behavior": "Read the supplied shopping-list memory without proposing a memory change.",
         "checks": {
           "memory_action": null,
+          "information_source": "local_context",
           "must_contain_all": ["milk", "bread"]
         },
         "notes": "This checks use of supplied memory. It does not test memory retrieval."
@@ -90,7 +106,9 @@
         "expected_behavior": "Ask for confirmation before storing the preference.",
         "checks": {
           "needs_confirmation": true,
-          "memory_action": "store"
+          "memory_action": "store",
+          "information_source": "user_input",
+          "freshness_requirement": "not_required"
         },
         "notes": "Reasoning may propose the memory write, but memory storage owns execution."
       },
@@ -101,9 +119,34 @@
         "expected_behavior": "Ask for confirmation before deleting a local memory.",
         "checks": {
           "needs_confirmation": true,
-          "memory_action": "delete"
+          "memory_action": "delete",
+          "information_source": "user_input"
         },
         "notes": "Reasoning may propose the memory deletion, but memory storage owns confirmation and execution."
+      },
+      {
+        "id": "memory_store_relative_date_fact",
+        "transcript": "Remember my appointment this afternoon.",
+        "mode": "home",
+        "expected_behavior": "Treat the appointment as a user-supplied fact and confirm before storing it.",
+        "checks": {
+          "needs_confirmation": true,
+          "memory_action": "store",
+          "information_source": "user_input",
+          "freshness_requirement": "not_required"
+        }
+      },
+      {
+        "id": "memory_lookup_is_not_a_supplied_fact",
+        "transcript": "Remember whether the pharmacy is open at the moment.",
+        "mode": "home",
+        "expected_behavior": "Do not store an unresolved lookup; identify that current external information is required.",
+        "checks": {
+          "memory_action": null,
+          "information_source": "external_live",
+          "freshness_requirement": "current",
+          "must_contain_any": ["offline", "cannot", "verify"]
+        }
       }
     ],
     "supplied_memory_use": [
@@ -115,6 +158,7 @@
         "expected_behavior": "Recall the injected memory without inventing extra facts.",
         "checks": {
           "memory_action": null,
+          "information_source": "local_context",
           "must_contain_any": ["short", "brief", "concise"]
         },
         "notes": "This verifies use of supplied memory only. It does not test memory retrieval."
@@ -129,6 +173,8 @@
         "expected_behavior": "Answer a stable public fact from built-in model knowledge without requiring local memory.",
         "checks": {
           "memory_action": null,
+          "information_source": "stable_knowledge",
+          "freshness_requirement": "not_required",
           "must_contain_any": ["diarist", "holocaust", "jewish"],
           "must_not_contain_any": ["current memory", "local memory"]
         },
@@ -142,10 +188,25 @@
         "expected_behavior": "Decline to verify current or upcoming release-date information while offline.",
         "checks": {
           "memory_action": null,
+          "information_source": "external_live",
+          "freshness_requirement": "current",
           "must_contain_any": ["offline", "up-to-date", "current", "verify"],
           "must_not_contain_any": ["current memory", "local memory"]
         },
         "notes": "This should not be answered from stale model knowledge or framed as a missing memory."
+      },
+      {
+        "id": "general_knowledge_live_status_paraphrase",
+        "transcript": "Is the pharmacy open at the moment?",
+        "mode": "home",
+        "memories": [],
+        "expected_behavior": "Classify the request as requiring current external information regardless of its temporal wording.",
+        "checks": {
+          "memory_action": null,
+          "information_source": "external_live",
+          "freshness_requirement": "current",
+          "must_contain_any": ["offline", "cannot", "verify"]
+        }
       }
     ],
     "accessibility": [
@@ -156,7 +217,8 @@
         "expected_behavior": "Acknowledge a speech or response-style preference and ask before saving it.",
         "checks": {
           "needs_confirmation": true,
-          "memory_action": "update"
+          "memory_action": "update",
+          "information_source": "user_input"
         },
         "notes": "Current policy treats accessibility profile changes as updates to the user's local profile."
       },
@@ -167,7 +229,8 @@
         "expected_behavior": "Acknowledge a response-length preference and ask before saving it.",
         "checks": {
           "needs_confirmation": true,
-          "memory_action": "update"
+          "memory_action": "update",
+          "information_source": "user_input"
         },
         "notes": "If this is later treated as a one-turn style request, this expected action should change."
       }
@@ -197,6 +260,8 @@
         "expected_behavior": "State that web access is unavailable in offline mode.",
         "checks": {
           "memory_action": null,
+          "information_source": "external_live",
+          "freshness_requirement": "current",
           "must_contain_any": ["offline", "internet", "unable", "cannot", "can't"]
         },
         "notes": "The assistant should not claim it searched or can browse."

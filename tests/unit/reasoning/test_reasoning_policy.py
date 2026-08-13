@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from voice_concierge.reasoning.policy import apply_reasoning_policy_guards
 from voice_concierge.reasoning.types import (
     MemoryAction,
@@ -114,13 +116,15 @@ def test_policy_guard_blocks_time_sensitive_info_without_context() -> None:
         ReasoningResponse(
             spoken_response="It is coming out next month.",
             confidence="medium",
+            required_information_source="external_live",
+            freshness_requirement="current",
         ),
     )
 
     assert response.spoken_response == "I cannot verify up-to-date information offline."
     assert response.needs_confirmation is False
     assert response.proposed_memory_action is None
-    assert response.metadata["policy_guard"] == "offline_time_sensitive_info"
+    assert response.metadata["policy_guard"] == ("external_source_unavailable_offline")
 
 
 def test_policy_guard_blocks_time_sensitive_info_with_unrelated_memory() -> None:
@@ -132,11 +136,13 @@ def test_policy_guard_blocks_time_sensitive_info_with_unrelated_memory() -> None
         ReasoningResponse(
             spoken_response="Your saved note says the release is tomorrow.",
             confidence="medium",
+            required_information_source="external_live",
+            freshness_requirement="current",
         ),
     )
 
     assert response.spoken_response == "I cannot verify up-to-date information offline."
-    assert response.metadata["policy_guard"] == "offline_time_sensitive_info"
+    assert response.metadata["policy_guard"] == ("external_source_unavailable_offline")
 
 
 def test_policy_guard_uses_relevant_local_time_sensitive_context() -> None:
@@ -148,16 +154,20 @@ def test_policy_guard_uses_relevant_local_time_sensitive_context() -> None:
         ReasoningResponse(
             spoken_response="It is coming out on 26 May.",
             confidence="medium",
+            required_information_source="local_context",
+            freshness_requirement="current",
         ),
     )
 
     assert response.spoken_response == (
-        "Your local information says: Saved GTA date: 26 May. "
+        "According to your local information: It is coming out on 26 May. "
         "I cannot verify whether it is current."
     )
     assert response.needs_confirmation is False
     assert response.proposed_memory_action is None
-    assert response.metadata["policy_guard"] == "supplied_time_sensitive_context"
+    assert response.metadata["policy_guard"] == (
+        "unverified_current_supplied_information"
+    )
 
 
 def test_policy_guard_uses_relevant_conversation_summary() -> None:
@@ -169,14 +179,37 @@ def test_policy_guard_uses_relevant_conversation_summary() -> None:
         ReasoningResponse(
             spoken_response="The parcel is delayed.",
             confidence="medium",
+            required_information_source="local_context",
+            freshness_requirement="current",
         ),
     )
 
     assert response.spoken_response == (
-        "Your local information says: The local delivery note says parcel delayed. "
+        "According to your local information: The parcel is delayed. "
         "I cannot verify whether it is current."
     )
-    assert response.metadata["policy_guard"] == "supplied_time_sensitive_context"
+    assert response.metadata["policy_guard"] == (
+        "unverified_current_supplied_information"
+    )
+
+
+def test_policy_guard_attributes_current_information_supplied_by_user() -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(transcript="The road is closed; is that still our plan?"),
+        ReasoningResponse(
+            spoken_response="The road is closed.",
+            required_information_source="user_input",
+            freshness_requirement="current",
+        ),
+    )
+
+    assert response.spoken_response == (
+        "Based on what you told me: The road is closed. "
+        "I cannot verify whether it is current."
+    )
+    assert response.metadata["policy_guard"] == (
+        "unverified_current_supplied_information"
+    )
 
 
 def test_policy_guard_allows_user_supplied_appointment_today() -> None:
@@ -185,6 +218,7 @@ def test_policy_guard_allows_user_supplied_appointment_today() -> None:
         ReasoningResponse(
             spoken_response="I cannot verify up-to-date information offline.",
             confidence="medium",
+            required_information_source="user_input",
         ),
     )
 
@@ -199,6 +233,7 @@ def test_policy_guard_allows_cooking_now_from_local_ingredients() -> None:
     original = ReasoningResponse(
         spoken_response="You can make a tomato and cheese omelette.",
         confidence="medium",
+        required_information_source="local_context",
     )
 
     response = apply_reasoning_policy_guards(
@@ -219,11 +254,13 @@ def test_policy_guard_still_blocks_current_weather() -> None:
         ReasoningResponse(
             spoken_response="It is sunny.",
             confidence="medium",
+            required_information_source="external_live",
+            freshness_requirement="current",
         ),
     )
 
     assert response.spoken_response == "I cannot verify up-to-date information offline."
-    assert response.metadata["policy_guard"] == "offline_time_sensitive_info"
+    assert response.metadata["policy_guard"] == ("external_source_unavailable_offline")
 
 
 def test_policy_guard_still_blocks_current_clock_time() -> None:
@@ -232,17 +269,23 @@ def test_policy_guard_still_blocks_current_clock_time() -> None:
         ReasoningResponse(
             spoken_response="It is three o'clock.",
             confidence="medium",
+            required_information_source="runtime_live",
+            freshness_requirement="current",
         ),
     )
 
-    assert response.spoken_response == "I cannot verify up-to-date information offline."
-    assert response.metadata["policy_guard"] == "offline_time_sensitive_info"
+    assert response.spoken_response == (
+        "I do not have live device information for that request."
+    )
+    assert response.metadata["policy_guard"] == "runtime_source_unavailable"
 
 
 def test_policy_guard_applies_offline_guard_only_when_required() -> None:
     original = ReasoningResponse(
         spoken_response="The caller supplied the current answer.",
         confidence="medium",
+        required_information_source="external_live",
+        freshness_requirement="current",
     )
 
     response = apply_reasoning_policy_guards(
@@ -254,6 +297,75 @@ def test_policy_guard_applies_offline_guard_only_when_required() -> None:
     )
 
     assert response is original
+
+
+@pytest.mark.parametrize(
+    "transcript",
+    (
+        "Remember what the weather is today.",
+        "Save whether the pharmacy is open at the moment.",
+        "Note when the next bus will arrive.",
+    ),
+)
+def test_policy_guard_never_stores_a_live_information_lookup(transcript) -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(transcript=transcript),
+        ReasoningResponse(
+            spoken_response="I can save that.",
+            needs_confirmation=True,
+            proposed_memory_action=MemoryAction(
+                action="store",
+                content="Unverified current information.",
+                rationale="Model attempted to store a lookup result.",
+            ),
+            required_information_source="external_live",
+            freshness_requirement="current",
+        ),
+    )
+
+    assert response.spoken_response == "I cannot verify up-to-date information offline."
+    assert response.needs_confirmation is False
+    assert response.proposed_memory_action is None
+
+
+def test_policy_guard_rejects_lookup_complement_without_source_classification() -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(transcript="Remember what the weather is today."),
+        ReasoningResponse(spoken_response="Okay.", confidence="medium"),
+    )
+
+    assert response.spoken_response == (
+        "I need the information itself before I can remember it."
+    )
+    assert response.proposed_memory_action is None
+    assert response.metadata["policy_guard"] == (
+        "memory_store_requires_supplied_content"
+    )
+
+
+@pytest.mark.parametrize(
+    "transcript",
+    (
+        "Is the pharmacy open at the moment?",
+        "How are the roads as things stand?",
+        "Has the parcel arrived yet?",
+        "Give me the newest score.",
+    ),
+)
+def test_policy_guard_blocks_live_source_independent_of_temporal_wording(
+    transcript,
+) -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(transcript=transcript),
+        ReasoningResponse(
+            spoken_response="Unverified live answer.",
+            required_information_source="external_live",
+            freshness_requirement="current",
+        ),
+    )
+
+    assert response.spoken_response == "I cannot verify up-to-date information offline."
+    assert response.metadata["policy_guard"] == ("external_source_unavailable_offline")
 
 
 def test_policy_guard_does_not_treat_bread_as_read_request() -> None:
@@ -406,13 +518,30 @@ def test_policy_guard_targets_task_list_delete_by_stable_key() -> None:
 def test_policy_guard_adds_memory_store_action() -> None:
     response = apply_reasoning_policy_guards(
         ReasoningRequest(transcript="Remember that I prefer short answers."),
-        ReasoningResponse(spoken_response="Understood.", confidence="medium"),
+        ReasoningResponse(
+            spoken_response="Understood.",
+            confidence="medium",
+            required_information_source="user_input",
+        ),
     )
 
     assert response.needs_confirmation is True
     assert response.proposed_memory_action is not None
     assert response.proposed_memory_action.action == "store"
     assert response.proposed_memory_action.content == "I prefer short answers"
+
+
+def test_policy_guard_requires_user_input_source_for_memory_fact() -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(transcript="Remember that I prefer short answers."),
+        ReasoningResponse(spoken_response="Understood.", confidence="medium"),
+    )
+
+    assert response.needs_confirmation is False
+    assert response.proposed_memory_action is None
+    assert response.metadata["policy_guard"] == (
+        "memory_store_requires_user_input_source"
+    )
 
 
 def test_policy_guard_adds_memory_delete_action() -> None:

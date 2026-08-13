@@ -23,9 +23,37 @@ It contains:
 - `proposed_memory_action`: optional proposed store/update/delete operation;
 - `mode_suggestion`: optional future mode switch hint;
 - `confidence`: coarse confidence label;
+- `required_information_source`: typed provenance required to fulfil the turn;
+- `freshness_requirement`: whether correctness depends on current information;
 - `metadata`: backend-specific details.
 
 The reasoning layer should propose memory actions. It should not directly write to memory.
+
+### Information provenance policy
+
+Freshness policy is based on the source required to fulfil the user's intent,
+not on individual words such as relative dates or adverbs. The structured
+reasoning boundary declares one of these sources:
+
+- `none`: no factual information is required;
+- `user_input`: the user supplied the fact or command in this turn;
+- `local_context`: supplied memory or conversation summary contains the answer;
+- `stable_knowledge`: non-current general knowledge is sufficient;
+- `runtime_live`: current device or application state is required;
+- `external_live`: current real-world information is required.
+
+`freshness_requirement` is `current` only when live accuracy is necessary to
+fulfil the request. The deterministic information policy validates that the
+declared source is available: external live data is rejected under offline
+constraints, runtime state is rejected until such context is explicitly
+provided, missing local context fails closed, and current claims based only on
+stable knowledge are rejected. Current information supplied by the user or
+local context is attributed with a freshness caveat.
+
+Memory commands have an additional invariant: a direct store is created only
+for content classified as supplied by the user. A lookup phrased as a memory
+command must first obtain the information from an allowed source; the unresolved
+lookup text itself is never stored as a fact.
 
 `validate_reasoning_request()` owns public request validation. Engines call it
 before prompt construction or backend calls. It rejects empty transcripts or
@@ -195,9 +223,11 @@ The selected prompt ID and version are recorded in each Ollama response's
 benchmark metadata.
 
 The benchmark report includes per-prompt latency, response word count,
-confirmation flags, proposed memory action type, confidence, and backend
-metadata. Ollama reports can also retain raw and guarded evaluations from the
-same model generation:
+confirmation flags, proposed memory action type, confidence, declared
+information source, freshness requirement, and backend metadata. Prompt checks
+can assert the expected source and freshness so model regressions are visible.
+Ollama reports can also retain raw and guarded evaluations from the same model
+generation:
 
 ```bash
 .venv/bin/python -m benchmarks.reasoning.benchmark \
@@ -222,9 +252,10 @@ The Ollama backend requests schema constrained JSON from the local model. A
 single Pydantic boundary model generates the JSON schema sent to Ollama and
 validates the returned content. The validated result is mapped into `ReasoningResponse`,
 including `needs_confirmation`, `proposed_memory_action`, `mode_suggestion`, and
-`confidence`. If the model returns invalid JSON or misses required fields, the
-backend returns a low confidence fallback and records the parse problem in
-response metadata.
+`confidence`, as well as the required information source and freshness. If the
+model returns invalid JSON or misses required fields, the backend fails closed
+with a generic low-confidence response and records the parse problem in response
+metadata.
 
 The Ollama backend also applies deterministic policy guards after parsing model output. These guards do not store, retrieve, edit, or delete memory. They only correct the reasoning response when a simple local policy should not depend on model compliance, such as confirming accessibility preference changes or refusing to invent a shopping list when no list memory was supplied.
 

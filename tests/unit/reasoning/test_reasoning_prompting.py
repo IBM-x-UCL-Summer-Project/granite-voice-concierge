@@ -54,7 +54,10 @@ def test_granite_messages_include_offline_policy() -> None:
     assert "no internet or cloud service" in system_prompt
     assert "stable public facts" in system_prompt
     assert "built-in general knowledge" in system_prompt
-    assert "cannot verify up-to-date information offline" in system_prompt
+    assert "information source required" in system_prompt
+    assert "freshness_requirement" in system_prompt
+    assert "external_live" in system_prompt
+    assert "classify the source and intent" in system_prompt
     assert "Do not claim to browse" in system_prompt
     assert "Ask for explicit confirmation" in system_prompt
     assert "Structured output examples" in system_prompt

@@ -126,6 +126,15 @@ class _StructuredReasoningResponse(BaseModel):
     proposed_memory_action: _StructuredMemoryAction | None
     mode_suggestion: str | None
     confidence: Literal["low", "medium", "high"]
+    required_information_source: Literal[
+        "none",
+        "user_input",
+        "local_context",
+        "stable_knowledge",
+        "runtime_live",
+        "external_live",
+    ]
+    freshness_requirement: Literal["not_required", "current"]
 
     @field_validator("mode_suggestion", mode="before")
     @classmethod
@@ -252,7 +261,9 @@ class OllamaReasoningEngine:
             )
             if invalid_json:
                 return ReasoningResponse(
-                    spoken_response=content,
+                    spoken_response=(
+                        "I could not produce a valid structured response."
+                    ),
                     confidence="low",
                     metadata={
                         **metadata,
@@ -504,6 +515,8 @@ def _response_from_structured_payload(
         proposed_memory_action=proposed_memory_action,
         mode_suggestion=payload.mode_suggestion,
         confidence=payload.confidence,
+        required_information_source=payload.required_information_source,
+        freshness_requirement=payload.freshness_requirement,
         metadata=metadata,
     )
 

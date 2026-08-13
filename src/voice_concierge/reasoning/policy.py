@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 
+from voice_concierge.reasoning.information_policy import decide_information_policy
 from voice_concierge.reasoning.types import (
     MemoryAction,
     ReasoningRequest,
@@ -49,32 +51,34 @@ def apply_reasoning_policy_guards(
             guard="supplied_shopping_list_memory",
         )
 
-    if (
-        request.constraints.offline
-        and not memory_write_requested
-        and _time_sensitive_info_requested(text)
-    ):
-        supplied_context = _relevant_time_sensitive_context(request)
-        if supplied_context is not None:
-            return _replace_response(
-                response,
-                spoken_response=(
-                    f"Your local information says: {supplied_context} "
-                    "I cannot verify whether it is current."
-                ),
-                needs_confirmation=False,
-                proposed_memory_action=None,
-                confidence="high",
-                guard="supplied_time_sensitive_context",
-            )
-
+    information_decision = decide_information_policy(request, response)
+    if not information_decision.allowed:
+        assert information_decision.spoken_response is not None
         return _replace_response(
             response,
-            spoken_response="I cannot verify up-to-date information offline.",
+            spoken_response=information_decision.spoken_response,
             needs_confirmation=False,
             proposed_memory_action=None,
             confidence="high",
-            guard="offline_time_sensitive_info",
+            guard=information_decision.disposition,
+        )
+
+    if information_decision.attribution_prefix is not None:
+        spoken_response = (
+            f"{information_decision.attribution_prefix} "
+            f"{response.spoken_response.rstrip()}"
+        )
+        if not _has_freshness_caveat(spoken_response):
+            spoken_response = (
+                f"{spoken_response} I cannot verify whether it is current."
+            )
+        response = replace(
+            response,
+            spoken_response=spoken_response,
+            metadata={
+                **response.metadata,
+                "policy_guard": "unverified_current_supplied_information",
+            },
         )
 
     if _memory_recall_requested(text) and request.memories:
@@ -232,6 +236,37 @@ def apply_reasoning_policy_guards(
         )
 
     if memory_write_requested:
+        if not _memory_request_supplies_content(transcript):
+            if response.required_information_source in {
+                "user_input",
+                "local_context",
+                "stable_knowledge",
+            } and _has_confirmed_action_response(response, "store"):
+                return response
+
+            return _replace_response(
+                response,
+                spoken_response=(
+                    "I need the information itself before I can remember it."
+                ),
+                needs_confirmation=False,
+                proposed_memory_action=None,
+                confidence="high",
+                guard="memory_store_requires_supplied_content",
+            )
+
+        if response.required_information_source != "user_input":
+            return _replace_response(
+                response,
+                spoken_response=(
+                    "I could not verify that you supplied a fact to remember."
+                ),
+                needs_confirmation=False,
+                proposed_memory_action=None,
+                confidence="high",
+                guard="memory_store_requires_user_input_source",
+            )
+
         content = _memory_candidate(transcript)
         if _has_confirmed_action_response(
             response,
@@ -328,6 +363,8 @@ def _replace_response(
         proposed_memory_action=proposed_memory_action,
         mode_suggestion=response.mode_suggestion,
         confidence=confidence,
+        required_information_source=response.required_information_source,
+        freshness_requirement=response.freshness_requirement,
         metadata={**response.metadata, "policy_guard": guard},
     )
 
@@ -339,100 +376,6 @@ def _shopping_list_read_requested(text: str) -> bool:
             text,
         )
     )
-
-
-def _time_sensitive_info_requested(text: str) -> bool:
-    if re.search(
-        r"\b(weather|forecast|news|headlines?|prices?|stock|scores?|traffic)\b"
-        r"|\b(exchange rates?|opening hours?|live status)\b",
-        text,
-    ):
-        return True
-
-    if re.search(
-        r"\b(what time is it|what is the time|what's the time|current time|"
-        r"today's date|todays date|what's today's date|what's todays date|"
-        r"what (day|date) is it|what is the (day|date))\b",
-        text,
-    ):
-        return True
-
-    if re.search(r"\b(open|closed|happening)\b", text) and re.search(
-        r"\b(now|today|currently|live)\b", text
-    ):
-        return True
-
-    if re.search(
-        r"\b(current|currently|latest|newest|recent|live)\b", text
-    ) and re.search(
-        r"\b(version|release|price|cost|schedule|status|availability|"
-        r"president|prime minister|ceo|population)\b",
-        text,
-    ):
-        return True
-
-    if re.search(r"\b(upcoming|next)\b", text) and re.search(
-        r"\b(release|released|coming out|launch|available|date|game|movie|show)\b",
-        text,
-    ):
-        return True
-
-    return bool(
-        re.search(r"\b(when|what date)\b", text)
-        and re.search(r"\b(release|released|coming out|launch)\b", text)
-    )
-
-
-def _relevant_time_sensitive_context(request: ReasoningRequest) -> str | None:
-    query_terms = _context_terms(request.transcript)
-    if not query_terms:
-        return None
-
-    candidates = list(request.memories)
-    if request.conversation_summary:
-        candidates.append(request.conversation_summary)
-
-    for candidate in candidates:
-        if query_terms.intersection(_context_terms(candidate)):
-            return candidate
-    return None
-
-
-def _context_terms(text: str) -> set[str]:
-    ignored = {
-        "about",
-        "coming",
-        "could",
-        "current",
-        "currently",
-        "does",
-        "from",
-        "have",
-        "information",
-        "latest",
-        "next",
-        "please",
-        "recent",
-        "release",
-        "released",
-        "says",
-        "that",
-        "their",
-        "there",
-        "today",
-        "tomorrow",
-        "what",
-        "when",
-        "where",
-        "which",
-        "with",
-        "your",
-    }
-    return {
-        word
-        for word in re.findall(r"[a-z0-9]+", text.lower())
-        if len(word) >= 3 and word not in ignored
-    }
 
 
 def _shopping_list_memory(memories: tuple[str, ...]) -> str | None:
@@ -541,6 +484,19 @@ def _memory_write_requested(text: str) -> bool:
     return bool(re.search(r"\b(remember|save|note)\b", text))
 
 
+def _memory_request_supplies_content(transcript: str) -> bool:
+    candidate = _memory_candidate(transcript).lower()
+    if candidate.endswith("?"):
+        return False
+    return not bool(
+        re.match(
+            r"^(what|who|when|where|why|how|whether|if)\b"
+            r"|^(find|check|look up|get|tell me)\b",
+            candidate,
+        )
+    )
+
+
 def memory_delete_target(transcript: str) -> str | None:
     """Return the requested local-memory delete target, if one is explicit."""
 
@@ -577,6 +533,17 @@ def _has_confirmation_wording(text: str) -> bool:
             r"|\bshould i save\b"
             r"|\bwould you like me to save\b"
             r"|\bif you want me to save\b",
+            normalized,
+        )
+    )
+
+
+def _has_freshness_caveat(text: str) -> bool:
+    normalized = text.lower()
+    return bool(
+        re.search(
+            r"\b(cannot|can't|unable to)\b.*\b(verify|confirm)\b.*\bcurrent\b"
+            r"|\bmay not be current\b",
             normalized,
         )
     )
