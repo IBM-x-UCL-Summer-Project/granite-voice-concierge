@@ -9,7 +9,9 @@ from voice_concierge.memory import (
     MemoryOperationOutcome,
     MemoryOperationStatus,
     MemoryRecord,
+    MemoryScope,
     MemorySearchResult,
+    MemorySimilarityAdvisory,
     MemoryUpdate,
     MemoryWrite,
     VectorSearchResult,
@@ -69,6 +71,13 @@ def test_search_result_keeps_distance_out_of_authoritative_record() -> None:
     assert not hasattr(record, "distance")
 
 
+def test_memory_scope_treats_none_as_an_exact_value() -> None:
+    scope = MemoryScope(layer="profile", topic=None)
+
+    assert scope.contains(_record(layer="profile", topic=None)) is True
+    assert scope.contains(_record(layer="profile", topic="preference")) is False
+
+
 @pytest.mark.parametrize("distance", (-0.1, math.nan, math.inf))
 def test_vector_result_rejects_invalid_distance(distance: float) -> None:
     with pytest.raises(ValueError, match="finite non-negative"):
@@ -100,6 +109,26 @@ def test_failure_status_cannot_disagree_with_success_flag() -> None:
 
     assert outcome.succeeded is False
     assert outcome.reason == "storage_error: database unavailable"
+
+
+def test_operation_outcome_carries_typed_similarity_advisories() -> None:
+    advisory = MemorySimilarityAdvisory(memory_id=4, distance=0.05)
+    outcome = MemoryOperationOutcome(
+        MemoryOperationStatus.STORED_SUCCESSFULLY,
+        memory_id=5,
+        similarity_advisories=(advisory,),
+    )
+
+    assert outcome.succeeded is True
+    assert outcome.similarity_advisories == (advisory,)
+
+
+def test_operation_outcome_rejects_untyped_similarity_advisories() -> None:
+    with pytest.raises(TypeError, match="MemorySimilarityAdvisory"):
+        MemoryOperationOutcome(
+            MemoryOperationStatus.STORED_SUCCESSFULLY,
+            similarity_advisories=({"memory_id": 4, "distance": 0.05},),
+        )
 
 
 def test_operation_outcome_requires_enum_status() -> None:

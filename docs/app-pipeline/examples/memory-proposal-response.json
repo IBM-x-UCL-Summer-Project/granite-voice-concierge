@@ -57,6 +57,7 @@
     "status": null,
     "memory_id": null,
     "detail": null,
+    "similarity_advisories": [],
     "reason": ""
   },
   "errors": [],

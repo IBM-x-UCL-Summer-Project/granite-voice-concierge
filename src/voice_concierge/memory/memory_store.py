@@ -6,6 +6,7 @@ import pysqlite3 as sqlite3
 
 from voice_concierge.memory.types import (
     MemoryRecord,
+    MemoryScope,
     MemoryUpdate,
     MemoryWrite,
     normalize_event_time,
@@ -202,6 +203,34 @@ class MemoryStore:
 
         query += " ORDER BY created_at DESC"
         rows = self.cur.execute(query, params).fetchall()
+        return [MemoryRecord.from_mapping(row) for row in rows]
+
+    def get_memories_in_scope(self, scope: MemoryScope) -> list[MemoryRecord]:
+        """Return active records in one exact metadata scope.
+
+        Unlike the optional filters in :meth:`get_memories`, ``None`` is a
+        meaningful scope value here rather than a wildcard.
+        """
+
+        if not isinstance(scope, MemoryScope):
+            raise TypeError("Exact memory lookup requires a MemoryScope.")
+        rows = self.cur.execute(
+            """
+            SELECT * FROM memories
+            WHERE deleted_at IS NULL
+              AND layer = ?
+              AND person IS ?
+              AND source_type IS ?
+              AND topic IS ?
+            ORDER BY created_at DESC, id DESC
+            """,
+            (
+                scope.layer,
+                scope.person,
+                scope.source_type,
+                scope.topic,
+            ),
+        ).fetchall()
         return [MemoryRecord.from_mapping(row) for row in rows]
 
     def close(self) -> None:

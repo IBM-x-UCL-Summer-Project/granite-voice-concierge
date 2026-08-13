@@ -33,6 +33,7 @@ def test_run_smoke_turns_maintains_state_across_memory_confirmation() -> None:
         "status": "stored_successfully",
         "memory_id": 1,
         "detail": None,
+        "similarity_advisories": [],
         "reason": "stored_successfully",
     }
     assert second_response["state"]["pending_memory_action"] is None

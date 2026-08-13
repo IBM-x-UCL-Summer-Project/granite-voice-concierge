@@ -16,6 +16,7 @@ from voice_concierge.app.serialization import (
     app_turn_request_to_dict,
     app_turn_result_to_dict,
     captured_audio_to_dict,
+    memory_operation_to_dict,
 )
 from voice_concierge.app.types import (
     AppPipelineState,
@@ -32,6 +33,11 @@ from voice_concierge.context.types import (
     AccessibilityProfile,
     ContextDecision,
     ContextState,
+)
+from voice_concierge.memory import (
+    MemoryOperationOutcome,
+    MemoryOperationStatus,
+    MemorySimilarityAdvisory,
 )
 from voice_concierge.reasoning.types import (
     MemoryAction,
@@ -247,10 +253,39 @@ def test_app_turn_result_to_dict_matches_frontend_shape() -> None:
             "status": None,
             "memory_id": None,
             "detail": None,
+            "similarity_advisories": [],
             "reason": "",
         },
         "errors": ["tts_failed"],
         "audio": None,
+    }
+
+
+def test_memory_operation_serializes_similarity_as_advisory_evidence() -> None:
+    operation = MemoryOperationResult(
+        attempted=True,
+        outcome=MemoryOperationOutcome(
+            MemoryOperationStatus.STORED_SUCCESSFULLY,
+            memory_id=8,
+            similarity_advisories=(
+                MemorySimilarityAdvisory(memory_id=3, distance=0.04),
+            ),
+        ),
+    )
+
+    assert memory_operation_to_dict(operation) == {
+        "attempted": True,
+        "succeeded": True,
+        "status": "stored_successfully",
+        "memory_id": 8,
+        "detail": None,
+        "similarity_advisories": [
+            {
+                "memory_id": 3,
+                "distance": 0.04,
+            }
+        ],
+        "reason": "stored_successfully",
     }
 
 

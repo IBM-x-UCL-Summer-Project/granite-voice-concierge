@@ -660,7 +660,7 @@ class TestMemoryValidation:
 
 
 class TestDuplicatePrevention:
-    """Test duplicate memory prevention."""
+    """Test deterministic prevention and non-blocking semantic evidence."""
 
     def test_duplicate_count_stays_same(self, memory_manager):
         """Adding same memory twice should keep count at 1."""
@@ -671,6 +671,8 @@ class TestDuplicatePrevention:
             content=content,
             layer="profile",
             validate=False,
+            auto_classify=False,
+            auto_extract=False,
             check_duplicates=False,  # First one, no check
         )
         assert first_outcome.succeeded is True
@@ -678,11 +680,13 @@ class TestDuplicatePrevention:
         all_memories = memory_manager.get_all_memories()
         assert len(all_memories) == 1
 
-        # Store second time (same content)
+        # Store second time with harmless text variation.
         second_outcome = memory_manager.store_memory(
-            content=content,
+            content="  I PREFER\nTEA  ",
             layer="profile",
             validate=False,
+            auto_classify=False,
+            auto_extract=False,
             check_duplicates=True,  # Check for duplicates
         )
 
@@ -694,12 +698,64 @@ class TestDuplicatePrevention:
         all_memories = memory_manager.get_all_memories()
         assert len(all_memories) == 1
 
-    @pytest.mark.skip(reason="Requires real embeddings for semantic similarity")
-    def test_store_different_increases_count(self, memory_manager):
-        """Adding different memory should increase count."""
-        # This test requires actual vector embeddings to distinguish different content
-        # With fake_embedding_service (all zeros), all memories appear identical
-        pass
+    def test_semantic_match_in_same_scope_is_advisory_not_rejection(
+        self,
+        memory_manager,
+    ):
+        """Embedding proximity must not veto distinct content."""
+
+        first_outcome = memory_manager.store_memory(
+            content="I prefer tea",
+            layer="profile",
+            topic="preference",
+            validate=False,
+            auto_classify=False,
+            auto_extract=False,
+        )
+        second_outcome = memory_manager.store_memory(
+            content="I prefer coffee",
+            layer="profile",
+            topic="preference",
+            validate=False,
+            auto_classify=False,
+            auto_extract=False,
+        )
+
+        assert second_outcome.status is MemoryOperationStatus.STORED_SUCCESSFULLY
+        assert second_outcome.succeeded is True
+        assert len(memory_manager.get_all_memories()) == 2
+        assert len(second_outcome.similarity_advisories) == 1
+        advisory = second_outcome.similarity_advisories[0]
+        assert advisory.memory_id == first_outcome.memory_id
+        assert advisory.distance == 0.0
+
+    def test_semantic_match_does_not_cross_metadata_scope(self, memory_manager):
+        """Unrelated domains must not influence one another's writes."""
+
+        preference_outcome = memory_manager.store_memory(
+            content="I prefer tea",
+            layer="profile",
+            topic="preference",
+            validate=False,
+            auto_classify=False,
+            auto_extract=False,
+        )
+        shopping_outcome = memory_manager.store_memory(
+            content="Milk",
+            layer="feedback",
+            topic="shopping",
+            validate=False,
+            auto_classify=False,
+            auto_extract=False,
+        )
+
+        assert preference_outcome.succeeded is True
+        assert shopping_outcome.succeeded is True
+        assert shopping_outcome.similarity_advisories == ()
+        assert {memory.content for memory in memory_manager.get_all_memories()} == {
+            "Milk",
+            "I prefer tea",
+        }
 
     def test_disable_duplicate_check_allows_duplicates(self, memory_manager):
         """Disabling check allows storing duplicates."""

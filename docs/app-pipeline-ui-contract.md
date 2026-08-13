@@ -282,6 +282,10 @@ type AppTurnResponse = {
     status: MemoryOperationStatus | null;
     memory_id: number | null;
     detail: string | null;
+    similarity_advisories: Array<{
+      memory_id: number;
+      distance: number;
+    }>;
     reason: string;
   };
 
@@ -297,8 +301,11 @@ type AppTurnResponse = {
 
 When `memory_operation.attempted` is true, `status` is the stable
 machine-readable memory status and `succeeded` is derived from that status.
-`memory_id` and `detail` carry optional structured context. `reason` is retained
-as a display/logging string; clients should not parse it to make decisions.
+`memory_id` and `detail` carry optional structured context.
+`similarity_advisories` reports semantically close existing records from the
+same metadata scope after a successful store; it is evidence only and never a
+write rejection. `reason` is retained as a display/logging string; clients
+should not parse it to make decisions.
 
 ## Error Codes
 
@@ -358,6 +365,7 @@ Response:
     "status": null,
     "memory_id": null,
     "detail": null,
+    "similarity_advisories": [],
     "reason": ""
   },
   "errors": [],

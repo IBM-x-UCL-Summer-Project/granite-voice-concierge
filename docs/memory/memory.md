@@ -49,7 +49,9 @@ validated `MemoryRecord` instances, vector search returns
 instead of adding a `distance` key to a storage dictionary. Mutations return
 `MemoryOperationOutcome`; callers branch on its `MemoryOperationStatus` and
 `succeeded` properties instead of positional tuple fields or parsing reason
-strings. The app gateway converts records to reasoning-owned
+strings. Successful stores may also carry typed `MemorySimilarityAdvisory`
+values; these are evidence for a caller and never change write success. The app
+gateway converts records to reasoning-owned
 `MemoryReference` values. Validator/model metadata is normalized through
 `ExtractedMemoryMetadata` before it can reach the SQL write boundary.
 
@@ -118,8 +120,18 @@ outcome = manager.store_memory(
     validate: bool = True,               # Whether to validate with LLM
     auto_classify: bool = True,          # Whether to auto-classify memory type
     auto_extract: bool = True,           # Whether to auto-extract metadata
+    check_duplicates: bool = True,       # Exact deduplication and advisories
+    memory_key: Optional[str] = None,     # Stable scoped identity when available
 )
 ```
+
+Duplicate enforcement is deterministic. A live `memory_key` is unique, and
+unkeyed content is considered the same only after case/whitespace normalization
+within the same `layer`, `person`, `source_type`, `topic`, and `event_time`.
+Semantic similarity never rejects a store. The nearest qualifying result from
+the same metadata scope is returned as advisory evidence after the new memory is
+stored. In particular, a shopping item cannot be rejected because it resembles
+a profile preference.
 
 **Return values:**
 
@@ -127,6 +139,8 @@ outcome = manager.store_memory(
 - `MemoryOperationOutcome.succeeded`: whether the authoritative operation succeeded
 - `MemoryOperationOutcome.memory_id`: affected memory ID, when available
 - `MemoryOperationOutcome.detail`: optional diagnostic detail
+- `MemoryOperationOutcome.similarity_advisories`: non-blocking scoped semantic
+  matches, each with an existing memory ID and vector distance
 - `MemoryOperationOutcome.reason`: display string derived from status and detail
 
 **Example:**
@@ -162,6 +176,9 @@ else:
 - `"stored_successfully"` - Successfully stored
 - `"stored_pending_index"` - Authoritative SQL was stored and vector indexing
   will be retried by reconciliation
+- `"duplicate_key"` - The explicit stable key already exists
+- `"duplicate_found"` - Normalized exact content already exists in the same
+  complete scope; semantic similarity alone never produces this status
 - `"validation_failed: llm_rejected"` - LLM rejected
 - `"validation_failed: too_short"` - Content too short
 - `"storage_error: ..."` - Storage error

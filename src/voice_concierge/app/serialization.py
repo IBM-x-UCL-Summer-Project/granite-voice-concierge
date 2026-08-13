@@ -294,6 +294,17 @@ def memory_operation_to_dict(operation: MemoryOperationResult) -> JsonDict:
         "status": outcome.status.value if outcome is not None else None,
         "memory_id": outcome.memory_id if outcome is not None else None,
         "detail": outcome.detail if outcome is not None else None,
+        "similarity_advisories": (
+            [
+                {
+                    "memory_id": advisory.memory_id,
+                    "distance": advisory.distance,
+                }
+                for advisory in outcome.similarity_advisories
+            ]
+            if outcome is not None
+            else []
+        ),
         "reason": operation.reason,
     }
 

@@ -17,7 +17,9 @@ from voice_concierge.memory.types import (
     MemoryOperationOutcome,
     MemoryOperationStatus,
     MemoryRecord,
+    MemoryScope,
     MemorySearchResult,
+    MemorySimilarityAdvisory,
 )
 from voice_concierge.memory.vector_store import VectorStore
 from voice_concierge.reasoning.types import MemoryAction, MemoryTarget
@@ -63,22 +65,36 @@ class MemoryManager:
         content: str,
         threshold: float = 0.85,
         top_k: int = 5,
+        *,
+        scope: MemoryScope | None = None,
     ) -> MemorySearchResult | None:
         """
-        Find semantically similar existing memory.
+        Find semantically similar existing memory, optionally within a scope.
 
         Args:
             content: Memory content to match
             threshold: Similarity threshold (0-1), higher = more strict
             top_k: Number of candidates to check
+            scope: Exact metadata boundary for eligible candidates
 
         Returns:
             Most similar typed search result above the threshold, else None
         """
         try:
-            results = self.retrieve_similar(content, top_k=top_k)
-            if results and results[0].distance < (1.0 - threshold):
-                return results[0]
+            search_limit = top_k
+            if scope is not None:
+                active_count = len(self.memory_store.get_memories())
+                search_limit = max(top_k, active_count)
+            results = self.retrieve_similar(
+                content,
+                top_k=search_limit,
+            )
+            for result in results:
+                if scope is not None and not scope.contains(result.memory):
+                    continue
+                if result.distance < (1.0 - threshold):
+                    return result
+                break
             return None
         except Exception:
             return None
@@ -100,7 +116,10 @@ class MemoryManager:
     ) -> MemoryOperationOutcome:
         """
         Store a memory after validation and optional auto-classification.
-        Prevents duplicate/similar memories from being stored.
+
+        Stable keys and normalized exact content within one metadata scope can
+        enforce uniqueness. Semantic similarity is retained only as scoped,
+        non-blocking advisory evidence on a successful write.
 
         Args:
             content: Memory content
@@ -113,7 +132,8 @@ class MemoryManager:
             validate: Whether to validate with LLM first
             auto_classify: Whether to auto-classify memory type
             auto_extract: Whether to auto-extract metadata
-            check_duplicates: Whether to check for duplicates (default: True)
+            check_duplicates: Whether to enforce scoped exact duplicates and
+                collect semantic similarity advisories (default: True)
             memory_key: Stable key for an exact structured-memory record
 
         Returns:
@@ -143,17 +163,6 @@ class MemoryManager:
                     MemoryOperationStatus.DUPLICATE_KEY,
                     memory_id=keyed_memory.id,
                     detail=f"memory_id={keyed_memory.id}",
-                )
-
-        # Check for semantic duplicates if enabled for unkeyed stores.
-        if check_duplicates and memory_key is None:
-            similar = self.find_similar_memory(content, threshold=0.9)
-            if similar:
-                memory_id = similar.memory.id
-                return MemoryOperationOutcome(
-                    MemoryOperationStatus.DUPLICATE_FOUND,
-                    memory_id=memory_id,
-                    detail=f"memory_id={memory_id}",
                 )
 
         # Validate if enabled
@@ -201,6 +210,45 @@ class MemoryManager:
             if memory_type:
                 classified_topic = memory_type.value
 
+        similarity_advisories: tuple[MemorySimilarityAdvisory, ...] = ()
+        if check_duplicates and memory_key is None:
+            scope = MemoryScope(
+                layer=layer,
+                person=person,
+                source_type=source_type,
+                topic=classified_topic,
+            )
+            try:
+                duplicate = self._find_exact_duplicate(
+                    content,
+                    scope=scope,
+                    event_time=event_time,
+                )
+            except Exception as error:
+                return MemoryOperationOutcome(
+                    MemoryOperationStatus.STORAGE_ERROR,
+                    detail=_exception_detail(error),
+                )
+            if duplicate is not None:
+                return MemoryOperationOutcome(
+                    MemoryOperationStatus.DUPLICATE_FOUND,
+                    memory_id=duplicate.id,
+                    detail=f"memory_id={duplicate.id}",
+                )
+
+            similar = self.find_similar_memory(
+                content,
+                scope=scope,
+                threshold=0.9,
+            )
+            if similar is not None:
+                similarity_advisories = (
+                    MemorySimilarityAdvisory(
+                        memory_id=similar.memory.id,
+                        distance=similar.distance,
+                    ),
+                )
+
         try:
             memory_id = self.memory_store.create_memory(
                 content=content,
@@ -224,13 +272,32 @@ class MemoryManager:
                 return MemoryOperationOutcome(
                     MemoryOperationStatus.STORED_SUCCESSFULLY,
                     memory_id=memory_id,
+                    similarity_advisories=similarity_advisories,
                 )
         except Exception:
             pass
         return MemoryOperationOutcome(
             MemoryOperationStatus.STORED_PENDING_INDEX,
             memory_id=memory_id,
+            similarity_advisories=similarity_advisories,
         )
+
+    def _find_exact_duplicate(
+        self,
+        content: str,
+        *,
+        scope: MemoryScope,
+        event_time: int | None,
+    ) -> MemoryRecord | None:
+        """Find deterministic content identity without crossing scopes."""
+
+        normalized_content = _normalize_content_identity(content)
+        for memory in self.memory_store.get_memories_in_scope(scope):
+            if memory.event_time != event_time:
+                continue
+            if _normalize_content_identity(memory.content) == normalized_content:
+                return memory
+        return None
 
     def reconcile_index(self) -> IndexReconciliationResult:
         """Repair derived vectors and finish tombstoned deletions safely."""
@@ -691,3 +758,9 @@ def _exception_detail(error: Exception) -> str:
     """Return a non-blank diagnostic without changing the stable status code."""
 
     return str(error).strip() or error.__class__.__name__
+
+
+def _normalize_content_identity(content: str) -> str:
+    """Canonicalize harmless text variation for deterministic deduplication."""
+
+    return " ".join(content.split()).casefold()

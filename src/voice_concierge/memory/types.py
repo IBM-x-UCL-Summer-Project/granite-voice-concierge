@@ -69,6 +69,37 @@ class MemoryRecord:
 
 
 @dataclass(frozen=True)
+class MemoryScope:
+    """Metadata boundary that separates independently meaningful memories."""
+
+    layer: str
+    person: str | None = None
+    source_type: str | None = None
+    topic: str | None = None
+
+    def __post_init__(self) -> None:
+        _require_nonblank_string(self.layer, "Memory scope layer")
+        _require_optional_nonblank_string(self.person, "Memory scope person")
+        _require_optional_nonblank_string(
+            self.source_type,
+            "Memory scope source type",
+        )
+        _require_optional_nonblank_string(self.topic, "Memory scope topic")
+
+    def contains(self, memory: MemoryRecord) -> bool:
+        """Return whether a record belongs to this exact metadata scope."""
+
+        if not isinstance(memory, MemoryRecord):
+            raise TypeError("Memory scopes can only match MemoryRecord values.")
+        return (
+            memory.layer == self.layer
+            and memory.person == self.person
+            and memory.source_type == self.source_type
+            and memory.topic == self.topic
+        )
+
+
+@dataclass(frozen=True)
 class MemoryWrite:
     """Validated content and metadata accepted by the SQL write boundary."""
 
@@ -189,6 +220,18 @@ class MemorySearchResult:
         _require_distance(self.distance, "Memory distance")
 
 
+@dataclass(frozen=True)
+class MemorySimilarityAdvisory:
+    """Non-blocking evidence that a stored memory resembles an existing one."""
+
+    memory_id: int
+    distance: float
+
+    def __post_init__(self) -> None:
+        _require_positive_int(self.memory_id, "Advisory memory ID")
+        _require_distance(self.distance, "Advisory distance")
+
+
 class MemoryOperationStatus(StrEnum):
     """Stable machine-readable statuses for memory operations."""
 
@@ -238,6 +281,7 @@ class MemoryOperationOutcome:
     status: MemoryOperationStatus
     memory_id: int | None = None
     detail: str | None = None
+    similarity_advisories: tuple[MemorySimilarityAdvisory, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.status, MemoryOperationStatus):
@@ -248,6 +292,14 @@ class MemoryOperationOutcome:
             not isinstance(self.detail, str) or not self.detail.strip()
         ):
             raise ValueError("Memory outcome detail must not be blank.")
+        if not isinstance(self.similarity_advisories, tuple) or any(
+            not isinstance(advisory, MemorySimilarityAdvisory)
+            for advisory in self.similarity_advisories
+        ):
+            raise TypeError(
+                "Memory similarity advisories must be a tuple of "
+                "MemorySimilarityAdvisory values."
+            )
 
     @property
     def succeeded(self) -> bool:
