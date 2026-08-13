@@ -41,6 +41,7 @@ def test_app_pipeline_state_round_trips_through_plain_dict() -> None:
         action="store",
         content="User prefers short answers.",
         rationale="User asked for this to be remembered.",
+        target_key="preference:accessibility.verbosity",
     )
     state = AppPipelineState(
         context=ContextState(
@@ -87,6 +88,7 @@ def test_app_pipeline_state_round_trips_through_plain_dict() -> None:
             "action": "store",
             "content": "User prefers short answers.",
             "rationale": "User asked for this to be remembered.",
+            "target_key": "preference:accessibility.verbosity",
             "requires_confirmation": True,
         },
         "pending_memory_scope": "list_relevant",

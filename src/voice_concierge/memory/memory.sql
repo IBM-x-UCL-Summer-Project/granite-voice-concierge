@@ -2,6 +2,7 @@ CREATE TABLE IF NOT EXISTS memories (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     content       TEXT NOT NULL,
     layer         TEXT NOT NULL,
+    memory_key    TEXT,
 
     created_at    INTEGER NOT NULL,
     event_time    INTEGER,

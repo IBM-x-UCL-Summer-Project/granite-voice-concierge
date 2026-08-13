@@ -289,6 +289,7 @@ def memory_action_from_dict(payload: object) -> MemoryAction | None:
         ),
         content=_required_string(action_payload, "content"),
         rationale=_required_string(action_payload, "rationale"),
+        target_key=_optional_string(action_payload, "target_key"),
         requires_confirmation=_optional_bool(
             action_payload,
             "requires_confirmation",
@@ -303,12 +304,15 @@ def memory_action_to_dict(action: MemoryAction | None) -> JsonDict | None:
     if action is None:
         return None
 
-    return {
+    payload = {
         "action": action.action,
         "content": action.content,
         "rationale": action.rationale,
         "requires_confirmation": action.requires_confirmation,
     }
+    if action.target_key is not None:
+        payload["target_key"] = action.target_key
+    return payload
 
 
 def captured_audio_to_dict(audio: CapturedAudio | None) -> JsonDict | None:

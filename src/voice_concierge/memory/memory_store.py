@@ -16,6 +16,17 @@ class MemoryStore:
         schema_path = Path(__file__).parent / "memory.sql"
         sql = schema_path.read_text()
         self.cur.executescript(sql)
+        columns = {
+            row["name"]
+            for row in self.cur.execute("PRAGMA table_info(memories)").fetchall()
+        }
+        if "memory_key" not in columns:
+            self.cur.execute("ALTER TABLE memories ADD COLUMN memory_key TEXT")
+        self.cur.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS memories_memory_key_unique
+            ON memories(memory_key)
+            WHERE memory_key IS NOT NULL
+            """)
         self.con.commit()
 
     def create_memory(
@@ -27,6 +38,7 @@ class MemoryStore:
         person=None,
         source_type=None,
         topic=None,
+        memory_key=None,
     ):
         created_at = int(time.time())
         self.cur.execute(
@@ -35,6 +47,7 @@ class MemoryStore:
             (
                 content,
                 layer,
+                memory_key,
                 created_at,
                 event_time,
                 strength,
@@ -42,11 +55,12 @@ class MemoryStore:
                 source_type,
                 topic
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 content,
                 layer,
+                memory_key,
                 created_at,
                 event_time,
                 strength,
@@ -57,6 +71,13 @@ class MemoryStore:
         )
         self.con.commit()
         return self.cur.lastrowid
+
+    def get_memory_by_key(self, memory_key):
+        """Get a single structured memory by its stable key."""
+        row = self.cur.execute(
+            "SELECT * FROM memories WHERE memory_key = ?", (memory_key,)
+        ).fetchone()
+        return dict(row) if row else None
 
     def get_memory_by_id(self, memory_id):
         """Get a single memory by ID. Returns None if not found."""

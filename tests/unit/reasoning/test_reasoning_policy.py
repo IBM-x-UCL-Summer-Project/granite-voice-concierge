@@ -21,6 +21,9 @@ def test_policy_guard_adds_accessibility_preference_action() -> None:
     assert response.proposed_memory_action is not None
     assert response.proposed_memory_action.action == "update"
     assert response.proposed_memory_action.content == "accessibility.verbosity=short"
+    assert response.proposed_memory_action.target_key == (
+        "preference:accessibility.verbosity"
+    )
     assert response.metadata["policy_guard"] == "accessibility_preference_confirmation"
 
 
@@ -151,6 +154,7 @@ def test_policy_guard_does_not_treat_bread_as_read_request() -> None:
 
     assert response.proposed_memory_action is not None
     assert response.proposed_memory_action.action == "update"
+    assert response.proposed_memory_action.target_key == "list:shopping"
     assert response.metadata["policy_guard"] == "shopping_list_add_confirmation"
 
 
@@ -223,6 +227,7 @@ def test_policy_guard_keeps_confirmed_action_with_confirmation_wording() -> None
             action="update",
             content="shopping_list:add:milk and bread",
             rationale="User asked to add shopping list items.",
+            target_key="list:shopping",
         ),
         confidence="medium",
     )
@@ -260,6 +265,7 @@ def test_policy_guard_adds_memory_delete_action() -> None:
     assert response.proposed_memory_action is not None
     assert response.proposed_memory_action.action == "delete"
     assert response.proposed_memory_action.content == "my old shopping list"
+    assert response.proposed_memory_action.target_key == "list:shopping"
     assert response.metadata["policy_guard"] == "memory_delete_confirmation"
 
 
@@ -269,11 +275,9 @@ def test_policy_guard_prioritizes_delete_over_note_store_detection() -> None:
         ReasoningResponse(spoken_response="Okay.", confidence="medium"),
     )
 
-    assert response.needs_confirmation is True
-    assert response.proposed_memory_action is not None
-    assert response.proposed_memory_action.action == "delete"
-    assert response.proposed_memory_action.content == "the saved note"
-    assert response.metadata["policy_guard"] == "memory_delete_confirmation"
+    assert response.needs_confirmation is False
+    assert response.proposed_memory_action is None
+    assert response.metadata["policy_guard"] == "stable_memory_target_required"
 
 
 def test_policy_guard_does_not_treat_cooking_remove_as_memory_delete() -> None:

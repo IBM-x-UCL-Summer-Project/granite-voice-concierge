@@ -10,6 +10,8 @@ from voice_concierge.reasoning.types import (
     ReasoningResponse,
 )
 
+SHOPPING_LIST_MEMORY_KEY = "list:shopping"
+
 
 def apply_reasoning_policy_guards(
     request: ReasoningRequest,
@@ -84,6 +86,7 @@ def apply_reasoning_policy_guards(
             response,
             "update",
             expected_content=expected_content,
+            expected_target_key=SHOPPING_LIST_MEMORY_KEY,
         ):
             return response
 
@@ -98,6 +101,7 @@ def apply_reasoning_policy_guards(
                 action="update",
                 content=expected_content,
                 rationale="User asked to add shopping list items.",
+                target_key=SHOPPING_LIST_MEMORY_KEY,
             ),
             confidence="high",
             guard="shopping_list_add_confirmation",
@@ -105,10 +109,12 @@ def apply_reasoning_policy_guards(
 
     if accessibility_preference and not memory_write_requested:
         content, spoken_preference = accessibility_preference
+        target_key = _accessibility_target_key(content)
         if _has_confirmed_action_response(
             response,
             "update",
             expected_content=content,
+            expected_target_key=target_key,
         ):
             return response
 
@@ -123,16 +129,30 @@ def apply_reasoning_policy_guards(
                 action="update",
                 content=content,
                 rationale="User asked to change an accessibility preference.",
+                target_key=target_key,
             ),
             confidence="high",
             guard="accessibility_preference_confirmation",
         )
 
     if delete_target:
+        target_key = _delete_target_key(delete_target)
+        if target_key is None:
+            return _replace_response(
+                response,
+                spoken_response=(
+                    "I cannot safely identify that saved memory to delete."
+                ),
+                needs_confirmation=False,
+                proposed_memory_action=None,
+                confidence="high",
+                guard="stable_memory_target_required",
+            )
         if _has_confirmed_action_response(
             response,
             "delete",
             expected_content=delete_target,
+            expected_target_key=target_key,
         ):
             return response
 
@@ -146,6 +166,7 @@ def apply_reasoning_policy_guards(
                 action="delete",
                 content=delete_target,
                 rationale="User asked the assistant to delete a local memory.",
+                target_key=target_key,
             ),
             confidence="high",
             guard="memory_delete_confirmation",
@@ -181,6 +202,7 @@ def _has_confirmed_action_response(
     action: str,
     *,
     expected_content: str | None = None,
+    expected_target_key: str | None = None,
 ) -> bool:
     memory_action = response.proposed_memory_action
     return (
@@ -192,6 +214,10 @@ def _has_confirmed_action_response(
             expected_content is None
             or _normalized_content(memory_action.content)
             == _normalized_content(expected_content)
+        )
+        and (
+            expected_target_key is None
+            or memory_action.target_key == expected_target_key
         )
     )
 
@@ -317,6 +343,22 @@ def _accessibility_preference(text: str) -> tuple[str, str] | None:
     if "keep answers short" in text or "short answers" in text:
         return ("accessibility.verbosity=short", "keep answers short")
 
+    return None
+
+
+def _accessibility_target_key(content: str) -> str:
+    setting = content.partition("=")[0]
+    return f"preference:{setting}"
+
+
+def _delete_target_key(target: str) -> str | None:
+    normalized = target.lower()
+    if "shopping list" in normalized:
+        return SHOPPING_LIST_MEMORY_KEY
+    if "short answer" in normalized or "verbosity" in normalized:
+        return "preference:accessibility.verbosity"
+    if "speak" in normalized and "slow" in normalized:
+        return "preference:accessibility.preferred_pace"
     return None
 
 

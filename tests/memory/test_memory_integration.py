@@ -122,6 +122,114 @@ class TestMemoryManagerBasic:
         assert len(memories) == 1
         assert "call mom" in memories[0]["content"]
 
+    def test_process_update_targets_exact_key_not_semantic_match(self, memory_manager):
+        """A shopping update cannot overwrite an unrelated preference."""
+        _, _, preference_id = memory_manager.store_memory(
+            content="I prefer tea",
+            layer="profile",
+            memory_key="preference:drink",
+            validate=False,
+            check_duplicates=False,
+        )
+        _, _, shopping_id = memory_manager.store_memory(
+            content="Shopping list: bread.",
+            layer="feedback",
+            memory_key="list:shopping",
+            topic="shopping",
+            validate=False,
+            check_duplicates=False,
+        )
+        action = MemoryAction(
+            action="update",
+            content="shopping_list:add:milk",
+            rationale="User asked to add milk.",
+            target_key="list:shopping",
+        )
+
+        success, reason = memory_manager.process_memory_action(action)
+
+        assert success is True
+        assert reason == "updated_successfully"
+        assert (
+            memory_manager.memory_store.get_memory_by_id(preference_id)["content"]
+            == "I prefer tea"
+        )
+        assert (
+            memory_manager.memory_store.get_memory_by_id(shopping_id)["content"]
+            == "shopping_list:add:milk"
+        )
+
+    def test_process_update_without_stable_target_fails_closed(self, memory_manager):
+        _, _, preference_id = memory_manager.store_memory(
+            content="I prefer tea",
+            layer="profile",
+            validate=False,
+            check_duplicates=False,
+        )
+        action = MemoryAction(
+            action="update",
+            content="shopping_list:add:milk",
+            rationale="User asked to add milk.",
+        )
+
+        success, reason = memory_manager.process_memory_action(action)
+
+        assert success is False
+        assert reason == "stable_memory_target_required"
+        assert (
+            memory_manager.memory_store.get_memory_by_id(preference_id)["content"]
+            == "I prefer tea"
+        )
+
+    def test_process_delete_without_stable_target_fails_closed(self, memory_manager):
+        _, _, preference_id = memory_manager.store_memory(
+            content="I prefer tea",
+            layer="profile",
+            validate=False,
+            check_duplicates=False,
+        )
+        action = MemoryAction(
+            action="delete",
+            content="I prefer tea",
+            rationale="User asked to delete a memory.",
+        )
+
+        success, reason = memory_manager.process_memory_action(action)
+
+        assert success is False
+        assert reason == "stable_memory_target_required"
+        assert memory_manager.memory_store.get_memory_by_id(preference_id) is not None
+
+    def test_process_delete_targets_exact_key(self, memory_manager):
+        _, _, preference_id = memory_manager.store_memory(
+            content="I prefer tea",
+            layer="profile",
+            memory_key="preference:drink",
+            validate=False,
+            check_duplicates=False,
+        )
+        memory_manager.store_memory(
+            content="Shopping list: bread.",
+            layer="feedback",
+            memory_key="list:shopping",
+            topic="shopping",
+            validate=False,
+            check_duplicates=False,
+        )
+        action = MemoryAction(
+            action="delete",
+            content="my shopping list",
+            rationale="User asked to delete the shopping list.",
+            target_key="list:shopping",
+        )
+
+        success, reason = memory_manager.process_memory_action(action)
+
+        assert success is True
+        assert reason == "deleted_successfully"
+        assert memory_manager.memory_store.get_memory_by_key("list:shopping") is None
+        assert memory_manager.memory_store.get_memory_by_id(preference_id) is not None
+
 
 class TestMemoryRetrieval:
     """Test memory retrieval capabilities."""

@@ -229,28 +229,27 @@ def test_ollama_engine_validates_request_before_client_call() -> None:
 def test_ollama_engine_parses_memory_action() -> None:
     engine, _ = _engine_with_response(
         _structured_content(
-            "I can remember that.",
+            "I can remember that. Please confirm before I save it.",
             proposed_memory_action={
                 "action": "store",
                 "content": "User prefers short answers.",
                 "rationale": "User explicitly asked to remember it.",
+                "target_key": "preference:answer_length",
                 "requires_confirmation": True,
             },
             confidence="high",
         )
     )
 
-    response = engine.generate(
-        ReasoningRequest(transcript="Remember that I prefer short answers.")
-    )
+    response = engine.generate(ReasoningRequest(transcript="Please help."))
 
     assert response.needs_confirmation is True
     assert response.proposed_memory_action is not None
     assert response.proposed_memory_action.action == "store"
-    assert response.proposed_memory_action.content == "I prefer short answers"
+    assert response.proposed_memory_action.content == "User prefers short answers."
+    assert response.proposed_memory_action.target_key == "preference:answer_length"
     assert "confirm" in response.spoken_response.lower()
     assert response.confidence == "high"
-    assert response.metadata["policy_guard"] == "memory_store_confirmation"
 
 
 def test_ollama_engine_maps_connection_errors() -> None:

@@ -107,6 +107,7 @@ class _StructuredMemoryAction(BaseModel):
     action: Literal["store", "update", "delete"]
     content: str = Field(min_length=1)
     rationale: str = Field(min_length=1)
+    target_key: str | None = Field(default=None, min_length=1)
     requires_confirmation: bool
 
 
@@ -489,6 +490,7 @@ def _response_from_structured_payload(
             action=action.action,
             content=action.content,
             rationale=action.rationale,
+            target_key=action.target_key,
             requires_confirmation=action.requires_confirmation,
         )
 

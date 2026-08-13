@@ -73,6 +73,7 @@ class MemoryManager:
         auto_classify: bool = True,
         auto_extract: bool = True,
         check_duplicates: bool = True,
+        memory_key: Optional[str] = None,
     ) -> Tuple[bool, str, Optional[int]]:
         """
         Store a memory after validation and optional auto-classification.
@@ -90,12 +91,22 @@ class MemoryManager:
             auto_classify: Whether to auto-classify memory type
             auto_extract: Whether to auto-extract metadata
             check_duplicates: Whether to check for duplicates (default: True)
+            memory_key: Stable key for an exact structured-memory record
 
         Returns:
             Tuple of (success: bool, reason: str, memory_id: Optional[int])
         """
-        # Check for duplicates if enabled
-        if check_duplicates:
+        if memory_key is not None:
+            keyed_memory = self.memory_store.get_memory_by_key(memory_key)
+            if keyed_memory is not None:
+                return (
+                    False,
+                    f"duplicate_key: memory_id={keyed_memory['id']}",
+                    keyed_memory["id"],
+                )
+
+        # Check for semantic duplicates if enabled for unkeyed stores.
+        if check_duplicates and memory_key is None:
             similar = self.find_similar_memory(content, threshold=0.9)
             if similar:
                 mem_id = similar["id"]
@@ -132,6 +143,7 @@ class MemoryManager:
             memory_id = self.memory_store.create_memory(
                 content=content,
                 layer=layer,
+                memory_key=memory_key,
                 person=person,
                 source_type=source_type,
                 topic=classified_topic,
@@ -299,26 +311,26 @@ class MemoryManager:
             success, reason, _ = self.store_memory(
                 content=action.content,
                 layer="feedback",
+                memory_key=action.target_key,
                 validate=False,
             )
             return success, reason
 
         elif action_type == "update":
-            # Parse memory_id from content if available
-            # For now, find the most similar memory and update it
-            similar = self.retrieve_similar(action.content, top_k=1)
-            if similar:
-                memory_id = similar[0]["id"]
-                return self.update_memory(memory_id, content=action.content)
-            return False, "no_similar_memory_found"
+            if action.target_key is None:
+                return False, "stable_memory_target_required"
+            target = self.memory_store.get_memory_by_key(action.target_key)
+            if target is None:
+                return False, "memory_target_not_found"
+            return self.update_memory(target["id"], content=action.content)
 
         elif action_type == "delete":
-            # Find the most similar memory and delete it
-            similar = self.retrieve_similar(action.content, top_k=1)
-            if similar:
-                memory_id = similar[0]["id"]
-                return self.delete_memory(memory_id)
-            return False, "no_similar_memory_found"
+            if action.target_key is None:
+                return False, "stable_memory_target_required"
+            target = self.memory_store.get_memory_by_key(action.target_key)
+            if target is None:
+                return False, "memory_target_not_found"
+            return self.delete_memory(target["id"])
 
         else:
             return False, f"unknown_action: {action_type}"

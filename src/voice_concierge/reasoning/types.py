@@ -80,6 +80,8 @@ class MemoryAction:
     content: str
     #: Short explanation of why this operation was proposed.
     rationale: str
+    #: Stable project-owned key for an exact structured-memory target.
+    target_key: str | None = None
     #: Whether another component should confirm with the user before execution.
     requires_confirmation: bool = True
 

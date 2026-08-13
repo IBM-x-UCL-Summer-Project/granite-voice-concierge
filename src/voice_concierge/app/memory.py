@@ -84,6 +84,7 @@ class MemoryManagerGateway:
             success, reason, _memory_id = self._manager.store_memory(
                 content=action.content,
                 layer=layer,
+                memory_key=action.target_key,
                 topic=topic,
                 validate=False,
                 auto_classify=False,

@@ -38,6 +38,7 @@ class FakeMemoryManager:
         *,
         content: str,
         layer: str,
+        memory_key: str | None,
         topic: str | None,
         validate: bool,
         auto_classify: bool,
@@ -47,6 +48,7 @@ class FakeMemoryManager:
             {
                 "content": content,
                 "layer": layer,
+                "memory_key": memory_key,
                 "topic": topic,
                 "validate": validate,
                 "auto_classify": auto_classify,
@@ -118,6 +120,7 @@ def test_memory_manager_gateway_applies_store_with_scope_metadata() -> None:
         {
             "content": "Shopping list includes milk.",
             "layer": "feedback",
+            "memory_key": None,
             "topic": "shopping",
             "validate": False,
             "auto_classify": False,

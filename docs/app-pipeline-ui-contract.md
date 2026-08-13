@@ -154,6 +154,7 @@ type AppPipelineState = {
     action: 'store' | 'delete' | 'update';
     content: string;
     rationale: string;
+    target_key?: string | null;
     requires_confirmation: boolean;
   };
 
