@@ -50,6 +50,7 @@ def test_defaults(store):
     assert row["topic"] is None
     assert row["last_accessed"] is None
     assert row["strength"] == 1
+    assert row["revision"] == 1
 
 
 # ---- Metadata filtering ----
@@ -163,6 +164,7 @@ def test_existing_database_is_migrated_with_stable_memory_keys(tmp_path):
 
     assert memory is not None
     assert memory["id"] == memory_id
+    assert memory["revision"] == 1
 
 
 def test_delete_memory(store):
@@ -196,6 +198,35 @@ def test_update_memory(store):
     row = store.get_memories()[0]
     assert row["content"] == "new content"
     assert row["topic"] == "shopping"
+    assert row["revision"] == 2
+
+
+def test_update_requires_current_revision_when_supplied(store):
+    memory_id = store.create_memory("old content", "raw")
+
+    assert store.update_memory(
+        memory_id,
+        content="first update",
+        expected_revision=1,
+    )
+    assert not store.update_memory(
+        memory_id,
+        content="stale update",
+        expected_revision=1,
+    )
+
+    memory = store.get_memory_by_id(memory_id)
+    assert memory["content"] == "first update"
+    assert memory["revision"] == 2
+
+
+def test_delete_requires_current_revision_when_supplied(store):
+    memory_id = store.create_memory("keep current version", "raw")
+    assert store.update_memory(memory_id, content="new version")
+
+    assert not store.delete_memory(memory_id, expected_revision=1)
+    assert store.get_memory_by_id(memory_id) is not None
+    assert store.delete_memory(memory_id, expected_revision=2)
 
 
 def test_update_nothing(store):

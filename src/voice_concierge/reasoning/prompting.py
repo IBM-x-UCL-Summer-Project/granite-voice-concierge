@@ -13,7 +13,7 @@ from string import Template
 from types import MappingProxyType
 from typing import Literal
 
-from voice_concierge.reasoning.types import ReasoningRequest
+from voice_concierge.reasoning.types import MemoryReference, ReasoningRequest
 
 Role = Literal["system", "user", "assistant"]
 
@@ -257,7 +257,16 @@ def _format_conversation_summary(request: ReasoningRequest) -> str:
     return "No summary supplied."
 
 
-def _format_memories(memories: tuple[str, ...]) -> str:
+def _format_memories(memories: tuple[MemoryReference, ...]) -> str:
     if not memories:
         return "No local memories supplied."
-    return "\n".join(f"- {memory}" for memory in memories)
+    return "\n".join(_format_memory_reference(memory) for memory in memories)
+
+
+def _format_memory_reference(memory: MemoryReference) -> str:
+    key = memory.memory_key if memory.memory_key is not None else "none"
+    topic = memory.topic if memory.topic is not None else "none"
+    return (
+        f"- id={memory.memory_id}; revision={memory.revision}; key={key}; "
+        f"layer={memory.layer}; topic={topic}; content={memory.content}"
+    )

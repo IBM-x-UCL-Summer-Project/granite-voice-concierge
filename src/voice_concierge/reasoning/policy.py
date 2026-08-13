@@ -8,6 +8,8 @@ from dataclasses import replace
 from voice_concierge.reasoning.information_policy import decide_information_policy
 from voice_concierge.reasoning.types import (
     MemoryAction,
+    MemoryReference,
+    MemoryTarget,
     ReasoningRequest,
     ReasoningResponse,
 )
@@ -44,7 +46,9 @@ def apply_reasoning_policy_guards(
 
         return _replace_response(
             response,
-            spoken_response=f"I found this in local memory: {shopping_list_memory}",
+            spoken_response=(
+                f"I found this in local memory: {shopping_list_memory.content}"
+            ),
             needs_confirmation=False,
             proposed_memory_action=None,
             confidence="high",
@@ -87,7 +91,9 @@ def apply_reasoning_policy_guards(
 
         return _replace_response(
             response,
-            spoken_response=f"I found this in local memory: {request.memories[0]}",
+            spoken_response=(
+                f"I found this in local memory: {request.memories[0].content}"
+            ),
             needs_confirmation=False,
             proposed_memory_action=None,
             confidence="high",
@@ -116,7 +122,10 @@ def apply_reasoning_policy_guards(
             response,
             action,
             expected_content=expected_content,
-            expected_target_key=SHOPPING_LIST_MEMORY_KEY,
+            expected_target=_structured_memory_target(
+                shopping_list_memory,
+                SHOPPING_LIST_MEMORY_KEY,
+            ),
         ):
             return response
 
@@ -131,7 +140,10 @@ def apply_reasoning_policy_guards(
                 action=action,
                 content=expected_content,
                 rationale="User asked to add shopping list items.",
-                target_key=SHOPPING_LIST_MEMORY_KEY,
+                target=_structured_memory_target(
+                    shopping_list_memory,
+                    SHOPPING_LIST_MEMORY_KEY,
+                ),
             ),
             confidence="high",
             guard="shopping_list_add_confirmation",
@@ -149,7 +161,10 @@ def apply_reasoning_policy_guards(
             response,
             action,
             expected_content=expected_content,
-            expected_target_key=TASK_LIST_MEMORY_KEY,
+            expected_target=_structured_memory_target(
+                task_list_memory,
+                TASK_LIST_MEMORY_KEY,
+            ),
         ):
             return response
 
@@ -164,7 +179,10 @@ def apply_reasoning_policy_guards(
                 action=action,
                 content=expected_content,
                 rationale="User asked to add task list items.",
-                target_key=TASK_LIST_MEMORY_KEY,
+                target=_structured_memory_target(
+                    task_list_memory,
+                    TASK_LIST_MEMORY_KEY,
+                ),
             ),
             confidence="high",
             guard="task_list_add_confirmation",
@@ -172,12 +190,12 @@ def apply_reasoning_policy_guards(
 
     if accessibility_preference and not memory_write_requested:
         content, spoken_preference = accessibility_preference
-        target_key = _accessibility_target_key(content)
+        target = MemoryTarget(memory_key=_accessibility_target_key(content))
         if _has_confirmed_action_response(
             response,
             "update",
             expected_content=content,
-            expected_target_key=target_key,
+            expected_target=target,
         ):
             return response
 
@@ -192,15 +210,15 @@ def apply_reasoning_policy_guards(
                 action="update",
                 content=content,
                 rationale="User asked to change an accessibility preference.",
-                target_key=target_key,
+                target=target,
             ),
             confidence="high",
             guard="accessibility_preference_confirmation",
         )
 
     if delete_target:
-        target_key = _delete_target_key(delete_target)
-        if target_key is None:
+        target = _delete_memory_target(delete_target, request.memories)
+        if target is None:
             return _replace_response(
                 response,
                 spoken_response=(
@@ -215,7 +233,7 @@ def apply_reasoning_policy_guards(
             response,
             "delete",
             expected_content=delete_target,
-            expected_target_key=target_key,
+            expected_target=target,
         ):
             return response
 
@@ -229,7 +247,7 @@ def apply_reasoning_policy_guards(
                 action="delete",
                 content=delete_target,
                 rationale="User asked the assistant to delete a local memory.",
-                target_key=target_key,
+                target=target,
             ),
             confidence="high",
             guard="memory_delete_confirmation",
@@ -296,7 +314,7 @@ def _has_confirmed_action_response(
     action: str,
     *,
     expected_content: str | None = None,
-    expected_target_key: str | None = None,
+    expected_target: MemoryTarget | None = None,
 ) -> bool:
     memory_action = response.proposed_memory_action
     return (
@@ -309,10 +327,7 @@ def _has_confirmed_action_response(
             or _normalized_content(memory_action.content)
             == _normalized_content(expected_content)
         )
-        and (
-            expected_target_key is None
-            or memory_action.target_key == expected_target_key
-        )
+        and (expected_target is None or memory_action.target == expected_target)
     )
 
 
@@ -378,16 +393,18 @@ def _shopping_list_read_requested(text: str) -> bool:
     )
 
 
-def _shopping_list_memory(memories: tuple[str, ...]) -> str | None:
+def _shopping_list_memory(
+    memories: tuple[MemoryReference, ...],
+) -> MemoryReference | None:
     for memory in memories:
-        if "shopping list" in memory.lower():
+        if memory.memory_key == SHOPPING_LIST_MEMORY_KEY:
             return memory
     return None
 
 
-def _task_list_memory(memories: tuple[str, ...]) -> str | None:
+def _task_list_memory(memories: tuple[MemoryReference, ...]) -> MemoryReference | None:
     for memory in memories:
-        if "task list" in memory.lower():
+        if memory.memory_key == TASK_LIST_MEMORY_KEY:
             return memory
     return None
 
@@ -467,6 +484,15 @@ def _accessibility_target_key(content: str) -> str:
     return f"preference:{setting}"
 
 
+def _structured_memory_target(
+    memory: MemoryReference | None,
+    memory_key: str,
+) -> MemoryTarget:
+    if memory is not None:
+        return memory.mutation_target()
+    return MemoryTarget(memory_key=memory_key)
+
+
 def _delete_target_key(target: str) -> str | None:
     normalized = target.lower()
     if "shopping list" in normalized:
@@ -477,6 +503,28 @@ def _delete_target_key(target: str) -> str | None:
         return "preference:accessibility.verbosity"
     if "speak" in normalized and "slow" in normalized:
         return "preference:accessibility.preferred_pace"
+    return None
+
+
+def _delete_memory_target(
+    description: str,
+    memories: tuple[MemoryReference, ...],
+) -> MemoryTarget | None:
+    stable_key = _delete_target_key(description)
+    if stable_key is not None:
+        for memory in memories:
+            if memory.memory_key == stable_key:
+                return memory.mutation_target()
+        return MemoryTarget(memory_key=stable_key)
+
+    normalized_description = _normalized_content(description)
+    exact_matches = [
+        memory
+        for memory in memories
+        if _normalized_content(memory.content) == normalized_description
+    ]
+    if len(exact_matches) == 1:
+        return exact_matches[0].mutation_target()
     return None
 
 

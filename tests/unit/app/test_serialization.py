@@ -33,7 +33,11 @@ from voice_concierge.context.types import (
     ContextDecision,
     ContextState,
 )
-from voice_concierge.reasoning.types import MemoryAction, ReasoningResponse
+from voice_concierge.reasoning.types import (
+    MemoryAction,
+    MemoryTarget,
+    ReasoningResponse,
+)
 
 
 def test_app_pipeline_state_round_trips_through_plain_dict() -> None:
@@ -41,7 +45,7 @@ def test_app_pipeline_state_round_trips_through_plain_dict() -> None:
         action="store",
         content="User prefers short answers.",
         rationale="User asked for this to be remembered.",
-        target_key="preference:accessibility.verbosity",
+        target=MemoryTarget(memory_key="preference:accessibility.verbosity"),
     )
     state = AppPipelineState(
         context=ContextState(
@@ -88,12 +92,52 @@ def test_app_pipeline_state_round_trips_through_plain_dict() -> None:
             "action": "store",
             "content": "User prefers short answers.",
             "rationale": "User asked for this to be remembered.",
-            "target_key": "preference:accessibility.verbosity",
+            "target": {
+                "memory_key": "preference:accessibility.verbosity",
+            },
             "requires_confirmation": True,
         },
         "pending_memory_scope": "list_relevant",
     }
     assert parsed == state
+
+
+def test_exact_memory_target_round_trips_with_pending_mutation() -> None:
+    state = AppPipelineState(
+        pending_memory_action=MemoryAction(
+            action="update",
+            content="Shopping list: milk, bread.",
+            rationale="User confirmed an exact list update.",
+            target=MemoryTarget(
+                memory_id=8,
+                memory_key="list:shopping",
+                expected_revision=3,
+            ),
+        ),
+        pending_memory_scope="list_relevant",
+    )
+
+    payload = app_pipeline_state_to_dict(state)
+
+    assert payload["pending_memory_action"]["target"] == {
+        "memory_id": 8,
+        "memory_key": "list:shopping",
+        "expected_revision": 3,
+    }
+    assert app_pipeline_state_from_dict(payload) == state
+
+
+def test_pending_mutation_without_target_is_rejected() -> None:
+    payload = app_pipeline_state_to_dict(AppPipelineState())
+    payload["pending_memory_action"] = {
+        "action": "delete",
+        "content": "User prefers tea.",
+        "rationale": "Delete a memory.",
+        "requires_confirmation": True,
+    }
+
+    with pytest.raises(PayloadValidationError, match="requires an exact target"):
+        app_pipeline_state_from_dict(payload)
 
 
 def test_app_turn_request_from_dict_parses_state_and_options() -> None:

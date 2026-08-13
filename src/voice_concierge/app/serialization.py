@@ -20,7 +20,7 @@ from voice_concierge.context.types import (
     AccessibilityProfile,
     ContextState,
 )
-from voice_concierge.reasoning.types import MemoryAction
+from voice_concierge.reasoning.types import MemoryAction, MemoryTarget
 
 JsonDict = dict[str, Any]
 
@@ -282,22 +282,25 @@ def memory_action_from_dict(payload: object) -> MemoryAction | None:
         return None
 
     action_payload = _mapping(payload, "pending_memory_action")
-    return MemoryAction(
-        action=_required_literal(
-            action_payload,
-            "action",
-            _MEMORY_ACTIONS,
-            "memory action",
-        ),
-        content=_required_string(action_payload, "content"),
-        rationale=_required_string(action_payload, "rationale"),
-        target_key=_optional_string(action_payload, "target_key"),
-        requires_confirmation=_optional_bool(
-            action_payload,
-            "requires_confirmation",
-            default=True,
-        ),
-    )
+    try:
+        return MemoryAction(
+            action=_required_literal(
+                action_payload,
+                "action",
+                _MEMORY_ACTIONS,
+                "memory action",
+            ),
+            content=_required_string(action_payload, "content"),
+            rationale=_required_string(action_payload, "rationale"),
+            target=_memory_target_from_dict(action_payload.get("target")),
+            requires_confirmation=_optional_bool(
+                action_payload,
+                "requires_confirmation",
+                default=True,
+            ),
+        )
+    except ValueError as exc:
+        raise PayloadValidationError(str(exc)) from exc
 
 
 def memory_action_to_dict(action: MemoryAction | None) -> JsonDict | None:
@@ -312,8 +315,36 @@ def memory_action_to_dict(action: MemoryAction | None) -> JsonDict | None:
         "rationale": action.rationale,
         "requires_confirmation": action.requires_confirmation,
     }
-    if action.target_key is not None:
-        payload["target_key"] = action.target_key
+    if action.target is not None:
+        payload["target"] = _memory_target_to_dict(action.target)
+    return payload
+
+
+def _memory_target_from_dict(payload: object) -> MemoryTarget | None:
+    if payload is None:
+        return None
+    target_payload = _mapping(payload, "memory target")
+    try:
+        return MemoryTarget(
+            memory_id=_optional_int(target_payload, "memory_id"),
+            memory_key=_optional_string(target_payload, "memory_key"),
+            expected_revision=_optional_int(
+                target_payload,
+                "expected_revision",
+            ),
+        )
+    except ValueError as exc:
+        raise PayloadValidationError(str(exc)) from exc
+
+
+def _memory_target_to_dict(target: MemoryTarget) -> JsonDict:
+    payload: JsonDict = {}
+    if target.memory_id is not None:
+        payload["memory_id"] = target.memory_id
+    if target.memory_key is not None:
+        payload["memory_key"] = target.memory_key
+    if target.expected_revision is not None:
+        payload["expected_revision"] = target.expected_revision
     return payload
 
 
@@ -355,6 +386,15 @@ def _optional_string(payload: Mapping[str, Any], field: str) -> str | None:
         return None
     if not isinstance(value, str):
         raise PayloadValidationError(f"{field} must be a string or null.")
+    return value
+
+
+def _optional_int(payload: Mapping[str, Any], field: str) -> int | None:
+    value = payload.get(field)
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise PayloadValidationError(f"{field} must be an integer or null.")
     return value
 
 

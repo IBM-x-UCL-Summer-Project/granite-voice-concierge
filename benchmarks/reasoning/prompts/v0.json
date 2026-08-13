@@ -47,7 +47,15 @@
         "id": "cooking_now_with_local_ingredients",
         "transcript": "What can I cook at the moment?",
         "mode": "cooking",
-        "memories": ["Available ingredients: eggs, tomato, cheese."],
+        "memories": [
+          {
+            "memory_id": 1,
+            "content": "Available ingredients: eggs, tomato, cheese.",
+            "layer": "feedback",
+            "revision": 1,
+            "topic": "ingredients"
+          }
+        ],
         "expected_behavior": "Use supplied ingredients without treating conversational immediacy as a live-data request.",
         "checks": {
           "information_source": "local_context",
@@ -88,7 +96,16 @@
         "id": "shopping_read_with_memory",
         "transcript": "What is on my shopping list?",
         "mode": "shopping",
-        "memories": ["Shopping list: milk, bread."],
+        "memories": [
+          {
+            "memory_id": 2,
+            "content": "Shopping list: milk, bread.",
+            "layer": "feedback",
+            "revision": 1,
+            "memory_key": "list:shopping",
+            "topic": "shopping"
+          }
+        ],
         "expected_behavior": "Read the supplied shopping-list memory without proposing a memory change.",
         "checks": {
           "memory_action": null,
@@ -154,7 +171,15 @@
         "id": "memory_recall_supplied_answer_style",
         "transcript": "How do I like you to answer?",
         "mode": "home",
-        "memories": ["User prefers short answers."],
+        "memories": [
+          {
+            "memory_id": 3,
+            "content": "User prefers short answers.",
+            "layer": "profile",
+            "revision": 1,
+            "memory_key": "preference:answer_length"
+          }
+        ],
         "expected_behavior": "Recall the injected memory without inventing extra facts.",
         "checks": {
           "memory_action": null,

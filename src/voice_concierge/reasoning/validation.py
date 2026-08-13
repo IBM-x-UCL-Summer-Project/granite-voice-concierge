@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 from voice_concierge.reasoning.errors import ReasoningRequestError
-from voice_concierge.reasoning.types import ReasoningConstraints, ReasoningRequest
+from voice_concierge.reasoning.types import (
+    MemoryReference,
+    ReasoningConstraints,
+    ReasoningRequest,
+)
 
 
 def validate_reasoning_request(request: ReasoningRequest) -> None:
@@ -30,10 +34,8 @@ def _validate_memories(memories: object) -> None:
         raise ReasoningRequestError("Reasoning request memories must be a tuple.")
 
     for index, memory in enumerate(memories):
-        try:
-            _require_non_empty_string(memory, f"memories[{index}]")
-        except ReasoningRequestError as exc:
-            raise ReasoningRequestError(str(exc)) from exc
+        if not isinstance(memory, MemoryReference):
+            raise ReasoningRequestError(f"memories[{index}] must be a MemoryReference.")
 
 
 def _validate_constraints(constraints: object) -> None:

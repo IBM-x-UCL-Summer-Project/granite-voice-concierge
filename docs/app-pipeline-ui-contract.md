@@ -154,7 +154,11 @@ type AppPipelineState = {
     action: 'store' | 'delete' | 'update';
     content: string;
     rationale: string;
-    target_key?: string | null;
+    target?: {
+      memory_id?: number;
+      memory_key?: string;
+      expected_revision?: number;
+    };
     requires_confirmation: boolean;
   };
 
@@ -166,6 +170,14 @@ type AppPipelineState = {
     | null;
 };
 ```
+
+Every pending `update` or `delete` includes an exact target. `memory_id`
+identifies a retrieved record, `memory_key` identifies an explicitly scoped
+singleton such as `list:shopping`, and `expected_revision` prevents a stale
+confirmation from overwriting a newer value. A `store` may include only a
+`memory_key` when it is creating the first value for that scoped record. The UI
+must round-trip these fields unchanged and must not choose a target from memory
+content.
 
 When a memory action is pending, the next transcript is interpreted as a
 confirmation reply. Only a complete, explicit answer such as `yes`, `confirm`,

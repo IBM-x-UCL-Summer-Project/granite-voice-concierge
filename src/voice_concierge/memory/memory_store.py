@@ -22,6 +22,10 @@ class MemoryStore:
         }
         if "memory_key" not in columns:
             self.cur.execute("ALTER TABLE memories ADD COLUMN memory_key TEXT")
+        if "revision" not in columns:
+            self.cur.execute(
+                "ALTER TABLE memories ADD COLUMN revision INTEGER NOT NULL DEFAULT 1"
+            )
         self.cur.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS memories_memory_key_unique
             ON memories(memory_key)
@@ -110,8 +114,14 @@ class MemoryStore:
     def close(self):
         self.con.close()
 
-    def delete_memory(self, memory_id):
-        self.cur.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+    def delete_memory(self, memory_id, expected_revision=None):
+        if expected_revision is None:
+            query = "DELETE FROM memories WHERE id = ?"
+            params = (memory_id,)
+        else:
+            query = "DELETE FROM memories WHERE id = ? AND revision = ?"
+            params = (memory_id, expected_revision)
+        self.cur.execute(query, params)
         self.con.commit()
         return self.cur.rowcount > 0
 
@@ -125,6 +135,7 @@ class MemoryStore:
         person=None,
         source_type=None,
         topic=None,
+        expected_revision=None,
     ):
         updates = []
         params = []
@@ -154,9 +165,44 @@ class MemoryStore:
         if not updates:
             return False
 
+        updates.append("revision = revision + 1")
         query = f"UPDATE memories SET {', '.join(updates)} WHERE id = ?"
         params.append(memory_id)
+        if expected_revision is not None:
+            query += " AND revision = ?"
+            params.append(expected_revision)
 
         self.cur.execute(query, params)
+        self.con.commit()
+        return self.cur.rowcount > 0
+
+    def restore_memory(self, memory):
+        """Restore mutable fields and revision after a failed secondary write."""
+
+        self.cur.execute(
+            """
+            UPDATE memories
+            SET content = ?,
+                layer = ?,
+                event_time = ?,
+                strength = ?,
+                person = ?,
+                source_type = ?,
+                topic = ?,
+                revision = ?
+            WHERE id = ?
+            """,
+            (
+                memory["content"],
+                memory["layer"],
+                memory["event_time"],
+                memory["strength"],
+                memory["person"],
+                memory["source_type"],
+                memory["topic"],
+                memory["revision"],
+                memory["id"],
+            ),
+        )
         self.con.commit()
         return self.cur.rowcount > 0

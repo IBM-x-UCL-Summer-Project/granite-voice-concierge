@@ -30,6 +30,80 @@ FreshnessRequirement = Literal["not_required", "current"]
 
 
 @dataclass(frozen=True)
+class MemoryTarget:
+    """Exact identity and optional revision expected for a memory mutation."""
+
+    memory_id: int | None = None
+    memory_key: str | None = None
+    expected_revision: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.memory_id is None and self.memory_key is None:
+            raise ValueError("Memory target requires an ID or stable key.")
+        if self.memory_id is not None and (
+            not isinstance(self.memory_id, int)
+            or isinstance(self.memory_id, bool)
+            or self.memory_id <= 0
+        ):
+            raise ValueError("Memory target ID must be positive.")
+        if self.memory_key is not None and (
+            not isinstance(self.memory_key, str) or not self.memory_key.strip()
+        ):
+            raise ValueError("Memory target key must not be blank.")
+        if self.expected_revision is not None and (
+            not isinstance(self.expected_revision, int)
+            or isinstance(self.expected_revision, bool)
+            or self.expected_revision <= 0
+        ):
+            raise ValueError("Expected memory revision must be positive.")
+
+
+@dataclass(frozen=True)
+class MemoryReference:
+    """Typed memory evidence supplied to reasoning without losing identity."""
+
+    memory_id: int
+    content: str
+    layer: str
+    revision: int
+    memory_key: str | None = None
+    topic: str | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.memory_id, int)
+            or isinstance(self.memory_id, bool)
+            or self.memory_id <= 0
+        ):
+            raise ValueError("Memory reference ID must be positive.")
+        if (
+            not isinstance(self.revision, int)
+            or isinstance(self.revision, bool)
+            or self.revision <= 0
+        ):
+            raise ValueError("Memory reference revision must be positive.")
+        if not isinstance(self.content, str) or not self.content.strip():
+            raise ValueError("Memory reference content must not be blank.")
+        if not isinstance(self.layer, str) or not self.layer.strip():
+            raise ValueError("Memory reference layer must not be blank.")
+        if self.memory_key is not None and (
+            not isinstance(self.memory_key, str) or not self.memory_key.strip()
+        ):
+            raise ValueError("Memory reference key must not be blank.")
+        if self.topic is not None and not isinstance(self.topic, str):
+            raise ValueError("Memory reference topic must be a string.")
+
+    def mutation_target(self) -> MemoryTarget:
+        """Return an exact, revision-checked target for this record."""
+
+        return MemoryTarget(
+            memory_id=self.memory_id,
+            memory_key=self.memory_key,
+            expected_revision=self.revision,
+        )
+
+
+@dataclass(frozen=True)
 class ReasoningConstraints:
     """Runtime limits and policy flags applied to a reasoning request.
 
@@ -65,8 +139,8 @@ class ReasoningRequest:
     transcript: str
     #: Current behavior profile or app mode chosen outside the reasoning engine.
     mode: str = "home"
-    #: Relevant retrieved memory snippets; this component does not fetch them.
-    memories: tuple[str, ...] = ()
+    #: Relevant retrieved memories with stable identity and revision metadata.
+    memories: tuple[MemoryReference, ...] = ()
     #: Optional compact summary of prior turns supplied by conversation state.
     conversation_summary: str | None = None
     #: Runtime policy and output-shaping constraints for this request.
@@ -89,10 +163,30 @@ class MemoryAction:
     content: str
     #: Short explanation of why this operation was proposed.
     rationale: str
-    #: Stable project-owned key for an exact structured-memory target.
-    target_key: str | None = None
+    #: Exact ID/key and optional expected revision for the affected record.
+    target: MemoryTarget | None = None
     #: Whether another component should confirm with the user before execution.
     requires_confirmation: bool = True
+
+    def __post_init__(self) -> None:
+        if self.action not in {"store", "update", "delete"}:
+            raise ValueError(f"Unsupported memory action: {self.action!r}.")
+        if not isinstance(self.content, str) or not self.content.strip():
+            raise ValueError("Memory action content must not be blank.")
+        if not isinstance(self.rationale, str) or not self.rationale.strip():
+            raise ValueError("Memory action rationale must not be blank.")
+        if self.target is not None and not isinstance(self.target, MemoryTarget):
+            raise ValueError("Memory action target must be a MemoryTarget.")
+        if not isinstance(self.requires_confirmation, bool):
+            raise ValueError("Memory action confirmation flag must be boolean.")
+        if self.action in {"update", "delete"} and self.target is None:
+            raise ValueError(f"Memory {self.action} requires an exact target.")
+        if (
+            self.action == "store"
+            and self.target is not None
+            and self.target.memory_id is not None
+        ):
+            raise ValueError("A memory store cannot target an existing memory ID.")
 
 
 @dataclass(frozen=True)

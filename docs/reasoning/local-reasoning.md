@@ -10,7 +10,8 @@ It contains:
 
 - `transcript`: the text from STT;
 - `mode`: current behavior mode, such as `home`, `cooking`, `shopping`, or `driving`;
-- `memories`: local memories supplied by the memory component;
+- `memories`: typed `MemoryReference` values supplied by the memory component,
+  including stable ID, optional scoped key, and revision as well as content;
 - `conversation_summary`: optional recent context;
 - `constraints`: runtime limits such as max spoken words and whether memory writes are allowed.
 
@@ -28,6 +29,14 @@ It contains:
 - `metadata`: backend-specific details.
 
 The reasoning layer should propose memory actions. It should not directly write to memory.
+
+Memory evidence is never reduced to bare strings at the reasoning boundary.
+When reasoning proposes an `update` or `delete`, its `MemoryAction.target` must
+contain the exact retrieved memory ID or an explicit scoped key. Targets derived
+from a retrieved `MemoryReference` also carry `expected_revision`, so a delayed
+confirmation fails on a concurrent change instead of overwriting it. Semantic
+retrieval may select evidence for a response, but it is never used by the memory
+component to select a mutation target.
 
 ### Information provenance policy
 
@@ -57,9 +66,9 @@ lookup text itself is never stored as a fact.
 
 `validate_reasoning_request()` owns public request validation. Engines call it
 before prompt construction or backend calls. It rejects empty transcripts or
-modes, non-tuple memories, invalid memory snippets, empty supplied conversation
-summaries, missing or malformed constraints, non-positive `max_words`, and
-non-boolean constraint flags.
+modes, non-tuple memory collections, values that are not `MemoryReference`
+instances, empty supplied conversation summaries, missing or malformed
+constraints, non-positive `max_words`, and non-boolean constraint flags.
 
 `output.py` owns backend-neutral spoken-response shaping. The Ollama adapter calls
 its shared word-limit function after deterministic policy guards, while the

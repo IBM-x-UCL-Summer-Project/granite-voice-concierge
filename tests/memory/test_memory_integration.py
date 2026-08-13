@@ -13,7 +13,7 @@ from voice_concierge.memory import (
     MemoryValidator,
     VectorStore,
 )
-from voice_concierge.reasoning.types import MemoryAction
+from voice_concierge.reasoning.types import MemoryAction, MemoryTarget
 
 
 @pytest.fixture
@@ -143,7 +143,11 @@ class TestMemoryManagerBasic:
             action="update",
             content="shopping_list:add:milk",
             rationale="User asked to add milk.",
-            target_key="list:shopping",
+            target=MemoryTarget(
+                memory_id=shopping_id,
+                memory_key="list:shopping",
+                expected_revision=1,
+            ),
         )
 
         success, reason = memory_manager.process_memory_action(action)
@@ -172,7 +176,11 @@ class TestMemoryManagerBasic:
             action="update",
             content="shopping_list:add:Milk and eggs",
             rationale="User asked to add milk and eggs.",
-            target_key="list:shopping",
+            target=MemoryTarget(
+                memory_id=shopping_id,
+                memory_key="list:shopping",
+                expected_revision=1,
+            ),
         )
 
         success, reason = memory_manager.process_memory_action(action)
@@ -191,16 +199,13 @@ class TestMemoryManagerBasic:
             validate=False,
             check_duplicates=False,
         )
-        action = MemoryAction(
-            action="update",
-            content="shopping_list:add:milk",
-            rationale="User asked to add milk.",
-        )
+        with pytest.raises(ValueError, match="requires an exact target"):
+            MemoryAction(
+                action="update",
+                content="shopping_list:add:milk",
+                rationale="User asked to add milk.",
+            )
 
-        success, reason = memory_manager.process_memory_action(action)
-
-        assert success is False
-        assert reason == "stable_memory_target_required"
         assert (
             memory_manager.memory_store.get_memory_by_id(preference_id)["content"]
             == "I prefer tea"
@@ -213,16 +218,13 @@ class TestMemoryManagerBasic:
             validate=False,
             check_duplicates=False,
         )
-        action = MemoryAction(
-            action="delete",
-            content="I prefer tea",
-            rationale="User asked to delete a memory.",
-        )
+        with pytest.raises(ValueError, match="requires an exact target"):
+            MemoryAction(
+                action="delete",
+                content="I prefer tea",
+                rationale="User asked to delete a memory.",
+            )
 
-        success, reason = memory_manager.process_memory_action(action)
-
-        assert success is False
-        assert reason == "stable_memory_target_required"
         assert memory_manager.memory_store.get_memory_by_id(preference_id) is not None
 
     def test_process_delete_targets_exact_key(self, memory_manager):
@@ -233,7 +235,7 @@ class TestMemoryManagerBasic:
             validate=False,
             check_duplicates=False,
         )
-        memory_manager.store_memory(
+        _, _, shopping_id = memory_manager.store_memory(
             content="Shopping list: bread.",
             layer="feedback",
             memory_key="list:shopping",
@@ -245,7 +247,11 @@ class TestMemoryManagerBasic:
             action="delete",
             content="my shopping list",
             rationale="User asked to delete the shopping list.",
-            target_key="list:shopping",
+            target=MemoryTarget(
+                memory_id=shopping_id,
+                memory_key="list:shopping",
+                expected_revision=1,
+            ),
         )
 
         success, reason = memory_manager.process_memory_action(action)
@@ -254,6 +260,39 @@ class TestMemoryManagerBasic:
         assert reason == "deleted_successfully"
         assert memory_manager.memory_store.get_memory_by_key("list:shopping") is None
         assert memory_manager.memory_store.get_memory_by_id(preference_id) is not None
+
+    def test_process_update_rejects_stale_revision(self, memory_manager):
+        _, _, shopping_id = memory_manager.store_memory(
+            content="Shopping list: bread.",
+            layer="feedback",
+            memory_key="list:shopping",
+            topic="shopping",
+            validate=False,
+            check_duplicates=False,
+        )
+        assert memory_manager.update_memory(
+            shopping_id,
+            content="Shopping list: bread, eggs.",
+            expected_revision=1,
+        ) == (True, "updated_successfully")
+        stale_action = MemoryAction(
+            action="update",
+            content="shopping_list:add:milk",
+            rationale="User acted on an old list view.",
+            target=MemoryTarget(
+                memory_id=shopping_id,
+                memory_key="list:shopping",
+                expected_revision=1,
+            ),
+        )
+
+        success, reason = memory_manager.process_memory_action(stale_action)
+
+        assert success is False
+        assert reason == "memory_revision_conflict"
+        assert memory_manager.memory_store.get_memory_by_id(shopping_id)["content"] == (
+            "Shopping list: bread, eggs."
+        )
 
 
 class TestMemoryRetrieval:
@@ -521,7 +560,13 @@ class TestContextMemories:
         )
 
         assert len(context) <= 2
-        assert all(isinstance(m, str) for m in context)
+        assert all(
+            isinstance(memory, dict)
+            and isinstance(memory.get("id"), int)
+            and isinstance(memory.get("content"), str)
+            and isinstance(memory.get("revision"), int)
+            for memory in context
+        )
 
 
 class TestSQLVectorConsistency:

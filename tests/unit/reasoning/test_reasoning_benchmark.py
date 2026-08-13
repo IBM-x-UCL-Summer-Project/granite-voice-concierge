@@ -120,7 +120,15 @@ def test_benchmark_report_checks_all_required_terms() -> None:
                     "id": "shopping_list_items",
                     "transcript": "What is on my shopping list?",
                     "mode": "shopping",
-                    "memories": ["Shopping list: milk, bread."],
+                    "memories": [
+                        {
+                            "memory_id": 1,
+                            "content": "Shopping list: milk, bread.",
+                            "layer": "feedback",
+                            "revision": 1,
+                            "memory_key": "list:shopping",
+                        }
+                    ],
                     "expected_behavior": "List all supplied shopping items.",
                     "checks": {
                         "must_contain_all": ["milk", "bread"],

@@ -8,7 +8,7 @@ from voice_concierge.memory.memory_retriever import MemoryRetriever
 from voice_concierge.memory.memory_store import MemoryStore
 from voice_concierge.memory.memory_validator import MemoryValidator
 from voice_concierge.memory.vector_store import VectorStore
-from voice_concierge.reasoning.types import MemoryAction
+from voice_concierge.reasoning.types import MemoryAction, MemoryTarget
 
 SHOPPING_LIST_MEMORY_KEY = "list:shopping"
 SHOPPING_LIST_ADD_PREFIX = "shopping_list:add:"
@@ -216,6 +216,7 @@ class MemoryManager:
         source_type: Optional[str] = None,
         event_time: Optional[int] = None,
         strength: Optional[int] = None,
+        expected_revision: Optional[int] = None,
     ) -> Tuple[bool, str]:
         """
         Update a memory and regenerate its embedding if content changed.
@@ -230,6 +231,7 @@ class MemoryManager:
             source_type: New source type (optional)
             event_time: New event time (optional)
             strength: New strength value (optional)
+            expected_revision: Revision that must still be current (optional)
 
         Returns:
             Tuple of (success: bool, reason: str)
@@ -250,9 +252,18 @@ class MemoryManager:
                 source_type=source_type,
                 event_time=event_time,
                 strength=strength,
+                expected_revision=expected_revision,
             )
 
             if not success:
+                current_memory = self.memory_store.get_memory_by_id(memory_id)
+                if current_memory is None:
+                    return False, "memory_not_found"
+                if (
+                    expected_revision is not None
+                    and current_memory["revision"] != expected_revision
+                ):
+                    return False, "memory_revision_conflict"
                 return False, "no_changes"
 
             # Regenerate embedding if content changed
@@ -262,16 +273,7 @@ class MemoryManager:
                     self.vector_store.save_vector(memory_id, embedding)
                 except Exception as e:
                     # Rollback SQL changes if embedding fails
-                    self.memory_store.update_memory(
-                        memory_id=memory_id,
-                        content=original_memory.get("content"),
-                        layer=original_memory.get("layer"),
-                        person=original_memory.get("person"),
-                        topic=original_memory.get("topic"),
-                        source_type=original_memory.get("source_type"),
-                        event_time=original_memory.get("event_time"),
-                        strength=original_memory.get("strength"),
-                    )
+                    self.memory_store.restore_memory(original_memory)
                     return False, f"embedding_error_rolled_back: {str(e)}"
 
             return True, "updated_successfully"
@@ -279,7 +281,11 @@ class MemoryManager:
         except Exception as e:
             return False, f"update_error: {str(e)}"
 
-    def delete_memory(self, memory_id: int) -> Tuple[bool, str]:
+    def delete_memory(
+        self,
+        memory_id: int,
+        expected_revision: Optional[int] = None,
+    ) -> Tuple[bool, str]:
         """
         Delete a memory and its vector.
 
@@ -290,8 +296,14 @@ class MemoryManager:
             Tuple of (success: bool, reason: str)
         """
         try:
-            success = self.memory_store.delete_memory(memory_id)
+            success = self.memory_store.delete_memory(
+                memory_id,
+                expected_revision=expected_revision,
+            )
             if not success:
+                current_memory = self.memory_store.get_memory_by_id(memory_id)
+                if current_memory is not None and expected_revision is not None:
+                    return False, "memory_revision_conflict"
                 return False, "memory_not_found"
 
             # Also delete the associated vector
@@ -318,22 +330,22 @@ class MemoryManager:
         action_type = action.action
 
         if action_type == "store":
+            memory_key = action.target.memory_key if action.target is not None else None
             success, reason, _ = self.store_memory(
                 content=action.content,
                 layer="feedback",
-                memory_key=action.target_key,
+                memory_key=memory_key,
                 validate=False,
             )
             return success, reason
 
         elif action_type == "update":
-            if action.target_key is None:
-                return False, "stable_memory_target_required"
-            target = self.memory_store.get_memory_by_key(action.target_key)
+            assert action.target is not None
+            target, error = self._resolve_memory_target(action.target)
             if target is None:
-                return False, "memory_target_not_found"
-            if action.target_key in STRUCTURED_LISTS:
-                action_prefix, label = STRUCTURED_LISTS[action.target_key]
+                return False, error
+            if target["memory_key"] in STRUCTURED_LISTS:
+                action_prefix, label = STRUCTURED_LISTS[target["memory_key"]]
                 updated_content = _append_structured_list_items(
                     target["content"],
                     action.content,
@@ -342,25 +354,59 @@ class MemoryManager:
                 )
                 if updated_content is None:
                     return False, "invalid_structured_list_action"
-                return self.update_memory(target["id"], content=updated_content)
-            return self.update_memory(target["id"], content=action.content)
+                return self.update_memory(
+                    target["id"],
+                    content=updated_content,
+                    expected_revision=action.target.expected_revision,
+                )
+            return self.update_memory(
+                target["id"],
+                content=action.content,
+                expected_revision=action.target.expected_revision,
+            )
 
         elif action_type == "delete":
-            if action.target_key is None:
-                return False, "stable_memory_target_required"
-            target = self.memory_store.get_memory_by_key(action.target_key)
+            assert action.target is not None
+            target, error = self._resolve_memory_target(action.target)
             if target is None:
-                return False, "memory_target_not_found"
-            return self.delete_memory(target["id"])
+                return False, error
+            return self.delete_memory(
+                target["id"],
+                expected_revision=action.target.expected_revision,
+            )
 
         else:
             return False, f"unknown_action: {action_type}"
+
+    def _resolve_memory_target(
+        self,
+        target: MemoryTarget,
+    ) -> tuple[dict | None, str]:
+        if target.memory_id is not None:
+            memory = self.memory_store.get_memory_by_id(target.memory_id)
+        else:
+            assert target.memory_key is not None
+            memory = self.memory_store.get_memory_by_key(target.memory_key)
+
+        if memory is None:
+            return None, "memory_target_not_found"
+        if (
+            target.memory_key is not None
+            and memory.get("memory_key") != target.memory_key
+        ):
+            return None, "memory_target_mismatch"
+        if (
+            target.expected_revision is not None
+            and memory.get("revision") != target.expected_revision
+        ):
+            return None, "memory_revision_conflict"
+        return memory, ""
 
     def get_context_memories(
         self,
         query: str,
         context_size: int = 3,
-    ) -> list[str]:
+    ) -> list[dict]:
         """
         Get relevant memory snippets for context (for reasoning engine).
 
@@ -369,11 +415,11 @@ class MemoryManager:
             context_size: Number of memories to retrieve
 
         Returns:
-            List of memory content strings suitable for context
+            Identified memory records suitable for an application adapter
         """
         try:
             memories = self.retrieve_similar(query, top_k=context_size)
-            return [m["content"] for m in memories]
+            return memories
         except Exception:
             return []
 

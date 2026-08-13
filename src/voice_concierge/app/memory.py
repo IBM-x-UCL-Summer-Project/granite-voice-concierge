@@ -6,7 +6,7 @@ from typing import Any, Protocol
 
 from voice_concierge.context.types import MemoryScope
 from voice_concierge.memory import LocalMemoryConfig, build_memory_manager
-from voice_concierge.reasoning.types import MemoryAction
+from voice_concierge.reasoning.types import MemoryAction, MemoryReference
 
 
 class MemoryGateway(Protocol):
@@ -18,8 +18,8 @@ class MemoryGateway(Protocol):
         scope: MemoryScope,
         *,
         limit: int = 3,
-    ) -> tuple[str, ...]:
-        """Return memory snippets relevant to one user query."""
+    ) -> tuple[MemoryReference, ...]:
+        """Return identified memory evidence relevant to one user query."""
 
     def apply(self, action: MemoryAction, scope: MemoryScope) -> tuple[bool, str]:
         """Apply a previously confirmed memory action."""
@@ -37,7 +37,7 @@ class NullMemoryGateway:
         scope: MemoryScope,
         *,
         limit: int = 3,
-    ) -> tuple[str, ...]:
+    ) -> tuple[MemoryReference, ...]:
         return ()
 
     def apply(self, action: MemoryAction, scope: MemoryScope) -> tuple[bool, str]:
@@ -59,7 +59,7 @@ class MemoryManagerGateway:
         scope: MemoryScope,
         *,
         limit: int = 3,
-    ) -> tuple[str, ...]:
+    ) -> tuple[MemoryReference, ...]:
         if scope == "none":
             return ()
 
@@ -70,9 +70,9 @@ class MemoryManagerGateway:
             topic=topic,
         )
         return tuple(
-            memory["content"]
+            reference
             for memory in memories
-            if isinstance(memory, dict) and isinstance(memory.get("content"), str)
+            if (reference := _memory_reference(memory)) is not None
         )
 
     def apply(self, action: MemoryAction, scope: MemoryScope) -> tuple[bool, str]:
@@ -81,10 +81,11 @@ class MemoryManagerGateway:
 
         if action.action == "store":
             layer, topic = _storage_metadata(scope)
+            memory_key = action.target.memory_key if action.target is not None else None
             success, reason, _memory_id = self._manager.store_memory(
                 content=action.content,
                 layer=layer,
-                memory_key=action.target_key,
+                memory_key=memory_key,
                 topic=topic,
                 validate=False,
                 auto_classify=False,
@@ -126,3 +127,36 @@ def _storage_metadata(scope: MemoryScope) -> tuple[str, str | None]:
         "list_relevant": ("feedback", "shopping"),
     }
     return metadata[scope]
+
+
+def _memory_reference(value: object) -> MemoryReference | None:
+    if not isinstance(value, dict):
+        return None
+    memory_id = value.get("id")
+    content = value.get("content")
+    layer = value.get("layer")
+    revision = value.get("revision")
+    memory_key = value.get("memory_key")
+    topic = value.get("topic")
+    if (
+        not isinstance(memory_id, int)
+        or isinstance(memory_id, bool)
+        or not isinstance(content, str)
+        or not isinstance(layer, str)
+        or not isinstance(revision, int)
+        or isinstance(revision, bool)
+        or (memory_key is not None and not isinstance(memory_key, str))
+        or (topic is not None and not isinstance(topic, str))
+    ):
+        return None
+    try:
+        return MemoryReference(
+            memory_id=memory_id,
+            content=content,
+            layer=layer,
+            revision=revision,
+            memory_key=memory_key,
+            topic=topic,
+        )
+    except ValueError:
+        return None

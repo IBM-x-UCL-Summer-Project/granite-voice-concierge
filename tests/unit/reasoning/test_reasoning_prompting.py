@@ -6,6 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from tests.support import memory_reference
 from voice_concierge.reasoning import (
     DEFAULT_PROMPT_VERSION,
     ChatMessage,
@@ -67,7 +68,14 @@ def test_granite_messages_include_mode_and_memory_context() -> None:
     request = ReasoningRequest(
         transcript="How do I like you to answer?",
         mode="cooking",
-        memories=("User prefers short answers.",),
+        memories=(
+            memory_reference(
+                "User prefers short answers.",
+                memory_id=12,
+                revision=3,
+                memory_key="preference:answer_length",
+            ),
+        ),
         conversation_summary="User was preparing breakfast.",
         constraints=ReasoningConstraints(max_words=30),
     )
@@ -78,7 +86,10 @@ def test_granite_messages_include_mode_and_memory_context() -> None:
     assert "Maximum spoken response length: 30 words." in messages[0].content
     user_prompt = messages[1].content
     assert "Active mode: cooking" in user_prompt
-    assert "- User prefers short answers." in user_prompt
+    assert (
+        "- id=12; revision=3; key=preference:answer_length; layer=profile; "
+        "topic=none; content=User prefers short answers."
+    ) in user_prompt
     assert "User was preparing breakfast." in user_prompt
     assert "How do I like you to answer?" in user_prompt
     assert "Return only a JSON object" in user_prompt

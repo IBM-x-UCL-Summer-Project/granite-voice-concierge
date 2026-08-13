@@ -12,7 +12,11 @@ from voice_concierge.app.pipeline import VoiceConciergePipeline
 from voice_concierge.app.reasoning import ReasoningTurnContext, ReasoningTurnResult
 from voice_concierge.app.serialization import JsonDict
 from voice_concierge.context.types import MemoryScope
-from voice_concierge.reasoning.types import MemoryAction, ReasoningResponse
+from voice_concierge.reasoning.types import (
+    MemoryAction,
+    MemoryReference,
+    ReasoningResponse,
+)
 
 
 class SmokeReasoningService:
@@ -54,7 +58,8 @@ class SmokeReasoningService:
             return ReasoningTurnResult(
                 response=ReasoningResponse(
                     spoken_response=(
-                        "I found this in local memory: " f"{turn_context.memories[0]}"
+                        "I found this in local memory: "
+                        f"{turn_context.memories[0].content}"
                     ),
                     confidence="high",
                     required_information_source="local_context",
@@ -73,7 +78,8 @@ class SmokeMemoryGateway:
     """In-memory gateway used only by the fake smoke runner."""
 
     def __init__(self) -> None:
-        self.memories: list[str] = []
+        self.memories: list[MemoryReference] = []
+        self._next_memory_id = 1
 
     def retrieve(
         self,
@@ -81,7 +87,7 @@ class SmokeMemoryGateway:
         scope: MemoryScope,
         *,
         limit: int = 3,
-    ) -> tuple[str, ...]:
+    ) -> tuple[MemoryReference, ...]:
         if scope == "none":
             return ()
         return tuple(reversed(self.memories[-limit:]))
@@ -89,11 +95,54 @@ class SmokeMemoryGateway:
     def apply(self, action: MemoryAction, scope: MemoryScope) -> tuple[bool, str]:
         if scope == "none":
             return False, "memory_scope_none"
-        if action.action != "store":
-            return False, f"unsupported_smoke_memory_action: {action.action}"
+        if action.action == "store":
+            self.memories.append(
+                MemoryReference(
+                    memory_id=self._next_memory_id,
+                    content=action.content,
+                    layer="feedback",
+                    revision=1,
+                    memory_key=(
+                        action.target.memory_key if action.target is not None else None
+                    ),
+                )
+            )
+            self._next_memory_id += 1
+            return True, "stored_in_smoke_memory"
 
-        self.memories.append(action.content)
-        return True, "stored_in_smoke_memory"
+        assert action.target is not None
+        index = self._target_index(action)
+        if index is None:
+            return False, "memory_target_not_found"
+        existing = self.memories[index]
+        if (
+            action.target.expected_revision is not None
+            and existing.revision != action.target.expected_revision
+        ):
+            return False, "memory_revision_conflict"
+        if action.action == "delete":
+            del self.memories[index]
+            return True, "deleted_from_smoke_memory"
+
+        self.memories[index] = MemoryReference(
+            memory_id=existing.memory_id,
+            content=action.content,
+            layer=existing.layer,
+            revision=existing.revision + 1,
+            memory_key=existing.memory_key,
+            topic=existing.topic,
+        )
+        return True, "updated_in_smoke_memory"
+
+    def _target_index(self, action: MemoryAction) -> int | None:
+        assert action.target is not None
+        for index, memory in enumerate(self.memories):
+            if action.target.memory_id == memory.memory_id or (
+                action.target.memory_id is None
+                and action.target.memory_key == memory.memory_key
+            ):
+                return index
+        return None
 
 
 def build_smoke_pipeline() -> VoiceConciergePipeline:

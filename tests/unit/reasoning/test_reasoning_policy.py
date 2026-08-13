@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import pytest
 
+from tests.support import memory_reference
 from voice_concierge.reasoning.policy import apply_reasoning_policy_guards
 from voice_concierge.reasoning.types import (
     MemoryAction,
+    MemoryTarget,
     ReasoningConstraints,
     ReasoningRequest,
     ReasoningResponse,
@@ -23,8 +25,8 @@ def test_policy_guard_adds_accessibility_preference_action() -> None:
     assert response.proposed_memory_action is not None
     assert response.proposed_memory_action.action == "update"
     assert response.proposed_memory_action.content == "accessibility.verbosity=short"
-    assert response.proposed_memory_action.target_key == (
-        "preference:accessibility.verbosity"
+    assert response.proposed_memory_action.target == MemoryTarget(
+        memory_key="preference:accessibility.verbosity"
     )
     assert response.metadata["policy_guard"] == "accessibility_preference_confirmation"
 
@@ -53,7 +55,7 @@ def test_policy_guard_ignores_unrelated_memory_for_shopping_list_read() -> None:
         ReasoningRequest(
             transcript="What is on my shopping list?",
             mode="shopping",
-            memories=("User prefers short answers.",),
+            memories=(memory_reference("User prefers short answers."),),
         ),
         ReasoningResponse(
             spoken_response="Milk and bread are on your list.",
@@ -88,7 +90,16 @@ def test_policy_guard_uses_supplied_shopping_list_memory() -> None:
         ReasoningRequest(
             transcript="What is on my shopping list?",
             mode="shopping",
-            memories=("Shopping list: milk, bread.",),
+            memories=(
+                memory_reference(
+                    "Shopping list: milk, bread.",
+                    memory_id=10,
+                    layer="feedback",
+                    revision=3,
+                    memory_key="list:shopping",
+                    topic="shopping",
+                ),
+            ),
         ),
         ReasoningResponse(
             spoken_response="Eggs are on your list.",
@@ -97,6 +108,7 @@ def test_policy_guard_uses_supplied_shopping_list_memory() -> None:
                 action="update",
                 content="shopping_list:add:eggs",
                 rationale="Model confused recall with update.",
+                target=MemoryTarget(memory_key="list:shopping"),
             ),
             confidence="medium",
         ),
@@ -131,7 +143,7 @@ def test_policy_guard_blocks_time_sensitive_info_with_unrelated_memory() -> None
     response = apply_reasoning_policy_guards(
         ReasoningRequest(
             transcript="When is the next GTA game coming out?",
-            memories=("User prefers short answers.",),
+            memories=(memory_reference("User prefers short answers."),),
         ),
         ReasoningResponse(
             spoken_response="Your saved note says the release is tomorrow.",
@@ -149,7 +161,7 @@ def test_policy_guard_uses_relevant_local_time_sensitive_context() -> None:
     response = apply_reasoning_policy_guards(
         ReasoningRequest(
             transcript="When is the next GTA game coming out?",
-            memories=("Saved GTA date: 26 May.",),
+            memories=(memory_reference("Saved GTA date: 26 May."),),
         ),
         ReasoningResponse(
             spoken_response="It is coming out on 26 May.",
@@ -240,7 +252,12 @@ def test_policy_guard_allows_cooking_now_from_local_ingredients() -> None:
         ReasoningRequest(
             transcript="What can I cook now?",
             mode="cooking",
-            memories=("Available ingredients: eggs, tomato, cheese.",),
+            memories=(
+                memory_reference(
+                    "Available ingredients: eggs, tomato, cheese.",
+                    topic="ingredients",
+                ),
+            ),
         ),
         original,
     )
@@ -384,7 +401,9 @@ def test_policy_guard_does_not_treat_bread_as_read_request() -> None:
     assert response.proposed_memory_action is not None
     assert response.proposed_memory_action.action == "store"
     assert response.proposed_memory_action.content == "Shopping list: milk, bread."
-    assert response.proposed_memory_action.target_key == "list:shopping"
+    assert response.proposed_memory_action.target == MemoryTarget(
+        memory_key="list:shopping"
+    )
     assert response.metadata["policy_guard"] == "shopping_list_add_confirmation"
 
 
@@ -401,6 +420,7 @@ def test_policy_guard_rewrites_action_without_confirmation_wording() -> None:
                 action="update",
                 content="shopping_list:add:milk and bread",
                 rationale="User asked to add shopping list items.",
+                target=MemoryTarget(memory_key="list:shopping"),
             ),
             confidence="medium",
         ),
@@ -433,6 +453,7 @@ def test_policy_guard_rewrites_confirmed_action_with_wrong_content() -> None:
                 action="update",
                 content="shopping_list:add:eggs",
                 rationale="Model extracted the wrong shopping item.",
+                target=MemoryTarget(memory_key="list:shopping"),
             ),
             confidence="medium",
         ),
@@ -458,7 +479,11 @@ def test_policy_guard_keeps_confirmed_action_with_confirmation_wording() -> None
             action="update",
             content="shopping_list:add:milk and bread",
             rationale="User asked to add shopping list items.",
-            target_key="list:shopping",
+            target=MemoryTarget(
+                memory_id=7,
+                memory_key="list:shopping",
+                expected_revision=2,
+            ),
         ),
         confidence="medium",
     )
@@ -467,7 +492,16 @@ def test_policy_guard_keeps_confirmed_action_with_confirmation_wording() -> None
         ReasoningRequest(
             transcript="Add milk and bread to my shopping list.",
             mode="shopping",
-            memories=("Shopping list: eggs.",),
+            memories=(
+                memory_reference(
+                    "Shopping list: eggs.",
+                    memory_id=7,
+                    layer="feedback",
+                    revision=2,
+                    memory_key="list:shopping",
+                    topic="shopping",
+                ),
+            ),
         ),
         original,
     )
@@ -485,7 +519,9 @@ def test_policy_guard_stores_first_task_list_item() -> None:
     assert response.proposed_memory_action is not None
     assert response.proposed_memory_action.action == "store"
     assert response.proposed_memory_action.content == "Task list: call the dentist."
-    assert response.proposed_memory_action.target_key == "list:tasks"
+    assert response.proposed_memory_action.target == MemoryTarget(
+        memory_key="list:tasks"
+    )
     assert response.metadata["policy_guard"] == "task_list_add_confirmation"
 
 
@@ -493,7 +529,16 @@ def test_policy_guard_updates_existing_task_list() -> None:
     response = apply_reasoning_policy_guards(
         ReasoningRequest(
             transcript="Add call the dentist to my to-do list.",
-            memories=("Task list: buy stamps.",),
+            memories=(
+                memory_reference(
+                    "Task list: buy stamps.",
+                    memory_id=9,
+                    layer="feedback",
+                    revision=4,
+                    memory_key="list:tasks",
+                    topic="task",
+                ),
+            ),
         ),
         ReasoningResponse(spoken_response="Okay.", confidence="medium"),
     )
@@ -501,7 +546,11 @@ def test_policy_guard_updates_existing_task_list() -> None:
     assert response.proposed_memory_action is not None
     assert response.proposed_memory_action.action == "update"
     assert response.proposed_memory_action.content == ("task_list:add:call the dentist")
-    assert response.proposed_memory_action.target_key == "list:tasks"
+    assert response.proposed_memory_action.target == MemoryTarget(
+        memory_id=9,
+        memory_key="list:tasks",
+        expected_revision=4,
+    )
 
 
 def test_policy_guard_targets_task_list_delete_by_stable_key() -> None:
@@ -512,7 +561,9 @@ def test_policy_guard_targets_task_list_delete_by_stable_key() -> None:
 
     assert response.proposed_memory_action is not None
     assert response.proposed_memory_action.action == "delete"
-    assert response.proposed_memory_action.target_key == "list:tasks"
+    assert response.proposed_memory_action.target == MemoryTarget(
+        memory_key="list:tasks"
+    )
 
 
 def test_policy_guard_adds_memory_store_action() -> None:
@@ -554,8 +605,54 @@ def test_policy_guard_adds_memory_delete_action() -> None:
     assert response.proposed_memory_action is not None
     assert response.proposed_memory_action.action == "delete"
     assert response.proposed_memory_action.content == "my old shopping list"
-    assert response.proposed_memory_action.target_key == "list:shopping"
+    assert response.proposed_memory_action.target == MemoryTarget(
+        memory_key="list:shopping"
+    )
     assert response.metadata["policy_guard"] == "memory_delete_confirmation"
+
+
+def test_policy_guard_targets_exact_supplied_memory_for_generic_delete() -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(
+            transcript="Forget I prefer tea from my memory.",
+            memories=(
+                memory_reference(
+                    "I prefer tea",
+                    memory_id=37,
+                    revision=4,
+                ),
+                memory_reference(
+                    "Shopping list: milk.",
+                    memory_id=38,
+                    layer="feedback",
+                    memory_key="list:shopping",
+                ),
+            ),
+        ),
+        ReasoningResponse(spoken_response="Okay.", confidence="medium"),
+    )
+
+    assert response.proposed_memory_action is not None
+    assert response.proposed_memory_action.target == MemoryTarget(
+        memory_id=37,
+        expected_revision=4,
+    )
+
+
+def test_policy_guard_rejects_ambiguous_generic_delete_target() -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(
+            transcript="Forget I prefer tea from my memory.",
+            memories=(
+                memory_reference("I prefer tea", memory_id=37),
+                memory_reference("I prefer tea", memory_id=38),
+            ),
+        ),
+        ReasoningResponse(spoken_response="Okay.", confidence="medium"),
+    )
+
+    assert response.proposed_memory_action is None
+    assert response.metadata["policy_guard"] == "stable_memory_target_required"
 
 
 def test_policy_guard_prioritizes_delete_over_note_store_detection() -> None:
@@ -604,7 +701,7 @@ def test_policy_guard_removes_memory_action_for_supplied_memory_recall() -> None
     response = apply_reasoning_policy_guards(
         ReasoningRequest(
             transcript="How do I like you to answer?",
-            memories=("User prefers short answers.",),
+            memories=(memory_reference("User prefers short answers."),),
         ),
         ReasoningResponse(
             spoken_response=(

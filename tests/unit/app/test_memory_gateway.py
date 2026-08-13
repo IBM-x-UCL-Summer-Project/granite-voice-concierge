@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from voice_concierge.app.memory import MemoryManagerGateway, NullMemoryGateway
-from voice_concierge.reasoning.types import MemoryAction
+from voice_concierge.reasoning.types import MemoryAction, MemoryReference, MemoryTarget
 
 
 class FakeMemoryManager:
@@ -28,9 +28,23 @@ class FakeMemoryManager:
             }
         )
         return [
-            {"content": "Remembered milk."},
+            {
+                "id": 1,
+                "content": "Remembered milk.",
+                "layer": "feedback",
+                "revision": 2,
+                "memory_key": "list:shopping",
+                "topic": "shopping",
+            },
             {"content": 123},
-            {"content": "Remembered bread."},
+            {
+                "id": 2,
+                "content": "Remembered bread.",
+                "layer": "feedback",
+                "revision": 1,
+                "memory_key": None,
+                "topic": "shopping",
+            },
         ]
 
     def store_memory(
@@ -88,7 +102,23 @@ def test_memory_manager_gateway_retrieves_content_for_scoped_query() -> None:
         "What is on my shopping list?", "list_relevant", limit=2
     )
 
-    assert memories == ("Remembered milk.", "Remembered bread.")
+    assert memories == (
+        MemoryReference(
+            memory_id=1,
+            content="Remembered milk.",
+            layer="feedback",
+            revision=2,
+            memory_key="list:shopping",
+            topic="shopping",
+        ),
+        MemoryReference(
+            memory_id=2,
+            content="Remembered bread.",
+            layer="feedback",
+            revision=1,
+            topic="shopping",
+        ),
+    )
     assert manager.retrieve_calls == [
         {
             "query": "What is on my shopping list?",
@@ -136,6 +166,7 @@ def test_memory_manager_gateway_delegates_update_and_delete_actions() -> None:
         action="delete",
         content="Remove old appointment.",
         rationale="User asked to forget it.",
+        target=MemoryTarget(memory_id=42, expected_revision=3),
     )
 
     assert gateway.apply(action, "personal_relevant") == (True, "processed")

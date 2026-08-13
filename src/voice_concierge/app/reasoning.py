@@ -9,6 +9,7 @@ from typing import Literal, Protocol
 from voice_concierge.reasoning import (
     DEFAULT_MODEL_SELECTION_PATH,
     DEFAULT_PROMPT_VERSION,
+    MemoryReference,
     ReasoningBackendUnavailableError,
     ReasoningConfigurationError,
     ReasoningConstraints,
@@ -61,7 +62,7 @@ class ReasoningTurnContext:
     """Prepared app context for one transcript-in, response-out reasoning turn."""
 
     mode: str = "home"
-    memories: tuple[str, ...] = ()
+    memories: tuple[MemoryReference, ...] = ()
     conversation_summary: str | None = None
     max_words: int = 60
     allow_memory_writes: bool = True

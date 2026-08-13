@@ -10,6 +10,7 @@ import pytest
 from httpx import ReadTimeout
 from ollama import ChatResponse, ResponseError
 
+from tests.support import memory_reference
 from voice_concierge.reasoning import (
     LocalModelDetails,
     LocalModelInfo,
@@ -163,7 +164,7 @@ def test_selected_runtime_bounds_generation_and_exposes_metadata(
         ReasoningRequest(
             transcript="When is my appointment?",
             mode="home",
-            memories=("Appointment is at noon.",),
+            memories=(memory_reference("Appointment is at noon."),),
             conversation_summary="The user asked about lunch earlier.",
             constraints=ReasoningConstraints(
                 max_words=25,

@@ -39,7 +39,7 @@ from voice_concierge.context.types import (
     ContextMode,
     ContextState,
 )
-from voice_concierge.reasoning.types import ReasoningResponse
+from voice_concierge.reasoning.types import MemoryReference, ReasoningResponse
 
 _EMPTY_TRANSCRIPT_RESPONSE = "I didn't catch that. Could you say it again?"
 _STT_FAILED_RESPONSE = "I couldn't transcribe that. Please try again."
@@ -237,7 +237,7 @@ class VoiceConciergePipeline:
         if command_result is not None:
             return command_result
 
-        memories: tuple[str, ...] = ()
+        memories: tuple[MemoryReference, ...] = ()
         errors: list[AppTurnError] = []
         if context_decision.policy.memory_scope != "none":
             try:

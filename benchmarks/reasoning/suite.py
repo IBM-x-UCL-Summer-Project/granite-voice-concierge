@@ -11,6 +11,7 @@ from typing import Any, Iterable, Literal
 
 from voice_concierge.reasoning.engine import ReasoningEngine, TraceableReasoningEngine
 from voice_concierge.reasoning.types import (
+    MemoryReference,
     ReasoningConstraints,
     ReasoningRequest,
     ReasoningResponse,
@@ -29,7 +30,7 @@ class BenchmarkCase:
     transcript: str
     mode: str
     expected_behavior: str
-    memories: tuple[str, ...] = ()
+    memories: tuple[MemoryReference, ...] = ()
     conversation_summary: str | None = None
     checks: dict[str, Any] | None = None
 
@@ -58,7 +59,7 @@ class BenchmarkResult:
     category: str
     transcript: str
     mode: str
-    memories: tuple[str, ...]
+    memories: tuple[MemoryReference, ...]
     conversation_summary: str | None
     expected_behavior: str
     spoken_response: str
@@ -105,7 +106,12 @@ def iter_benchmark_cases(suite: dict[str, Any]) -> Iterable[BenchmarkCase]:
                 transcript=case["transcript"],
                 mode=case.get("mode", "home"),
                 expected_behavior=case["expected_behavior"],
-                memories=tuple(case.get("memories", ())),
+                memories=tuple(
+                    _memory_reference_from_payload(memory, index=memory_index)
+                    for memory_index, memory in enumerate(
+                        case.get("memories", ()),
+                    )
+                ),
                 conversation_summary=case.get("conversation_summary"),
                 checks=case.get("checks"),
             )
@@ -217,6 +223,26 @@ def run_reasoning_benchmark(
         "elapsed_ms": round(elapsed_ms, 3),
         "results": [asdict(result) for result in results],
     }
+
+
+def _memory_reference_from_payload(
+    payload: object,
+    *,
+    index: int,
+) -> MemoryReference:
+    if not isinstance(payload, dict):
+        raise ValueError(f"memories[{index}] must be an object.")
+    try:
+        return MemoryReference(
+            memory_id=payload["memory_id"],
+            content=payload["content"],
+            layer=payload["layer"],
+            revision=payload["revision"],
+            memory_key=payload.get("memory_key"),
+            topic=payload.get("topic"),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"memories[{index}] is invalid: {exc}") from exc
 
 
 def _generate_responses(

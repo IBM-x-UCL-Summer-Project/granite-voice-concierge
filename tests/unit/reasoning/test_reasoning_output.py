@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from voice_concierge.reasoning import (
     MemoryAction,
+    MemoryTarget,
     ReasoningResponse,
     apply_spoken_word_limit,
 )
@@ -38,6 +39,7 @@ def test_word_limit_preserves_confirmation_for_memory_action() -> None:
         action="update",
         content="shopping_list:add:milk and bread",
         rationale="User asked to add shopping items.",
+        target=MemoryTarget(memory_key="list:shopping"),
     )
     response = ReasoningResponse(
         spoken_response=(

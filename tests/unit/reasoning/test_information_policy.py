@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from tests.support import memory_reference
 from voice_concierge.reasoning.information_policy import decide_information_policy
 from voice_concierge.reasoning.types import (
     ReasoningConstraints,
@@ -56,7 +57,7 @@ def test_information_policy_allows_supplied_local_context_with_current_caveat() 
     decision = decide_information_policy(
         ReasoningRequest(
             transcript="Use my saved details.",
-            memories=("Saved status: delayed.",),
+            memories=(memory_reference("Saved status: delayed."),),
         ),
         ReasoningResponse(
             spoken_response="The saved status is delayed.",

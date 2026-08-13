@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.support import memory_reference
 from voice_concierge.app import (
     AppReasoningConfig,
     ReasoningTurnContext,
@@ -104,7 +105,13 @@ def test_process_transcript_builds_reasoning_request_from_app_context() -> None:
         "What is on my shopping list?",
         ReasoningTurnContext(
             mode="shopping",
-            memories=("Shopping list includes apples.",),
+            memories=(
+                memory_reference(
+                    "Shopping list includes apples.",
+                    layer="feedback",
+                    memory_key="list:shopping",
+                ),
+            ),
             conversation_summary="The user asked about groceries.",
             max_words=25,
             allow_memory_writes=False,
@@ -121,7 +128,13 @@ def test_process_transcript_builds_reasoning_request_from_app_context() -> None:
     request = engine.requests[0]
     assert request.transcript == "What is on my shopping list?"
     assert request.mode == "shopping"
-    assert request.memories == ("Shopping list includes apples.",)
+    assert request.memories == (
+        memory_reference(
+            "Shopping list includes apples.",
+            layer="feedback",
+            memory_key="list:shopping",
+        ),
+    )
     assert request.conversation_summary == "The user asked about groceries."
     assert request.constraints.max_words == 25
     assert request.constraints.allow_memory_writes is False

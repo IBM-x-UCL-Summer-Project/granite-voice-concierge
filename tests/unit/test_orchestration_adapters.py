@@ -6,7 +6,11 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from voice_concierge.orchestration import MemoryManagerGateway, OfflineTTSSpeechGateway
-from voice_concierge.reasoning.types import MemoryAction
+from voice_concierge.reasoning.types import (
+    MemoryAction,
+    MemoryReference,
+    MemoryTarget,
+)
 
 try:
     from voice_concierge.voice_output.tts_pipeline import OfflineTTS
@@ -30,7 +34,17 @@ class FakeMemoryManager:
                 "layer": layer,
             }
         )
-        return [{"content": "remembered item"}, {"missing": "content"}]
+        return [
+            {
+                "id": 1,
+                "content": "remembered item",
+                "layer": "profile",
+                "revision": 1,
+                "memory_key": None,
+                "topic": None,
+            },
+            {"missing": "content"},
+        ]
 
     def store_memory(self, **kwargs):
         self.store_calls.append(kwargs)
@@ -63,15 +77,36 @@ class OrchestrationAdaptersTest(unittest.TestCase):
         self.assertEqual(gateway.retrieve("tea", "none"), ())
         self.assertEqual(
             gateway.retrieve("tea", "personal_relevant", limit=2),
-            ("remembered item",),
+            (
+                MemoryReference(
+                    memory_id=1,
+                    content="remembered item",
+                    layer="profile",
+                    revision=1,
+                ),
+            ),
         )
         self.assertEqual(
             gateway.retrieve("recipe", "task_relevant_only"),
-            ("remembered item",),
+            (
+                MemoryReference(
+                    memory_id=1,
+                    content="remembered item",
+                    layer="profile",
+                    revision=1,
+                ),
+            ),
         )
         self.assertEqual(
             gateway.retrieve("milk", "list_relevant"),
-            ("remembered item",),
+            (
+                MemoryReference(
+                    memory_id=1,
+                    content="remembered item",
+                    layer="profile",
+                    revision=1,
+                ),
+            ),
         )
 
         self.assertEqual(manager.retrieve_calls[0]["topic"], None)
@@ -115,7 +150,7 @@ class OrchestrationAdaptersTest(unittest.TestCase):
             action="update",
             content="User likes tea.",
             rationale="Preference.",
-            target_key="preference:drink",
+            target=MemoryTarget(memory_key="preference:drink"),
             requires_confirmation=True,
         )
 

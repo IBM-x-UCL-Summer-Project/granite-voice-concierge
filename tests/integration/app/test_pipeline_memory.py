@@ -11,7 +11,12 @@ from voice_concierge.app.reasoning import (
     ReasoningTurnResult,
 )
 from voice_concierge.memory import LocalMemoryConfig, build_memory_manager
-from voice_concierge.reasoning.types import MemoryAction, ReasoningResponse
+from voice_concierge.reasoning.types import (
+    MemoryAction,
+    MemoryReference,
+    MemoryTarget,
+    ReasoningResponse,
+)
 
 
 class DeterministicEmbeddingService:
@@ -128,7 +133,14 @@ def test_confirmed_memory_survives_reopen_and_reaches_reasoning(tmp_path) -> Non
     assert recall_reasoning.contexts
     context = recall_reasoning.contexts[0]
     assert context is not None
-    assert context.memories == ("User prefers tea.",)
+    assert context.memories == (
+        MemoryReference(
+            memory_id=1,
+            content="User prefers tea.",
+            layer="profile",
+            revision=1,
+        ),
+    )
 
 
 @pytest.mark.integration
@@ -204,13 +216,13 @@ def test_first_structured_list_item_is_stored_then_later_items_are_updated(
         action="store",
         content=first_content,
         rationale="User added the first structured-list item.",
-        target_key=memory_key,
+        target=MemoryTarget(memory_key=memory_key),
     )
     later_item = MemoryAction(
         action="update",
         content=update_content,
         rationale="User added another structured-list item.",
-        target_key=memory_key,
+        target=MemoryTarget(memory_key=memory_key, expected_revision=1),
     )
 
     try:

@@ -4,19 +4,32 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from tests.support import memory_reference
 from voice_concierge.context import ContextState
 from voice_concierge.orchestration import ConciergeOrchestrator
-from voice_concierge.reasoning.types import MemoryAction, ReasoningResponse
+from voice_concierge.reasoning.types import (
+    MemoryAction,
+    MemoryReference,
+    ReasoningResponse,
+)
 
 
 class RecordingMemoryGateway:
-    def __init__(self, memories: tuple[str, ...] = ("prefers tea",)) -> None:
+    def __init__(
+        self,
+        memories: tuple[MemoryReference, ...] = (memory_reference("prefers tea"),),
+    ) -> None:
         self.memories = memories
         self.retrieve_calls: list[tuple[str, str, int]] = []
         self.apply_calls: list[tuple[MemoryAction, str]] = []
         self.apply_result = (True, "stored_successfully")
 
-    def retrieve(self, query: str, scope: str, limit: int = 3) -> tuple[str, ...]:
+    def retrieve(
+        self,
+        query: str,
+        scope: str,
+        limit: int = 3,
+    ) -> tuple[MemoryReference, ...]:
         self.retrieve_calls.append((query, scope, limit))
         return self.memories
 
@@ -54,7 +67,12 @@ class RecordingSpeechGateway:
 
 
 class FailingMemoryGateway(RecordingMemoryGateway):
-    def retrieve(self, query: str, scope: str, limit: int = 3) -> tuple[str, ...]:
+    def retrieve(
+        self,
+        query: str,
+        scope: str,
+        limit: int = 3,
+    ) -> tuple[MemoryReference, ...]:
         raise RuntimeError("memory unavailable")
 
 
@@ -96,7 +114,7 @@ class ConciergeOrchestratorTest(unittest.TestCase):
         request = reasoning.requests[0]
         self.assertEqual(request.transcript, "What did we decide yesterday?")
         self.assertEqual(request.mode, "home")
-        self.assertEqual(request.memories, ("prefers tea",))
+        self.assertEqual(request.memories, (memory_reference("prefers tea"),))
         self.assertEqual(request.constraints.max_words, 60)
         self.assertTrue(request.constraints.allow_memory_writes)
         self.assertEqual(speech.speak_calls, [("Here is a useful answer.", "normal")])

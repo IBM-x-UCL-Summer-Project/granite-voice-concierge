@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from tests.support import memory_reference
 from voice_concierge.app.pipeline import VoiceConciergePipeline
 from voice_concierge.app.reasoning import (
     ReasoningFailure,
@@ -18,7 +19,12 @@ from voice_concierge.app.types import (
 )
 from voice_concierge.audio.types import CapturedAudio
 from voice_concierge.context.types import ContextState
-from voice_concierge.reasoning.types import MemoryAction, ReasoningResponse
+from voice_concierge.reasoning.types import (
+    MemoryAction,
+    MemoryReference,
+    MemoryTarget,
+    ReasoningResponse,
+)
 
 
 class FakeReasoning:
@@ -49,7 +55,7 @@ class FakeReasoning:
 class FakeMemory:
     def __init__(
         self,
-        memories: tuple[str, ...] = (),
+        memories: tuple[MemoryReference, ...] = (),
         *,
         retrieve_error: Exception | None = None,
         apply_result: tuple[bool, str] = (True, "stored_successfully"),
@@ -67,7 +73,7 @@ class FakeMemory:
         scope: str,
         *,
         limit: int = 3,
-    ) -> tuple[str, ...]:
+    ) -> tuple[MemoryReference, ...]:
         self.retrieve_calls.append({"query": query, "scope": scope, "limit": limit})
         if self.retrieve_error is not None:
             raise self.retrieve_error
@@ -132,7 +138,8 @@ def test_process_transcript_calls_memory_and_reasoning_with_context_policy() -> 
     reasoning = FakeReasoning(
         ReasoningResponse(spoken_response="Tea sounds good.", confidence="high")
     )
-    memory = FakeMemory(memories=("User prefers tea.",))
+    remembered_preference = memory_reference("User prefers tea.")
+    memory = FakeMemory(memories=(remembered_preference,))
     pipeline = VoiceConciergePipeline(reasoning, memory=memory)
 
     result = pipeline.process_transcript("  What should I drink?  ")
@@ -154,7 +161,7 @@ def test_process_transcript_calls_memory_and_reasoning_with_context_policy() -> 
     assert isinstance(reasoning_context, ReasoningTurnContext)
     assert reasoning.calls[0]["transcript"] == "What should I drink?"
     assert reasoning_context.mode == "home"
-    assert reasoning_context.memories == ("User prefers tea.",)
+    assert reasoning_context.memories == (remembered_preference,)
     assert reasoning_context.conversation_summary is None
     assert reasoning_context.max_words == 60
     assert reasoning_context.allow_memory_writes is True
@@ -435,7 +442,7 @@ def test_ambiguous_memory_confirmation_preserves_pending_action(
         action="delete",
         content="shopping list",
         rationale="User asked to delete it.",
-        target_key="list:shopping",
+        target=MemoryTarget(memory_key="list:shopping"),
     )
     state = AppPipelineState(
         pending_memory_action=action,

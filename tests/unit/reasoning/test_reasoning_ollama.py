@@ -9,7 +9,9 @@ import pytest
 from httpx import ReadTimeout
 from ollama import ChatResponse, ResponseError
 
+from tests.support import memory_reference
 from voice_concierge.reasoning import (
+    MemoryTarget,
     OllamaBackendUnavailableError,
     OllamaConfig,
     OllamaGenerationError,
@@ -148,7 +150,7 @@ def test_ollama_engine_sends_chat_messages_and_generated_schema() -> None:
     response = engine.generate(
         ReasoningRequest(
             transcript="How do I like you to answer?",
-            memories=("User prefers short answers.",),
+            memories=(memory_reference("User prefers short answers."),),
         )
     )
 
@@ -240,7 +242,7 @@ def test_ollama_engine_parses_memory_action() -> None:
                 "action": "store",
                 "content": "User prefers short answers.",
                 "rationale": "User explicitly asked to remember it.",
-                "target_key": "preference:answer_length",
+                "target": {"memory_key": "preference:answer_length"},
                 "requires_confirmation": True,
             },
             confidence="high",
@@ -254,11 +256,32 @@ def test_ollama_engine_parses_memory_action() -> None:
     assert response.proposed_memory_action is not None
     assert response.proposed_memory_action.action == "store"
     assert response.proposed_memory_action.content == "User prefers short answers."
-    assert response.proposed_memory_action.target_key == "preference:answer_length"
+    assert response.proposed_memory_action.target == MemoryTarget(
+        memory_key="preference:answer_length"
+    )
     assert response.required_information_source == "user_input"
     assert response.freshness_requirement == "not_required"
     assert "confirm" in response.spoken_response.lower()
     assert response.confidence == "high"
+
+
+def test_ollama_engine_rejects_mutation_without_exact_target() -> None:
+    engine, _ = _engine_with_response(
+        _structured_content(
+            "I updated that.",
+            proposed_memory_action={
+                "action": "update",
+                "content": "User prefers tea.",
+                "rationale": "Model selected a memory without identity.",
+                "requires_confirmation": True,
+            },
+        )
+    )
+
+    response = engine.generate(ReasoningRequest(transcript="Please help."))
+
+    assert response.proposed_memory_action is None
+    assert response.metadata["structured_parse_error"] == ("schema_validation_failed")
 
 
 def test_ollama_engine_maps_connection_errors() -> None:

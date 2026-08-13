@@ -152,6 +152,8 @@ List[dict]  # Memory list sorted by similarity
     'id': 1,              # Memory ID
     'content': 'content', # Memory content
     'layer': 'profile',   # Layer
+    'memory_key': None,   # Optional stable scoped key
+    'revision': 1,        # Optimistic-concurrency revision
     'created_at': 1234567,# Creation timestamp
     'person': 'Kenny',    # Related person
     'topic': 'semantic',  # Memory type or topic
@@ -193,6 +195,7 @@ success, reason = manager.update_memory(
     person: Optional[str] = None,        # New related person
     topic: Optional[str] = None,         # New topic
     strength: Optional[int] = None,      # New importance (1-10)
+    expected_revision: Optional[int] = None, # Reject a stale update
 )
 ```
 
@@ -208,6 +211,7 @@ success, reason = manager.update_memory(
     memory_id=1,
     content="Updated memory content",
     strength=3,
+    expected_revision=1,
 )
 ```
 
@@ -215,6 +219,7 @@ success, reason = manager.update_memory(
 
 - `"updated_successfully"` - Successfully updated
 - `"no_changes"` - No changes made
+- `"memory_revision_conflict"` - The record changed after it was retrieved
 - `"update_error: ..."` - Update failed
 
 ---
@@ -224,7 +229,10 @@ success, reason = manager.update_memory(
 Delete a memory and its vector.
 
 ```python
-success, reason = manager.delete_memory(memory_id: int)
+success, reason = manager.delete_memory(
+    memory_id: int,
+    expected_revision: Optional[int] = None,
+)
 ```
 
 **Return values:**
@@ -245,7 +253,7 @@ success, reason = manager.delete_memory(1)
 Process memory actions proposed by the reasoning engine.
 
 ```python
-from voice_concierge.reasoning.types import MemoryAction
+from voice_concierge.reasoning.types import MemoryAction, MemoryTarget
 
 success, reason = manager.process_memory_action(
     action: MemoryAction
@@ -259,9 +267,15 @@ MemoryAction(
     action: str,  # "store" / "update" / "delete"
     content: str,  # Content of the action
     rationale: str,  # Why this action should be taken
+    target: Optional[MemoryTarget],  # Required for update/delete
     requires_confirmation: bool,  # Whether confirmation is required
 )
 ```
+
+`update` and `delete` actions fail closed unless `target` contains a stable
+memory ID or an explicit scoped key. Targets derived from retrieved memories
+should also carry `expected_revision`. Semantic retrieval is not used to choose
+which record is mutated.
 
 **Example:**
 
@@ -292,10 +306,10 @@ memories = manager.get_context_memories(
 **Return values:**
 
 ```python
-List[str]  # List of memory contents
+List[dict]  # Identified memory records
 
 # Example:
-["User likes pasta", "User works at IBM", "User travels to London next month"]
+[{"id": 1, "content": "User likes pasta", "revision": 1, ...}]
 ```
 
 **Example:**
@@ -306,13 +320,8 @@ context = manager.get_context_memories(
     context_size=5,
 )
 
-# For use in reasoning requests
-from voice_concierge.reasoning.types import ReasoningRequest
-
-request = ReasoningRequest(
-    transcript="User input",
-    memories=tuple(context),  # Pass context
-)
+# Application code should normally retrieve through MemoryManagerGateway,
+# which converts these records to typed MemoryReference values.
 ```
 
 ---
@@ -366,6 +375,7 @@ memory_id = store.create_memory(
     person: Optional[str] = None,
     source_type: Optional[str] = None,
     topic: Optional[str] = None,
+    memory_key: Optional[str] = None,
 )
 ```
 
@@ -385,6 +395,7 @@ memories = store.get_memories(
 success = store.update_memory(
     memory_id: int,
     content: Optional[str] = None,
+    expected_revision: Optional[int] = None,
     # ... other fields
 )
 ```
@@ -392,7 +403,10 @@ success = store.update_memory(
 #### `delete_memory()`
 
 ```python
-success = store.delete_memory(memory_id: int)
+success = store.delete_memory(
+    memory_id: int,
+    expected_revision: Optional[int] = None,
+)
 ```
 
 #### `close()`
