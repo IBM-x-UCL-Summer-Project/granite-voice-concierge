@@ -21,6 +21,10 @@ def apply_reasoning_policy_guards(
 
     transcript = request.transcript.strip()
     text = transcript.lower()
+    shopping_items = _shopping_items_to_add(transcript, text)
+    accessibility_preference = _accessibility_preference(text)
+    memory_write_requested = _memory_write_requested(text)
+    delete_target = memory_delete_target(transcript)
 
     if _shopping_list_read_requested(text):
         shopping_list_memory = _shopping_list_memory(request.memories)
@@ -43,7 +47,25 @@ def apply_reasoning_policy_guards(
             guard="supplied_shopping_list_memory",
         )
 
-    if _time_sensitive_info_requested(text):
+    if (
+        request.constraints.offline
+        and not memory_write_requested
+        and _time_sensitive_info_requested(text)
+    ):
+        supplied_context = _relevant_time_sensitive_context(request)
+        if supplied_context is not None:
+            return _replace_response(
+                response,
+                spoken_response=(
+                    f"Your local information says: {supplied_context} "
+                    "I cannot verify whether it is current."
+                ),
+                needs_confirmation=False,
+                proposed_memory_action=None,
+                confidence="high",
+                guard="supplied_time_sensitive_context",
+            )
+
         return _replace_response(
             response,
             spoken_response="I cannot verify up-to-date information offline.",
@@ -65,11 +87,6 @@ def apply_reasoning_policy_guards(
             confidence="high",
             guard="supplied_memory_recall",
         )
-
-    shopping_items = _shopping_items_to_add(transcript, text)
-    accessibility_preference = _accessibility_preference(text)
-    memory_write_requested = _memory_write_requested(text)
-    delete_target = memory_delete_target(transcript)
 
     if not request.constraints.allow_memory_writes and _memory_change_requested(
         response=response,
@@ -288,7 +305,30 @@ def _shopping_list_read_requested(text: str) -> bool:
 
 def _time_sensitive_info_requested(text: str) -> bool:
     if re.search(
-        r"\b(today|current|currently|latest|newest|recent|now|live|weather|news)\b",
+        r"\b(weather|forecast|news|headlines?|prices?|stock|scores?|traffic)\b"
+        r"|\b(exchange rates?|opening hours?|live status)\b",
+        text,
+    ):
+        return True
+
+    if re.search(
+        r"\b(what time is it|what is the time|what's the time|current time|"
+        r"today's date|todays date|what's today's date|what's todays date|"
+        r"what (day|date) is it|what is the (day|date))\b",
+        text,
+    ):
+        return True
+
+    if re.search(r"\b(open|closed|happening)\b", text) and re.search(
+        r"\b(now|today|currently|live)\b", text
+    ):
+        return True
+
+    if re.search(
+        r"\b(current|currently|latest|newest|recent|live)\b", text
+    ) and re.search(
+        r"\b(version|release|price|cost|schedule|status|availability|"
+        r"president|prime minister|ceo|population)\b",
         text,
     ):
         return True
@@ -303,6 +343,58 @@ def _time_sensitive_info_requested(text: str) -> bool:
         re.search(r"\b(when|what date)\b", text)
         and re.search(r"\b(release|released|coming out|launch)\b", text)
     )
+
+
+def _relevant_time_sensitive_context(request: ReasoningRequest) -> str | None:
+    query_terms = _context_terms(request.transcript)
+    if not query_terms:
+        return None
+
+    candidates = list(request.memories)
+    if request.conversation_summary:
+        candidates.append(request.conversation_summary)
+
+    for candidate in candidates:
+        if query_terms.intersection(_context_terms(candidate)):
+            return candidate
+    return None
+
+
+def _context_terms(text: str) -> set[str]:
+    ignored = {
+        "about",
+        "coming",
+        "could",
+        "current",
+        "currently",
+        "does",
+        "from",
+        "have",
+        "information",
+        "latest",
+        "next",
+        "please",
+        "recent",
+        "release",
+        "released",
+        "says",
+        "that",
+        "their",
+        "there",
+        "today",
+        "tomorrow",
+        "what",
+        "when",
+        "where",
+        "which",
+        "with",
+        "your",
+    }
+    return {
+        word
+        for word in re.findall(r"[a-z0-9]+", text.lower())
+        if len(word) >= 3 and word not in ignored
+    }
 
 
 def _shopping_list_memory(memories: tuple[str, ...]) -> str | None:

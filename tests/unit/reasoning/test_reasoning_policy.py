@@ -139,6 +139,123 @@ def test_policy_guard_blocks_time_sensitive_info_with_unrelated_memory() -> None
     assert response.metadata["policy_guard"] == "offline_time_sensitive_info"
 
 
+def test_policy_guard_uses_relevant_local_time_sensitive_context() -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(
+            transcript="When is the next GTA game coming out?",
+            memories=("Saved GTA date: 26 May.",),
+        ),
+        ReasoningResponse(
+            spoken_response="It is coming out on 26 May.",
+            confidence="medium",
+        ),
+    )
+
+    assert response.spoken_response == (
+        "Your local information says: Saved GTA date: 26 May. "
+        "I cannot verify whether it is current."
+    )
+    assert response.needs_confirmation is False
+    assert response.proposed_memory_action is None
+    assert response.metadata["policy_guard"] == "supplied_time_sensitive_context"
+
+
+def test_policy_guard_uses_relevant_conversation_summary() -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(
+            transcript="What is the latest delivery status?",
+            conversation_summary="The local delivery note says parcel delayed.",
+        ),
+        ReasoningResponse(
+            spoken_response="The parcel is delayed.",
+            confidence="medium",
+        ),
+    )
+
+    assert response.spoken_response == (
+        "Your local information says: The local delivery note says parcel delayed. "
+        "I cannot verify whether it is current."
+    )
+    assert response.metadata["policy_guard"] == "supplied_time_sensitive_context"
+
+
+def test_policy_guard_allows_user_supplied_appointment_today() -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(transcript="Remember my appointment today."),
+        ReasoningResponse(
+            spoken_response="I cannot verify up-to-date information offline.",
+            confidence="medium",
+        ),
+    )
+
+    assert response.needs_confirmation is True
+    assert response.proposed_memory_action is not None
+    assert response.proposed_memory_action.action == "store"
+    assert response.proposed_memory_action.content == "my appointment today"
+    assert response.metadata["policy_guard"] == "memory_store_confirmation"
+
+
+def test_policy_guard_allows_cooking_now_from_local_ingredients() -> None:
+    original = ReasoningResponse(
+        spoken_response="You can make a tomato and cheese omelette.",
+        confidence="medium",
+    )
+
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(
+            transcript="What can I cook now?",
+            mode="cooking",
+            memories=("Available ingredients: eggs, tomato, cheese.",),
+        ),
+        original,
+    )
+
+    assert response is original
+
+
+def test_policy_guard_still_blocks_current_weather() -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(transcript="What is the weather today?"),
+        ReasoningResponse(
+            spoken_response="It is sunny.",
+            confidence="medium",
+        ),
+    )
+
+    assert response.spoken_response == "I cannot verify up-to-date information offline."
+    assert response.metadata["policy_guard"] == "offline_time_sensitive_info"
+
+
+def test_policy_guard_still_blocks_current_clock_time() -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(transcript="What time is it now?"),
+        ReasoningResponse(
+            spoken_response="It is three o'clock.",
+            confidence="medium",
+        ),
+    )
+
+    assert response.spoken_response == "I cannot verify up-to-date information offline."
+    assert response.metadata["policy_guard"] == "offline_time_sensitive_info"
+
+
+def test_policy_guard_applies_offline_guard_only_when_required() -> None:
+    original = ReasoningResponse(
+        spoken_response="The caller supplied the current answer.",
+        confidence="medium",
+    )
+
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(
+            transcript="What is the weather today?",
+            constraints=ReasoningConstraints(offline=False),
+        ),
+        original,
+    )
+
+    assert response is original
+
+
 def test_policy_guard_does_not_treat_bread_as_read_request() -> None:
     response = apply_reasoning_policy_guards(
         ReasoningRequest(
