@@ -21,8 +21,8 @@ from voice_concierge.reasoning.types import (
 
 Role = Literal["system", "user", "assistant"]
 
-DEFAULT_PROMPT_VERSION = "v2"
-PROMPT_TEMPLATE_SCHEMA_VERSION = 1
+DEFAULT_PROMPT_VERSION = "v3"
+PROMPT_TEMPLATE_SCHEMA_VERSIONS = frozenset({1, 2})
 _RESOURCE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _SYSTEM_FIELDS = frozenset(
     {
@@ -32,15 +32,18 @@ _SYSTEM_FIELDS = frozenset(
         "voice_first",
     }
 )
-_USER_FIELDS = frozenset(
+_LEGACY_USER_FIELDS = frozenset(
     {
         "conversation_summary",
         "memories",
         "mode",
-        "runtime_context",
         "transcript",
     }
 )
+_USER_FIELDS_BY_SCHEMA = {
+    1: _LEGACY_USER_FIELDS,
+    2: _LEGACY_USER_FIELDS | {"runtime_context"},
+}
 _MAX_TRANSCRIPT_CHARS = 1000
 _MAX_SUMMARY_CHARS = 4000
 
@@ -55,6 +58,7 @@ class PromptTemplate:
 
     prompt_id: str
     version: str
+    schema_version: int
     default_mode: str
     mode_policies: Mapping[str, str]
     system_template: str
@@ -89,7 +93,7 @@ def load_prompt_template(version: str = DEFAULT_PROMPT_VERSION) -> PromptTemplat
     if (
         not isinstance(schema_version, int)
         or isinstance(schema_version, bool)
-        or schema_version != PROMPT_TEMPLATE_SCHEMA_VERSION
+        or schema_version not in PROMPT_TEMPLATE_SCHEMA_VERSIONS
     ):
         raise PromptTemplateError(
             f"Unsupported prompt template schema version: {schema_version!r}"
@@ -115,11 +119,16 @@ def load_prompt_template(version: str = DEFAULT_PROMPT_VERSION) -> PromptTemplat
     system_template = _load_template_file(directory, system_filename)
     user_template = _load_template_file(directory, user_filename)
     _validate_template_fields(system_template, _SYSTEM_FIELDS, label="System")
-    _validate_template_fields(user_template, _USER_FIELDS, label="User")
+    _validate_template_fields(
+        user_template,
+        _USER_FIELDS_BY_SCHEMA[schema_version],
+        label="User",
+    )
 
     return PromptTemplate(
         prompt_id=prompt_id,
         version=manifest_version,
+        schema_version=schema_version,
         default_mode=default_mode,
         mode_policies=MappingProxyType(mode_policies),
         system_template=system_template,

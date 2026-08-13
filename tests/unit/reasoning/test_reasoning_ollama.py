@@ -184,7 +184,7 @@ def test_ollama_engine_sends_chat_messages_and_generated_schema() -> None:
     assert response.metadata["model_role"] == "primary"
     assert response.metadata["output_format"] == "structured_json"
     assert response.metadata["prompt_id"] == "local-reasoning"
-    assert response.metadata["prompt_version"] == "v2"
+    assert response.metadata["prompt_version"] == "v3"
     assert response.metadata["temperature"] == "0.2"
     assert response.metadata["top_p"] == "0.9"
     assert response.metadata["num_ctx"] == "4096"

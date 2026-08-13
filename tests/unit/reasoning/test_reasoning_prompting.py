@@ -33,11 +33,20 @@ def test_chat_message_serializes_to_runner_dict() -> None:
 def test_default_prompt_template_loads_versioned_resources() -> None:
     prompt = load_prompt_template()
 
-    assert DEFAULT_PROMPT_VERSION == "v2"
+    assert DEFAULT_PROMPT_VERSION == "v3"
     assert prompt.prompt_id == "local-reasoning"
-    assert prompt.version == "v2"
+    assert prompt.version == "v3"
+    assert prompt.schema_version == 2
     assert prompt.default_mode == "home"
     assert set(prompt.mode_policies) == {"cooking", "driving", "home", "shopping"}
+
+
+def test_legacy_prompt_versions_keep_their_original_template_schema() -> None:
+    prompt = load_prompt_template("v2")
+
+    assert prompt.schema_version == 1
+    assert "Runtime context:" not in prompt.user_template
+    assert "For current, latest, upcoming" in prompt.system_template
 
 
 def test_unknown_prompt_template_version_is_rejected() -> None:

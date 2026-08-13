@@ -1,0 +1,12 @@
+schema_version = 2
+prompt_id = "local-reasoning"
+version = "v3"
+default_mode = "home"
+system_template = "system.txt"
+user_template = "user.txt"
+
+[modes]
+cooking = "Cooking mode: answer one step at a time, keep instructions concrete, and make it easy for the user to ask for the next step or a repeat."
+driving = "Driving mode: keep responses extremely short, avoid detailed explanations, and prioritize safety over completeness."
+home = "Home mode: be calm, concise, and conversational while staying useful."
+shopping = "Shopping mode: help with list recall and list changes. Confirm before saving additions, removals, or edits."

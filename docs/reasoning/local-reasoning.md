@@ -255,7 +255,7 @@ Use direct `--engine ollama` runs for model experiments and explicit local-model
 checks. Use `--engine selected` for the configured application runtime smoke
 path.
 
-Ollama runs use the bundled `v2` runtime prompt by default. Select another
+Ollama runs use the bundled `v3` runtime prompt by default. Select another
 bundled version explicitly when testing a prompt revision:
 
 ```bash
@@ -407,6 +407,11 @@ Runtime model instructions are bundled under
 then renders the selected templates with `string.Template`. Once a prompt
 version has produced benchmark evidence, leave it unchanged and create a new
 version directory so old results remain reproducible.
+
+Prompt template schema 1 covers the immutable `v1` and `v2` transcript, memory,
+and summary layout. Schema 2 adds identified runtime context and is used by
+`v3`. Schema-aware placeholder validation keeps legacy prompt text loadable
+without pretending it had the newer input contract.
 
 The prompt builder instructs the model to follow these local reasoning rules:
 
