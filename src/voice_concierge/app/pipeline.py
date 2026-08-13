@@ -27,9 +27,18 @@ from voice_concierge.app.types import (
     TranscriptResult,
 )
 from voice_concierge.audio.types import CapturedAudio
-from voice_concierge.context.manager import ContextManager
+from voice_concierge.context.manager import (
+    CONFIRMATION_CLARIFICATION_PROMPT,
+    ContextManager,
+    detect_confirmation_intent,
+)
 from voice_concierge.context.policies import policy_for_mode
-from voice_concierge.context.types import ContextDecision, ContextMode, ContextState
+from voice_concierge.context.types import (
+    ConfirmationIntent,
+    ContextDecision,
+    ContextMode,
+    ContextState,
+)
 from voice_concierge.reasoning.types import ReasoningResponse
 
 _EMPTY_TRANSCRIPT_RESPONSE = "I didn't catch that. Could you say it again?"
@@ -50,8 +59,6 @@ _MODE_CHANGED_RESPONSES: dict[ContextMode, str] = {
     ),
 }
 
-_CONFIRM_WORDS = ("yes", "confirm", "okay", "ok", "go ahead")
-_CANCEL_WORDS = ("cancel", "stop", "never mind", "nevermind", "no")
 DEFAULT_CONVERSATION_HISTORY_LIMIT = 6
 
 
@@ -191,19 +198,11 @@ class VoiceConciergePipeline:
             )
 
         if current_state.pending_memory_action is not None:
-            intent = _confirmation_intent(normalized_text)
-            if intent is not None:
-                return self._handle_pending_memory_action(
-                    transcript,
-                    current_state,
-                    intent=intent,
-                    options=options,
-                )
-
-            current_state = replace(
+            return self._handle_pending_memory_action(
+                transcript,
                 current_state,
-                pending_memory_action=None,
-                pending_memory_scope=None,
+                intent=detect_confirmation_intent(normalized_text),
+                options=options,
             )
 
         context_decision = self._context_manager.handle(
@@ -307,15 +306,31 @@ class VoiceConciergePipeline:
         transcript: AppTranscript,
         current_state: AppPipelineState,
         *,
-        intent: str,
+        intent: ConfirmationIntent,
         options: AppTurnOptions,
     ) -> AppTurnResult:
-        context_decision = self._context_manager.handle(
-            transcript.text,
-            current_state.context,
-        )
+        context_decision = _decision_for_state(current_state.context)
         pending_action = current_state.pending_memory_action
         pending_scope = current_state.pending_memory_scope
+
+        if intent == "ambiguous":
+            next_state = replace(
+                current_state,
+                context=context_decision.state,
+                last_spoken_response=CONFIRMATION_CLARIFICATION_PROMPT,
+                conversation_history=self._record_conversation(
+                    current_state,
+                    transcript,
+                    CONFIRMATION_CLARIFICATION_PROMPT,
+                ),
+            )
+            return self._finalize_result(
+                state=next_state,
+                spoken_response=CONFIRMATION_CLARIFICATION_PROMPT,
+                context_decision=context_decision,
+                transcript=transcript,
+                options=options,
+            )
 
         if intent == "cancel" or pending_action is None or pending_scope is None:
             next_state = AppPipelineState(
@@ -536,19 +551,6 @@ def _conversation_summary(history: tuple[ConversationTurn, ...]) -> str | None:
         )
         for index, turn in enumerate(history, start=1)
     )
-
-
-def _contains_any(text: str, phrases: tuple[str, ...]) -> bool:
-    return any(phrase in text for phrase in phrases)
-
-
-def _confirmation_intent(normalized_text: str) -> str | None:
-    text = normalized_text.lower()
-    if _contains_any(text, _CANCEL_WORDS):
-        return "cancel"
-    if _contains_any(text, _CONFIRM_WORDS):
-        return "confirm"
-    return None
 
 
 def _decision_for_state(state: ContextState) -> ContextDecision:

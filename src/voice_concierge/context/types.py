@@ -12,7 +12,7 @@ from typing import Literal
 
 ContextMode = Literal["home", "cooking", "shopping", "driving"]
 CommandAction = Literal["repeat", "next_step", "stop", "cancel"]
-ConfirmationIntent = Literal["confirm", "cancel"]
+ConfirmationIntent = Literal["confirm", "cancel", "ambiguous"]
 MemoryScope = Literal[
     "none",
     "personal_relevant",

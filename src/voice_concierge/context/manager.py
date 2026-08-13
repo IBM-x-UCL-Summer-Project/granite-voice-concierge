@@ -17,8 +17,49 @@ from voice_concierge.context.types import (
     ContextState,
 )
 
-_CONFIRM_WORDS = ("yes", "confirm", "okay", "ok", "go ahead")
-_CANCEL_WORDS = ("no", "cancel", "stop", "never mind", "nevermind")
+CONFIRMATION_CLARIFICATION_PROMPT = "Sorry, was that a yes or a no?"
+
+_CONFIRMATION_RESPONSES = frozenset(
+    {
+        "confirm",
+        "confirm it",
+        "confirm that",
+        "go ahead",
+        "ok",
+        "ok please",
+        "okay",
+        "okay please",
+        "please confirm",
+        "please do",
+        "please do it",
+        "yes",
+        "yes confirm",
+        "yes go ahead",
+        "yes please",
+        "yes please do",
+        "yes please do it",
+    }
+)
+_CANCELLATION_RESPONSES = frozenset(
+    {
+        "cancel",
+        "cancel it",
+        "cancel that",
+        "do not",
+        "do not do it",
+        "don't",
+        "don't do it",
+        "never mind",
+        "nevermind",
+        "no",
+        "no stop",
+        "no thank you",
+        "no thanks",
+        "please cancel",
+        "stop",
+        "stop that",
+    }
+)
 _EXPLICIT_MODE_SWITCH = re.compile(
     r"\b(?:switch|change)(?:\s+back)?\s+to\s+(?:the\s+)?"
     r"(home|cooking|shopping|driving)\b"
@@ -122,7 +163,7 @@ class ContextManager:
             command_action=command_action,
             needs_confirmation=True,
             pending_mode=state.pending_mode,
-            confirmation_prompt="Sorry, was that a yes or a no?",
+            confirmation_prompt=CONFIRMATION_CLARIFICATION_PROMPT,
         )
 
 
@@ -130,15 +171,26 @@ def _normalize(transcript: str) -> str:
     return " ".join(transcript.lower().strip().split())
 
 
-def detect_confirmation_intent(transcript: str) -> ConfirmationIntent | None:
-    """Return an explicit confirmation intent from a user transcript."""
+def detect_confirmation_intent(transcript: str) -> ConfirmationIntent:
+    """Classify a complete reply to a pending confirmation.
 
-    normalized = _normalize(transcript)
-    if _contains_any(normalized, _CANCEL_WORDS):
+    Confirmation is deliberately conservative because a false positive can
+    mutate user data or enter a safety-sensitive mode. Only a complete, explicit
+    response is accepted; words embedded in unrelated speech are ambiguous.
+    """
+
+    normalized = _normalize_confirmation_response(transcript)
+    if normalized in _CANCELLATION_RESPONSES:
         return "cancel"
-    if _contains_any(normalized, _CONFIRM_WORDS):
+    if normalized in _CONFIRMATION_RESPONSES:
         return "confirm"
-    return None
+    return "ambiguous"
+
+
+def _normalize_confirmation_response(transcript: str) -> str:
+    normalized_apostrophes = transcript.lower().replace("’", "'")
+    tokens = re.findall(r"[a-z]+(?:'[a-z]+)?", normalized_apostrophes)
+    return " ".join(tokens)
 
 
 def _contains_any(text: str, phrases: tuple[str, ...]) -> bool:

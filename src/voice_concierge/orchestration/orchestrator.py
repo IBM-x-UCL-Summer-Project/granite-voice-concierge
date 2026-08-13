@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from voice_concierge.context import (
+    CONFIRMATION_CLARIFICATION_PROMPT,
     ContextDecision,
     ContextManager,
     ContextState,
     MemoryScope,
     detect_confirmation_intent,
 )
+from voice_concierge.context.policies import policy_for_mode
 from voice_concierge.orchestration.types import (
     MemoryGateway,
     MemoryOperationResult,
@@ -198,13 +200,23 @@ class ConciergeOrchestrator:
             return None
 
         intent = detect_confirmation_intent(transcript)
-        if intent is None:
-            self._pending_memory_action = None
-            self._pending_memory_scope = None
-            return None
-
-        decision = self._context_manager.handle(transcript, self._state)
-        self._state = decision.state
+        decision = ContextDecision(
+            state=self._state,
+            policy=policy_for_mode(self._state.mode, self._state.accessibility),
+        )
+        if intent == "ambiguous":
+            speech_succeeded = self._speak(
+                CONFIRMATION_CLARIFICATION_PROMPT,
+                decision,
+                errors,
+            )
+            self._last_spoken_response = CONFIRMATION_CLARIFICATION_PROMPT
+            return TurnResult(
+                context_decision=decision,
+                spoken_response=CONFIRMATION_CLARIFICATION_PROMPT,
+                speech_succeeded=speech_succeeded,
+                errors=tuple(errors),
+            )
 
         if intent == "cancel":
             self._pending_memory_action = None

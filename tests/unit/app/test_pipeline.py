@@ -386,6 +386,26 @@ def test_pending_memory_confirmation_applies_and_clears_action() -> None:
     assert memory.apply_calls == [{"action": action, "scope": "personal_relevant"}]
 
 
+def test_memory_confirmation_does_not_also_confirm_pending_mode() -> None:
+    action = MemoryAction(
+        action="store",
+        content="User prefers tea.",
+        rationale="User asked the assistant to remember it.",
+    )
+    state = AppPipelineState(
+        context=ContextState(mode="home", pending_mode="driving"),
+        pending_memory_action=action,
+        pending_memory_scope="personal_relevant",
+    )
+    pipeline = VoiceConciergePipeline(FakeReasoning(), memory=FakeMemory())
+
+    result = pipeline.process_transcript("yes", state)
+
+    assert result.memory_operation.succeeded is True
+    assert result.state.context.mode == "home"
+    assert result.state.context.pending_mode == "driving"
+
+
 def test_pending_memory_cancel_clears_action_without_apply() -> None:
     action = MemoryAction(
         action="store",
@@ -405,6 +425,34 @@ def test_pending_memory_cancel_clears_action_without_apply() -> None:
     assert result.state.pending_memory_action is None
     assert result.state.pending_memory_scope is None
     assert memory.apply_calls == []
+
+
+@pytest.mark.parametrize("transcript", ("yesterday", "I know", "not yet", "yes, no"))
+def test_ambiguous_memory_confirmation_preserves_pending_action(
+    transcript: str,
+) -> None:
+    action = MemoryAction(
+        action="delete",
+        content="shopping list",
+        rationale="User asked to delete it.",
+        target_key="list:shopping",
+    )
+    state = AppPipelineState(
+        pending_memory_action=action,
+        pending_memory_scope="list_relevant",
+    )
+    memory = FakeMemory()
+    reasoning = FakeReasoning()
+    pipeline = VoiceConciergePipeline(reasoning, memory=memory)
+
+    result = pipeline.process_transcript(transcript, state)
+
+    assert result.spoken_response == "Sorry, was that a yes or a no?"
+    assert result.state.pending_memory_action == action
+    assert result.state.pending_memory_scope == "list_relevant"
+    assert result.memory_operation.attempted is False
+    assert memory.apply_calls == []
+    assert reasoning.calls == []
 
 
 def test_memory_retrieval_failure_still_allows_reasoning() -> None:

@@ -167,6 +167,12 @@ type AppPipelineState = {
 };
 ```
 
+When a memory action is pending, the next transcript is interpreted as a
+confirmation reply. Only a complete, explicit answer such as `yes`, `confirm`,
+`no`, or `cancel` resolves it. An ambiguous reply leaves both pending fields
+unchanged and asks the user for an explicit yes or no; it must never apply or
+discard the action based on a word embedded in unrelated speech.
+
 ## Response Shape
 
 The Python `AppTurnResult.response_audio` field is a `CapturedAudio | None`.
