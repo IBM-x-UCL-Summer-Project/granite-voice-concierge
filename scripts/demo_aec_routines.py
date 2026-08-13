@@ -10,6 +10,8 @@ While a step is read aloud, or in the quiet window after it:
 * "pause" / "continue" hold and resume the reading; a paused routine waits
   rather than auto-advancing.
 * "next" / "back" / "repeat" move through the routine.
+* "slower" / "faster" change the speaking pace and read the step again at the
+  new speed. The chosen pace is remembered for next time.
 * "stop" ends it.
 
 Stay quiet and it advances on its own.
@@ -46,7 +48,10 @@ from voice_concierge.command_control import (  # noqa: E402
 from voice_concierge.memory import build_memory_manager  # noqa: E402
 from voice_concierge.reasoning.factory import build_reasoning_engine  # noqa: E402
 from voice_concierge.routines import RoutineRunner, build_routine_adapter  # noqa: E402
-from voice_concierge.voice_output import SayTextToSpeech  # noqa: E402
+from voice_concierge.voice_output.factory import (  # noqa: E402
+    build_paced_text_to_speech,
+    say_backend_builder,
+)
 
 
 def _log(event: CommandEvent) -> None:
@@ -63,8 +68,14 @@ def main() -> None:
     # One shared vocabulary spots playback and routine words; the stabilizer
     # keeps a partial-result recognizer from firing twice or on noise.
     spotter = StableCommandSpotter(build_vosk_command_spotter())
+    # A paced voice built on the macOS `say` backend, because Piper does not
+    # work on macOS arm64 (issue #52). Saying "slower" or "faster" during a step
+    # changes the rate and has the step read again; the choice is remembered for
+    # next time.
+    voice = build_paced_text_to_speech(say_backend_builder())
+    print(f"Speaking at {voice.rate.words_per_minute} words per minute.")
     speaker = EchoCancelledStepSpeaker(
-        SayTextToSpeech(), VoiceProcessingAudioPlayer(), spotter, on_event=_log
+        voice, VoiceProcessingAudioPlayer(), spotter, pace=voice, on_event=_log
     )
     waiter = MicCommandWaiter(PyAudioSource(), spotter, on_event=_log)
     handler = RoutineTurnHandler(adapter, RoutineRunner(adapter, speaker, waiter))
