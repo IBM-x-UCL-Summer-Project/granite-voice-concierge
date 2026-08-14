@@ -56,7 +56,24 @@ from voice_concierge.voice_output.factory import (  # noqa: E402
 
 def _log(event: CommandEvent) -> None:
     """Show what the recognizer heard, so a mishear is easy to spot."""
-    print(f"    [heard] {event.phrase!r} -> {event.command}")
+    print(f"    [heard] {event.phrase!r} -> {event.command}", flush=True)
+
+
+class _AnnouncingSpeaker:
+    """Prints each step before speaking it.
+
+    Without this the terminal is silent for the whole routine and only the
+    closing line appears, which makes a slow model look like a hang and makes
+    a pace change impossible to see.
+    """
+
+    def __init__(self, inner: EchoCancelledStepSpeaker, voice) -> None:
+        self._inner = inner
+        self._voice = voice
+
+    def speak(self, text: str) -> CommandEvent | None:
+        print(f"  [{self._voice.rate.words_per_minute} wpm] {text}", flush=True)
+        return self._inner.speak(text)
 
 
 def main() -> None:
@@ -74,8 +91,11 @@ def main() -> None:
     # next time.
     voice = build_paced_text_to_speech(say_backend_builder())
     print(f"Speaking at {voice.rate.words_per_minute} words per minute.")
-    speaker = EchoCancelledStepSpeaker(
-        voice, VoiceProcessingAudioPlayer(), spotter, pace=voice, on_event=_log
+    speaker = _AnnouncingSpeaker(
+        EchoCancelledStepSpeaker(
+            voice, VoiceProcessingAudioPlayer(), spotter, pace=voice, on_event=_log
+        ),
+        voice,
     )
     waiter = MicCommandWaiter(PyAudioSource(), spotter, on_event=_log)
     handler = RoutineTurnHandler(adapter, RoutineRunner(adapter, speaker, waiter))
@@ -89,7 +109,8 @@ def main() -> None:
             if not handler.handles(request):
                 print("(not a guided-routine request; try 'guide me through ...')\n")
                 continue
-            print(handler.run(request), end="\n\n")
+            print("  (thinking...)", flush=True)
+            print(handler.run(request), end="\n\n", flush=True)
     except (KeyboardInterrupt, EOFError):
         print("\nStopped.")
 
