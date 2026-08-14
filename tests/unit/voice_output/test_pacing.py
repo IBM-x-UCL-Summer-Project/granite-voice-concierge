@@ -191,10 +191,14 @@ class TestBackendBuilders:
 
         assert backend._rate_wpm == PACE_LADDER[0]
 
-    def test_the_default_paced_voice_starts_in_the_middle(self) -> None:
+    def test_the_default_paced_voice_starts_in_the_middle(self, tmp_path) -> None:
+        """Uses a temporary path: a test must not read the developer's own
+        saved preference, or it passes or fails depending on their last run."""
         from voice_concierge.voice_output.factory import build_paced_text_to_speech
 
-        assert build_paced_text_to_speech().rate.level == DEFAULT_PACE_LEVEL
+        voice = build_paced_text_to_speech(pace_path=tmp_path / "pace.json")
+
+        assert voice.rate.level == DEFAULT_PACE_LEVEL
 
     def test_a_paced_voice_can_start_at_a_remembered_rate(self) -> None:
         from voice_concierge.voice_output.factory import build_paced_text_to_speech
