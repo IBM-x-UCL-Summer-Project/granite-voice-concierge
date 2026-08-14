@@ -72,6 +72,9 @@ class PaceControl(Protocol):
     def faster(self) -> str:
         """Speak faster from now on; returns what to say about it."""
 
+    def take_announcement(self) -> str | None:
+        """Return the last pace acknowledgement, clearing it."""
+
 
 @runtime_checkable
 class ListeningPlayer(Protocol):
@@ -137,6 +140,7 @@ class EchoCancelledStepSpeaker:
         resumed), so the caller decides what happens next.
         """
         interrupt: list[CommandEvent] = []
+        text = self._with_pace_announcement(text)
         audio = self._text_to_speech.synthesize(text)
         try:
             self._player.play(
@@ -152,6 +156,17 @@ class EchoCancelledStepSpeaker:
                 self._on_event(event)
             return event
         return interrupt[0] if interrupt else None
+
+    def _with_pace_announcement(self, text: str) -> str:
+        """Lead with any pending pace acknowledgement.
+
+        Said at the front of the step rather than on its own, so the user hears
+        why the speed changed, or why it did not, without an extra utterance.
+        """
+        if self._pace is None:
+            return text
+        announcement = self._pace.take_announcement()
+        return f"{announcement} {text}" if announcement else text
 
     def _route(self, frame: bytes, interrupt: list[CommandEvent]) -> None:
         """Send one mic frame to the spotter and act on anything it hears."""

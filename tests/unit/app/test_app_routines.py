@@ -43,6 +43,17 @@ class _Tts:
         return _audio()
 
 
+class _RecordingTts(_Tts):
+    """Remembers exactly what it was asked to say."""
+
+    def __init__(self) -> None:
+        self.said: list[str] = []
+
+    def synthesize(self, text: str) -> CapturedAudio:
+        self.said.append(text)
+        return super().synthesize(text)
+
+
 class _Spotter:
     """Emits scripted events, one per frame processed."""
 
@@ -289,14 +300,21 @@ class _Pace:
 
     def __init__(self) -> None:
         self.moves: list[str] = []
+        self._announcement: str | None = None
 
     def slower(self) -> str:
         self.moves.append("slower")
-        return "Speaking more slowly."
+        self._announcement = "Speaking more slowly."
+        return self._announcement
 
     def faster(self) -> str:
         self.moves.append("faster")
-        return "Speaking faster."
+        self._announcement = "Speaking faster."
+        return self._announcement
+
+    def take_announcement(self) -> str | None:
+        announcement, self._announcement = self._announcement, None
+        return announcement
 
 
 @pytest.mark.unit
@@ -504,3 +522,51 @@ class TestWedgedMicrophone:
 
         assert event is not None
         assert event.command == "stop"
+
+
+@pytest.mark.unit
+class TestPaceAcknowledgement:
+    """The user has to hear what happened, especially when nothing changed."""
+
+    def test_the_next_step_leads_with_the_acknowledgement(self) -> None:
+        tts = _RecordingTts()
+        pace = _Pace()
+        speaker = EchoCancelledStepSpeaker(
+            tts, _Player(frames=1), _Spotter([_event("slower")]), pace=pace
+        )
+
+        speaker.speak("Step 1. Boil water.")  # heard "slower" during this one
+        speaker.speak("Step 1. Boil water.")  # the re-read
+
+        assert tts.said[-1] == "Speaking more slowly. Step 1. Boil water."
+
+    def test_an_acknowledgement_is_said_only_once(self) -> None:
+        tts = _RecordingTts()
+        pace = _Pace()
+        speaker = EchoCancelledStepSpeaker(
+            tts, _Player(frames=1), _Spotter([_event("faster")]), pace=pace
+        )
+
+        speaker.speak("Step 1.")
+        speaker.speak("Step 1.")
+        speaker.speak("Step 2.")
+
+        assert tts.said[-1] == "Step 2."  # not repeated on the following step
+
+    def test_nothing_is_prepended_without_a_pace_change(self) -> None:
+        tts = _RecordingTts()
+        speaker = EchoCancelledStepSpeaker(
+            tts, _Player(frames=1), _Spotter(), pace=_Pace()
+        )
+
+        speaker.speak("Step 1.")
+
+        assert tts.said == ["Step 1."]
+
+    def test_a_speaker_without_pacing_speaks_the_text_unchanged(self) -> None:
+        tts = _RecordingTts()
+        speaker = EchoCancelledStepSpeaker(tts, _Player(frames=1), _Spotter())
+
+        speaker.speak("Step 1.")
+
+        assert tts.said == ["Step 1."]
