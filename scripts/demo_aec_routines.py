@@ -25,6 +25,7 @@ Run from the repo root:
 """
 
 # Standard library
+import faulthandler
 import os
 import signal
 import sys
@@ -54,6 +55,17 @@ from voice_concierge.voice_output.factory import (  # noqa: E402
     build_paced_text_to_speech,
     say_backend_builder,
 )
+
+
+def _install_stack_dump() -> None:
+    """Dump every thread's stack on SIGUSR1, for diagnosing a wedged device.
+
+    faulthandler writes from a C-level signal handler, so it still reports when
+    the main thread is stuck inside a native audio call and Python cannot run
+    its own handlers. That is exactly the case worth diagnosing: run
+    `kill -USR1 <pid>` from another terminal and the stacks appear here.
+    """
+    faulthandler.register(signal.SIGUSR1, all_threads=True, chain=False)
 
 
 def _install_force_quit() -> None:
@@ -96,6 +108,7 @@ class _AnnouncingSpeaker:
 
 
 def main() -> None:
+    _install_stack_dump()
     _install_force_quit()
     print("Loading models (first run downloads them)...")
     adapter = build_routine_adapter(
@@ -122,8 +135,9 @@ def main() -> None:
 
     print(
         "Type a request, e.g. 'guide me through making pasta'.\n"
-        "Ctrl+C to quit. If the audio device wedges and Ctrl+C is ignored, "
-        "press Ctrl+\\ (or run: pkill -f demo_aec_routines).\n"
+        f"Ctrl+C to quit. If the audio device wedges and Ctrl+C is ignored:\n"
+        f"  kill -USR1 {os.getpid()}   # print where it is stuck, here\n"
+        f"  kill -9 {os.getpid()}      # or press Ctrl+backslash\n"
     )
     try:
         while True:
