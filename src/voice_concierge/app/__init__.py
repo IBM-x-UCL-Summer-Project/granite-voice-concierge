@@ -1,6 +1,6 @@
 """Application orchestration interfaces for Voice Concierge."""
 
-from voice_concierge.app.adapter import handle_turn
+from voice_concierge.app.adapter import handle_audio_turn, handle_turn
 from voice_concierge.app.factory import build_voice_concierge_pipeline
 from voice_concierge.app.memory import (
     MemoryGateway,
@@ -92,6 +92,7 @@ __all__ = [
     "context_state_from_dict",
     "context_state_to_dict",
     "handle_turn",
+    "handle_audio_turn",
     "memory_action_from_dict",
     "memory_action_to_dict",
 ]
