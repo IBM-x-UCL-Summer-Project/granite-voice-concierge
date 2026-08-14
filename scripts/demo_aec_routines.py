@@ -120,7 +120,11 @@ def main() -> None:
     waiter = MicCommandWaiter(PyAudioSource(), spotter, pace=voice, on_event=_log)
     handler = RoutineTurnHandler(adapter, RoutineRunner(adapter, speaker, waiter))
 
-    print("Type a request, e.g. 'guide me through making pasta'. Ctrl+C to quit.\n")
+    print(
+        "Type a request, e.g. 'guide me through making pasta'.\n"
+        "Ctrl+C to quit. If the audio device wedges and Ctrl+C is ignored, "
+        "press Ctrl+\\ (or run: pkill -f demo_aec_routines).\n"
+    )
     try:
         while True:
             request = input("You: ").strip()
