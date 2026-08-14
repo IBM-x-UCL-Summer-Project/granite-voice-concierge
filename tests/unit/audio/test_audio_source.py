@@ -1,4 +1,5 @@
 # Standard library
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 # Third-party
@@ -200,3 +201,28 @@ class TestFakeAudioSource:
         """Both implementations satisfy the runtime-checkable AudioSource."""
         assert isinstance(FakeAudioSource(), AudioSource)
         assert isinstance(PyAudioSource(), AudioSource)
+
+
+@pytest.mark.unit
+class TestReadAvailability:
+    """Callers with a deadline need to know before committing to a read."""
+
+    def test_a_closed_source_has_nothing_available(self) -> None:
+        assert PyAudioSource().available() == 0
+
+    def test_availability_is_reported_from_the_stream(self) -> None:
+        source = PyAudioSource()
+        source._stream = SimpleNamespace(get_read_available=lambda: 512)
+
+        assert source.available() == 512
+
+    def test_a_wedged_stream_reports_nothing_rather_than_raising(self) -> None:
+        """A bad device must not turn a readiness check into a crash."""
+
+        def _explode() -> int:
+            raise OSError("device gone")
+
+        source = PyAudioSource()
+        source._stream = SimpleNamespace(get_read_available=_explode)
+
+        assert source.available() == 0
