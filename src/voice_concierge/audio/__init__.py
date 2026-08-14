@@ -33,9 +33,7 @@ def __getattr__(name: str) -> Any:
         "FakeAudioSource": "voice_concierge.audio.source",
         "PyAudioSource": "voice_concierge.audio.source",
         "StreamingAudioPlayer": "voice_concierge.audio.streaming_player",
-        "VoiceProcessingAudioPlayer": (
-            "voice_concierge.audio.voice_processing_player"
-        ),
+        "VoiceProcessingAudioPlayer": "voice_concierge.audio.voice_processing_player",
     }
     module_name = modules.get(name)
     if module_name is None:
