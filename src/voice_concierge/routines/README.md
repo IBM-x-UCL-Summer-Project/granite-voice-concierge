@@ -88,3 +88,20 @@ have to ask again every session. Pass `persist=False` to
 `build_paced_text_to_speech` to keep a session's pace to itself. Saving is best
 effort: an unwritable preferences file costs the memory of the setting, never
 the ability to change it now.
+
+
+## Confirming a destructive command
+
+"back" undoes progress the user has already made, and a small-grammar
+recognizer occasionally reports it when nobody spoke. It is therefore confirmed
+before it is acted on: the assistant asks "Go back a step? Say yes to confirm."
+and treats **anything but a yes as no**, including silence.
+
+Silence has to mean no here. The word being guarded is one the recognizer
+produces *from* silence, so a confirmation that silence could satisfy would
+guard nothing. An unconfirmed command costs one question and the routine
+carries on from where it was.
+
+`RoutineRunner(confirm_commands=...)` chooses which commands are guarded; the
+default is `{"back"}`. A stray "yes" or "no" outside a confirmation is ignored,
+since on its own it means nothing.
