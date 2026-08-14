@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Granite Voice Concierge local conversation interface"
+    />
+    <title>Granite Voice Concierge</title>
+    <link rel="stylesheet" href="./styles.css?v=20260812" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="#" aria-label="Granite Voice Concierge home">
+<!--          <span class="brand-mark" aria-hidden="true">-->
+<!--            <span></span><span></span><span></span><span></span>-->
+<!--          </span>-->
+          <span class="brand-copy">
+            <strong>Granite</strong>
+            <span>Voice concierge</span>
+          </span>
+        </a>
+
+        <div class="runtime-status" aria-label="Runtime status">
+          <span class="status-dot" id="runtime-dot" aria-hidden="true"></span>
+          <span id="runtime-label">Connecting…</span>
+          <span class="runtime-divider" aria-hidden="true"></span>
+          <span class="mono" id="runtime-model">—</span>
+        </div>
+
+        <div class="topbar-actions">
+          <button class="settings-button" id="settings-button" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z" />
+            </svg>
+            <span>Personalise</span>
+          </button>
+          <button class="icon-button" id="theme-button" type="button" aria-label="Toggle theme">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.64 5.64l1.42 1.42M16.94 16.94l1.42 1.42M18.36 5.64l-1.42 1.42M7.06 16.94l-1.42 1.42" />
+              <circle cx="12" cy="12" r="4" />
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <section class="conversation-panel" aria-labelledby="conversation-title">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Live session</p>
+              <h1 id="conversation-title">Conversation</h1>
+            </div>
+            <div class="mode-control">
+              <span>Mode</span>
+              <label class="mode-pill" for="mode-select">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M3 11.5 12 4l9 7.5" />
+                  <path d="M5.5 10.5V20h13v-9.5M9 20v-6h6v6" />
+                </svg>
+                <select id="mode-select" aria-label="Conversation mode">
+                  <option value="home">Home</option>
+                  <option value="cooking">Cooking</option>
+                  <option value="shopping">Shopping</option>
+                  <option value="driving">Driving</option>
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <div class="conversation" id="conversation" aria-live="polite">
+            <div class="date-rule"><span>Today · local session</span></div>
+
+            <article class="message message-assistant" data-welcome>
+              <div class="avatar" aria-hidden="true">G</div>
+              <div class="message-body">
+                <div class="message-meta"><strong>Granite</strong><span>Now</span></div>
+                <div class="bubble">
+                  Hello. I’m ready when you are. What can I help with at home?
+                </div>
+                <button class="speak-button" type="button" aria-label="Play assistant response">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5Z" /><path d="M15 9.5c.7.7 1 1.5 1 2.5s-.3 1.8-1 2.5M18 7c1.4 1.4 2 3 2 5s-.6 3.6-2 5" /></svg>
+                  Play response
+                </button>
+              </div>
+            </article>
+          </div>
+
+          <div class="suggestions" aria-label="Example prompts">
+            <button type="button" data-prompt="Switch to driving mode">Switch mode</button>
+            <button type="button" data-prompt="Remember that I prefer short answers">Remember a preference</button>
+            <button type="button" data-prompt="What do I need for pasta tonight?">Ask a question</button>
+          </div>
+
+          <form class="composer" id="turn-form">
+            <label class="sr-only" for="transcript-input">Message Granite</label>
+            <textarea
+              id="transcript-input"
+              rows="1"
+              maxlength="600"
+              placeholder="Message Granite…"
+            ></textarea>
+            <div class="composer-footer">
+              <div class="input-mode">
+                <span class="input-mode-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" /><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8" /></svg>
+                </span>
+                <span id="interaction-label">Transcript input</span>
+              </div>
+              <div class="composer-actions">
+                <button class="mic-button" id="mic-button" type="button" aria-label="Start voice input" title="Start voice input">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" /><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8" /></svg>
+                </button>
+                <button class="send-button" id="send-button" type="submit" disabled>
+                  Send
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 14-7-4 14-3-6-7-1Z" /></svg>
+                </button>
+              </div>
+            </div>
+          </form>
+          <p class="privacy-note">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 10V8a6 6 0 0 1 12 0v2M5 10h14v11H5z" /></svg>
+            Conversation stays on this device
+          </p>
+        </section>
+
+      </main>
+    </div>
+
+    <dialog class="setup-dialog" id="setup-dialog" aria-labelledby="setup-title">
+      <div class="setup-shell">
+        <aside class="setup-sidebar">
+          <div>
+            <p class="setup-brand">Granite</p>
+            <p class="eyebrow">Personal setup</p>
+          </div>
+          <ol class="setup-progress" aria-label="Setup progress">
+            <li class="is-current" data-progress-step="0">
+              <span>01</span><div><strong>Audio devices</strong><small>Listen and speak</small></div>
+            </li>
+            <li data-progress-step="1">
+              <span>02</span><div><strong>Voice output</strong><small>Pace and volume</small></div>
+            </li>
+            <li data-progress-step="2">
+              <span>03</span><div><strong>Interaction</strong><small>Wake word and control</small></div>
+            </li>
+            <li data-progress-step="3">
+              <span>04</span><div><strong>Responses</strong><small>Length and review</small></div>
+            </li>
+          </ol>
+          <p class="setup-privacy">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 10V8a6 6 0 0 1 12 0v2M5 10h14v11H5z" /></svg>
+            Saved only in this device
+          </p>
+        </aside>
+
+        <form class="setup-main" id="setup-form">
+          <header class="setup-header">
+            <div>
+              <p class="eyebrow" id="setup-step-label">Step 1 of 4</p>
+              <h2 id="setup-title">Choose your audio devices</h2>
+              <p id="setup-description">Select the microphone Granite listens to and the speaker it uses.</p>
+            </div>
+            <button class="dialog-close" id="setup-close" type="button" aria-label="Close setup">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
+            </button>
+          </header>
+
+          <div class="setup-content">
+            <section class="setup-step" data-setup-step="0">
+              <div class="device-permission">
+                <span class="device-permission-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" /><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8" /></svg>
+                </span>
+                <div><strong>Let Granite find your devices</strong><span id="device-status">Permission is requested only when you choose Find devices.</span></div>
+                <button class="secondary-button" id="detect-devices" type="button">Find devices</button>
+              </div>
+              <div class="setup-fields two-columns">
+                <label class="setup-field" for="microphone-select">
+                  <span>Microphone</span>
+                  <select id="microphone-select" name="microphone_id">
+                    <option value="default">System default microphone</option>
+                  </select>
+                  <small>Used for wake word and speech capture.</small>
+                </label>
+                <label class="setup-field" for="speaker-select">
+                  <span>Speaker</span>
+                  <select id="speaker-select" name="speaker_id">
+                    <option value="default">System default speaker</option>
+                  </select>
+                  <small>Used for spoken responses and alerts.</small>
+                </label>
+              </div>
+            </section>
+
+            <section class="setup-step" data-setup-step="1" hidden>
+              <div class="range-setting">
+                <div class="range-heading"><div><strong>Speech rate</strong><span>How quickly Granite speaks</span></div><output id="speech-rate-output" for="speech-rate">Normal · 1.0×</output></div>
+                <input id="speech-rate" name="speech_rate" type="range" min="0.7" max="1.3" value="1" step="0.1" aria-label="Speech rate" />
+                <div class="range-scale"><span>Slower</span><span>Faster</span></div>
+              </div>
+              <div class="range-setting">
+                <div class="range-heading"><div><strong>Volume</strong><span>Default spoken response volume</span></div><output id="volume-output" for="voice-volume">80%</output></div>
+                <input id="voice-volume" name="volume" type="range" min="0" max="100" value="80" step="5" aria-label="Volume" />
+                <div class="range-scale"><span>Quiet</span><span>Loud</span></div>
+              </div>
+              <button class="preview-button" id="preview-voice" type="button">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5Z" /><path d="M15 9.5c.7.7 1 1.5 1 2.5s-.3 1.8-1 2.5M18 7c1.4 1.4 2 3 2 5s-.6 3.6-2 5" /></svg>
+                Preview voice
+              </button>
+            </section>
+
+            <section class="setup-step" data-setup-step="2" hidden>
+              <div class="range-setting">
+                <div class="range-heading"><div><strong>Wake-word sensitivity</strong><span>Balance missed activations and false triggers</span></div><output id="sensitivity-output" for="wake-sensitivity">Balanced · 60%</output></div>
+                <input id="wake-sensitivity" name="wake_word_sensitivity" type="range" min="20" max="100" value="60" step="10" aria-label="Wake-word sensitivity" />
+                <div class="range-scale"><span>Fewer false triggers</span><span>Easier to activate</span></div>
+              </div>
+              <fieldset class="preference-group">
+                <legend>Preferred interaction</legend>
+                <label class="choice-card">
+                  <input type="radio" name="interaction_mode" value="voice_first" checked />
+                  <span class="choice-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" /><path d="M5 10v2a7 7 0 0 0 14 0v-2" /></svg></span>
+                  <span><strong>Voice first</strong><small>Wake word starts each turn</small></span>
+                </label>
+                <label class="choice-card">
+                  <input type="radio" name="interaction_mode" value="push_to_talk" />
+                  <span class="choice-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 11V7a2 2 0 0 1 4 0v4M12 10V6a2 2 0 0 1 4 0v5M16 10V8a2 2 0 0 1 4 0v6c0 5-3 8-8 8h-1c-3 0-5-1-7-4l-2-3a2 2 0 0 1 3-2l3 2" /></svg></span>
+                  <span><strong>Push to talk</strong><small>Listen only while a control is held</small></span>
+                </label>
+                <label class="choice-card">
+                  <input type="radio" name="interaction_mode" value="text_first" />
+                  <span class="choice-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v12H8l-4 4V5Z" /><path d="M8 9h8M8 13h5" /></svg></span>
+                  <span><strong>Text first</strong><small>Keep the transcript box ready</small></span>
+                </label>
+              </fieldset>
+            </section>
+
+            <section class="setup-step" data-setup-step="3" hidden>
+              <fieldset class="preference-group response-options">
+                <legend>Default response length</legend>
+                <label class="choice-card"><input type="radio" name="response_length" value="short" /><span><strong>Short</strong><small>Essential answer only</small></span></label>
+                <label class="choice-card"><input type="radio" name="response_length" value="normal" checked /><span><strong>Normal</strong><small>Balanced detail</small></span></label>
+                <label class="choice-card"><input type="radio" name="response_length" value="detailed" /><span><strong>Detailed</strong><small>More context and steps</small></span></label>
+              </fieldset>
+              <label class="switch-setting" for="speak-confirmations">
+                <span><strong>Speak confirmation prompts</strong><small>Read safety and memory confirmations aloud.</small></span>
+                <span class="switch-control"><input id="speak-confirmations" name="speak_confirmations" type="checkbox" checked /><span aria-hidden="true"></span></span>
+              </label>
+              <div class="setup-review" aria-label="Setup summary">
+                <p class="eyebrow">Your setup</p>
+                <dl>
+                  <div><dt>Audio</dt><dd id="review-audio">System defaults</dd></div>
+                  <div><dt>Voice</dt><dd id="review-voice">Normal · 80%</dd></div>
+                  <div><dt>Interaction</dt><dd id="review-interaction">Voice first</dd></div>
+                </dl>
+              </div>
+            </section>
+          </div>
+
+          <footer class="setup-footer">
+            <button class="text-button" id="setup-skip" type="button">Skip for now</button>
+            <div>
+              <button class="secondary-button" id="setup-back" type="button" hidden>Back</button>
+              <button class="primary-button" id="setup-next" type="button">Continue</button>
+            </div>
+          </footer>
+        </form>
+      </div>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="./app.js?v=20260812"></script>
+  </body>
+</html>

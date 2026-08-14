@@ -17,12 +17,34 @@ from voice_concierge.context.types import (
     ContextState,
 )
 
+_MODE_ALIASES: tuple[tuple[ContextMode, tuple[str, ...]], ...] = (
+    ("cooking", ("cooking", "kitchen")),
+    ("shopping", ("shopping", "shop")),
+    ("driving", ("driving", "drive")),
+    ("home", ("home", "living")),
+)
+
+_QUESTION_PREFIXES = (
+    "what",
+    "why",
+    "how",
+    "when",
+    "where",
+    "who",
+    "which",
+    "is",
+    "are",
+    "do",
+    "does",
+    "did",
+    "can",
+    "could",
+    "would",
+    "should",
+)
+
 _CONFIRM_WORDS = ("yes", "confirm", "okay", "ok", "go ahead")
 _CANCEL_WORDS = ("no", "cancel", "stop", "never mind", "nevermind")
-_EXPLICIT_MODE_SWITCH = re.compile(
-    r"\b(?:switch|change)(?:\s+back)?\s+to\s+(?:the\s+)?"
-    r"(home|cooking|shopping|driving)\b"
-)
 
 
 class ContextManager:
@@ -150,44 +172,65 @@ def _contains_any(text: str, phrases: tuple[str, ...]) -> bool:
 
 
 def _detect_requested_mode(transcript: str) -> ContextMode | None:
-    mode_phrases: tuple[tuple[ContextMode, tuple[str, ...]], ...] = (
-        ("cooking", ("cooking mode", "kitchen mode", "switch to cooking")),
-        ("shopping", ("shopping mode", "shop mode", "switch to shopping")),
-        ("driving", ("driving mode", "drive mode", "switch to driving")),
-        ("home", ("home mode", "living mode", "switch to home")),
-    )
+    if _is_question(transcript):
+        return None
 
-    for mode, phrases in mode_phrases:
-        if _contains_any(transcript, phrases):
+    for mode, aliases in _MODE_ALIASES:
+        alias_pattern = "|".join(re.escape(alias) for alias in aliases)
+        target = rf"(?:{alias_pattern})(?:\s+(?:mode|mdoe))?"
+        patterns = (
+            rf"^(?:please\s+)?(?:switch|change)(?:\s+back)?\s+(?:me\s+)?to\s+"
+            rf"(?:the\s+)?{target}(?:\s+please)?[.!]*$",
+            rf"^(?:please\s+)?go\s+(?:me\s+)?to\s+"
+            rf"(?:the\s+)?{target}(?:\s+please)?[.!]*$",
+            rf"^(?:please\s+)?(?:enter|enable|activate|start|use)\s+"
+            rf"(?:the\s+)?{target}(?:\s+please)?[.!]*$",
+            rf"^(?:please\s+)?(?:{alias_pattern})\s+mode(?:\s+please)?[.!]*$",
+        )
+        if any(re.fullmatch(pattern, transcript) for pattern in patterns):
             return mode
-
-    explicit_switch = _EXPLICIT_MODE_SWITCH.search(transcript)
-    if explicit_switch is not None:
-        modes: dict[str, ContextMode] = {
-            "home": "home",
-            "cooking": "cooking",
-            "shopping": "shopping",
-            "driving": "driving",
-        }
-        return modes[explicit_switch.group(1)]
 
     return None
 
 
 def _detect_command_action(transcript: str) -> CommandAction | None:
-    if "repeat" in transcript or "say that again" in transcript:
+    if _matches_command(
+        transcript,
+        r"(?:repeat(?:\s+(?:that|this|it))?|say\s+that\s+again)",
+    ):
         return "repeat"
-    if "next step" in transcript:
+    if _matches_command(
+        transcript,
+        r"(?:next\s+step|what(?:'s|\s+is)\s+the\s+next\s+step)",
+    ):
         return "next_step"
-    if "stop" in transcript:
+    if _matches_command(
+        transcript,
+        r"stop(?:\s+(?:speaking|talking|that|this|now|the\s+response|playback))?",
+    ):
         return "stop"
-    if (
-        "cancel" in transcript
-        or "never mind" in transcript
-        or "nevermind" in transcript
+    if _matches_command(
+        transcript,
+        r"(?:cancel(?:\s+(?:that|this))?|never\s+mind|nevermind)",
     ):
         return "cancel"
     return None
+
+
+def _matches_command(transcript: str, command_pattern: str) -> bool:
+    """Return whether the whole transcript is an explicit command."""
+
+    pattern = rf"^(?:please\s+)?{command_pattern}(?:\s+please)?[.!]*$"
+    return re.fullmatch(pattern, transcript) is not None
+
+
+def _is_question(transcript: str) -> bool:
+    """Return whether a transcript is phrased as a question, not a mode command."""
+
+    if transcript.rstrip().endswith("?"):
+        return True
+    first_word = transcript.split(maxsplit=1)[0].rstrip(".,!?") if transcript else ""
+    return first_word in _QUESTION_PREFIXES
 
 
 def _apply_accessibility_preferences(
