@@ -334,3 +334,45 @@ class TestPaceStore:
         blocked.write_text("x")  # a file where a directory would need to be
 
         assert save_rate(SpeechRate(1), blocked / "child" / "pace.json") is False
+
+
+@pytest.mark.unit
+class TestTakingTheAnnouncement:
+    """The acknowledgement has to reach the caller, or it is never heard."""
+
+    def test_a_change_leaves_an_announcement_to_collect(self) -> None:
+        paced, _ = _paced()
+
+        paced.slower()
+
+        assert paced.take_announcement() == "Speaking more slowly."
+
+    def test_collecting_it_clears_it(self) -> None:
+        """It leads the next step, and must not lead the one after that."""
+        paced, _ = _paced()
+        paced.faster()
+
+        assert paced.take_announcement() == "Speaking faster."
+        assert paced.take_announcement() is None
+
+    def test_nothing_to_collect_before_any_change(self) -> None:
+        paced, _ = _paced()
+
+        assert paced.take_announcement() is None
+
+    def test_the_end_of_the_ladder_still_leaves_an_announcement(self) -> None:
+        """The only thing distinguishing "heard and declined" from "not heard"."""
+        paced, _ = _paced()
+        paced.set_rate(SpeechRate(0))
+
+        paced.slower()
+
+        assert paced.take_announcement() == "That's as slow as I can go."
+
+    def test_the_fast_end_says_so_too(self) -> None:
+        paced, _ = _paced()
+        paced.set_rate(SpeechRate(len(PACE_LADDER) - 1))
+
+        paced.faster()
+
+        assert paced.take_announcement() == "That's as fast as I can go."

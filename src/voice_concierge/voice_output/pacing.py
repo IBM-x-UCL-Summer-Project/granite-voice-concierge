@@ -100,6 +100,7 @@ class PacedTextToSpeech:
         self._rate = rate or SpeechRate()
         self._backends: dict[int, TextToSpeech] = {}
         self._on_change = on_change
+        self._announcement: str | None = None
 
     @property
     def rate(self) -> SpeechRate:
@@ -122,6 +123,21 @@ class PacedTextToSpeech:
         """
         self._rate = rate
 
+    def take_announcement(self) -> str | None:
+        """Return the last pace acknowledgement, clearing it.
+
+        Held here rather than spoken immediately because the rate changed for a
+        reason: the caller is about to say something at the new rate, and the
+        acknowledgement belongs at the front of that rather than as a separate
+        utterance the user has to sit through.
+
+        It matters most when the ladder did not move. "That's as slow as I can
+        go" is the only thing distinguishing a request that was heard and
+        declined from one that was never heard at all.
+        """
+        announcement, self._announcement = self._announcement, None
+        return announcement
+
     def synthesize(self, text: str) -> CapturedAudio:
         """Render the text at the current rate."""
         backend = self._backends.get(self._rate.level)
@@ -136,4 +152,5 @@ class PacedTextToSpeech:
         # the preference does not have to work out whether anything changed.
         if self._on_change is not None:
             self._on_change(target)
-        return acknowledgement(previous, target)
+        self._announcement = acknowledgement(previous, target)
+        return self._announcement
