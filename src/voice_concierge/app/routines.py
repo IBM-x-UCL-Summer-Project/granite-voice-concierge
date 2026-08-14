@@ -34,6 +34,9 @@ from voice_concierge.routines.adapter import RoutineCommandAdapter
 from voice_concierge.routines.intent import is_routine_request
 from voice_concierge.routines.runner import RoutineRunner
 
+#: How long to wait before looking again when the microphone has no frames.
+IDLE_POLL: float = 0.01
+
 #: Words that act on the speech itself rather than moving through the routine.
 PLAYBACK_HOLD = frozenset({"pause", "resume"})
 
@@ -196,7 +199,15 @@ class MicCommandWaiter:
             return None  # no mic: the runner falls back to auto-advancing
         try:
             deadline = self._clock() + timeout
+            available = getattr(self._source, "available", None)
             while self._clock() < deadline:
+                if available is not None and available() < self._chunk:
+                    # Nothing ready. Waiting here rather than in a blocking read
+                    # keeps the deadline real: a device left in a bad state
+                    # never delivers, and a read for frames that never arrive
+                    # cannot be interrupted, not even by Ctrl+C.
+                    time.sleep(IDLE_POLL)
+                    continue
                 event = self._spotter.process(self._source.read(self._chunk))
                 if event is not None:
                     if self._on_event is not None:

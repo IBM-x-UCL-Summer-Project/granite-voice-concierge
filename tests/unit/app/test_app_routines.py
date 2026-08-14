@@ -450,3 +450,57 @@ class TestPacingBetweenSteps:
 
         assert event is not None
         assert event.command == "repeat"
+
+
+class _WedgedSource(_Source):
+    """A mic that opens but never delivers frames, as a bad device does."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.reads = 0
+
+    def available(self) -> int:
+        return 0  # nothing ever becomes ready
+
+    def read(self, num_samples: int) -> bytes:
+        self.reads += 1
+        raise AssertionError("a blocking read would hang here forever")
+
+
+class _ReadySource(_Source):
+    """A healthy mic that always has a full block ready."""
+
+    def available(self) -> int:
+        return 1_000_000
+
+
+@pytest.mark.unit
+class TestWedgedMicrophone:
+    """A device that never delivers must not hold the routine, or Ctrl+C."""
+
+    def test_a_wedged_microphone_times_out_instead_of_blocking(self) -> None:
+        source = _WedgedSource()
+        waiter = MicCommandWaiter(source, _Spotter(), clock=_Clock())
+
+        assert waiter.wait(0.5) is None
+        assert source.reads == 0  # never entered the blocking read
+        assert source.closed == 1  # and the device was released
+
+    def test_a_ready_microphone_is_still_read(self) -> None:
+        waiter = MicCommandWaiter(
+            _ReadySource(), _Spotter([_event("next")]), clock=_Clock()
+        )
+
+        event = waiter.wait(5.0)
+
+        assert event is not None
+        assert event.command == "next"
+
+    def test_a_source_without_availability_still_works(self) -> None:
+        """Sources that cannot report readiness keep the previous behaviour."""
+        waiter = MicCommandWaiter(_Source(), _Spotter([_event("stop")]), clock=_Clock())
+
+        event = waiter.wait(5.0)
+
+        assert event is not None
+        assert event.command == "stop"
