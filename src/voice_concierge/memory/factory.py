@@ -6,13 +6,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from voice_concierge.local_storage import MEMORY_DATABASE_PATH, VECTOR_DATABASE_PATH
+
 if TYPE_CHECKING:
     from voice_concierge.memory.embedding_service import EmbeddingService
     from voice_concierge.memory.memory_manager import MemoryManager
     from voice_concierge.memory.memory_validator import MemoryValidator
 
-DEFAULT_MEMORY_DB_PATH = Path(".local/memory/memories.sqlite3")
-DEFAULT_VECTOR_DB_PATH = Path(".local/memory/vectors.sqlite3")
+DEFAULT_MEMORY_DB_PATH = MEMORY_DATABASE_PATH
+DEFAULT_VECTOR_DB_PATH = VECTOR_DATABASE_PATH
 DEFAULT_EMBEDDING_MODEL = "granite-embedding:278m"
 DEFAULT_EMBEDDING_DIMENSION = 768
 

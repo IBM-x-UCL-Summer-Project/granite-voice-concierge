@@ -10,6 +10,12 @@ from typing import TextIO
 
 from voice_concierge.app.factory import build_voice_concierge_pipeline
 from voice_concierge.app.pipeline import VoiceConciergePipeline
+from voice_concierge.app.reminders import (
+    CANCEL_ALL_PHRASES,
+    LIST_PHRASES,
+    ReminderTurnHandler,
+    SpokenNotifier,
+)
 from voice_concierge.app.routines import RoutineTurnHandler
 from voice_concierge.app.types import AppPipelineState, AppTurnResult
 from voice_concierge.audio import CapturedAudio, PyAudioSource
@@ -19,6 +25,8 @@ from voice_concierge.reasoning.errors import (
     ReasoningModelUnavailableError,
 )
 from voice_concierge.routines.intent import is_routine_request
+from voice_concierge.scheduling.parser import is_reminder_request
+from voice_concierge.scheduling.runner import ReminderRunner
 from voice_concierge.voice_input.interfaces import UtteranceCapturer, WakeWordListener
 from voice_concierge.voice_input.voice_activity_detector import (
     DEFAULT_CHUNK as DEFAULT_VAD_CHUNK,
@@ -56,6 +64,7 @@ class LiveAppConfig:
     download_wake_models: bool = False
     vad_max_wait_s: int = DEFAULT_MAX_WAIT_S
     guided_routines: bool = True
+    reminders: bool = True
 
     def __post_init__(self) -> None:
         if self.wake_word_threshold < 0:
@@ -94,6 +103,7 @@ def run_live_app(
     wake_word_listener: WakeWordListener | None = None,
     utterance_capturer: UtteranceCapturer | None = None,
     routine_handler: RoutineTurnHandler | None = None,
+    reminder_handler: ReminderTurnHandler | None = None,
     stdout: TextIO = sys.stdout,
 ) -> AppPipelineState:
     """Run the live voice loop and return the final in-process app state."""
@@ -105,6 +115,9 @@ def run_live_app(
     state = AppPipelineState()
     routines = routine_handler
     resolved_routines = routines is not None
+    reminders = reminder_handler
+    owns_reminders = reminder_handler is None
+    resolved_reminders = reminders is not None
 
     def get_routines() -> RoutineTurnHandler | None:
         """Build the routine stack on first use, then reuse it.
@@ -119,6 +132,14 @@ def run_live_app(
             resolved_routines = True
         return routines
 
+    def get_reminders() -> ReminderTurnHandler | None:
+        """Build the reminder stack on first use, then reuse it."""
+        nonlocal reminders, resolved_reminders
+        if not resolved_reminders:
+            reminders = build_reminder_turn_handler(runtime_config)
+            resolved_reminders = True
+        return reminders
+
     def handle_audio(audio: CapturedAudio) -> None:
         nonlocal state
         # A guided routine takes over the conversation for many turns, so it is
@@ -130,10 +151,17 @@ def run_live_app(
                 print(f"You: {gate.transcript}", file=stdout)
                 print(handler.run(gate.transcript), file=stdout)
                 return
+        if gate.is_reminder and gate.transcript is not None:
+            handler = get_reminders()
+            if handler is not None:
+                print(f"You: {gate.transcript}", file=stdout)
+                print(f"Assistant: {handler.run(gate.transcript)}", file=stdout)
+                return
         result = _process_turn(pipeline, audio, gate, state, runtime_config)
         state = result.state
         _print_turn_result(result, stdout=stdout)
 
+    runner = _start_reminder_runner(runtime_config, pipeline, get_reminders, stdout)
     try:
         if runtime_config.use_wake_word:
             listener = wake_word_listener or build_wake_word_listener(runtime_config)
@@ -154,6 +182,10 @@ def run_live_app(
     except KeyboardInterrupt:
         print("\nLive app stopped.", file=stdout)
     finally:
+        if runner is not None:
+            runner.stop()
+        if owns_reminders and reminders is not None:
+            reminders.close()
         if owns_pipeline:
             pipeline.close()
 
@@ -185,6 +217,8 @@ class _GatedTurn:
     transcript: str | None
     #: True when the transcript is asking to be walked through something.
     is_routine: bool
+    #: True when the transcript is about reminders or timers.
+    is_reminder: bool = False
 
 
 def _gate_turn(
@@ -200,7 +234,7 @@ def _gate_turn(
     A missing or failing recognizer yields no transcript, which sends the turn
     down the ordinary path where the pipeline reports the failure itself.
     """
-    if not config.guided_routines:
+    if not (config.guided_routines or config.reminders):
         return _GatedTurn(None, False)
     # getattr: callers may inject a pipeline stand-in without this attribute.
     speech_to_text = getattr(pipeline, "speech_to_text", None)
@@ -212,7 +246,11 @@ def _gate_turn(
         return _GatedTurn(None, False)
     if not transcript:
         return _GatedTurn(None, False)
-    return _GatedTurn(transcript, is_routine_request(transcript))
+    return _GatedTurn(
+        transcript,
+        config.guided_routines and is_routine_request(transcript),
+        config.reminders and _reminder_intent(transcript),
+    )
 
 
 def _process_turn(
@@ -242,6 +280,64 @@ def _process_turn(
     )
 
 
+def _reminder_intent(transcript: str) -> bool:
+    """True when the transcript is about reminders or timers.
+
+    Kept here rather than on the handler so the gate can decide without building
+    the reminder stack, which is what keeps the models unloaded for a user who
+    never sets one.
+    """
+    lowered = transcript.casefold()
+    return (
+        is_reminder_request(transcript)
+        or any(phrase in lowered for phrase in LIST_PHRASES)
+        or any(phrase in lowered for phrase in CANCEL_ALL_PHRASES)
+    )
+
+
+def build_reminder_turn_handler(  # pragma: no cover - opens the local database
+    config: LiveAppConfig,
+) -> ReminderTurnHandler | None:
+    """Assemble the reminder handler, or None if the store cannot be opened."""
+    from voice_concierge.scheduling.factory import build_reminder_service
+
+    if not config.reminders:
+        return None
+    try:
+        return ReminderTurnHandler(build_reminder_service())
+    except Exception:
+        return None
+
+
+def _start_reminder_runner(  # pragma: no cover - starts a background thread
+    config: LiveAppConfig,
+    pipeline: VoiceConciergePipeline,
+    get_handler: Callable[[], ReminderTurnHandler | None],
+    stdout: TextIO,
+) -> ReminderRunner | None:
+    """Start delivering due reminders in the background, if reminders are on.
+
+    Anything already overdue, including reminders missed while the assistant was
+    not running, is delivered on the first check rather than skipped.
+    """
+    if not config.reminders:
+        return None
+    handler = get_handler()
+    if handler is None:
+        return None
+    service = getattr(handler, "service", None)
+    if service is None:
+        return None
+    notifier = SpokenNotifier(
+        pipeline.text_to_speech if config.play else None,
+        pipeline.audio_player if config.play else None,
+        write=lambda line: print(line, file=stdout),
+    )
+    runner = ReminderRunner(service, notifier)
+    runner.start()
+    return runner
+
+
 def build_routine_turn_handler(  # pragma: no cover - builds models and devices
     config: LiveAppConfig,
 ) -> RoutineTurnHandler | None:
@@ -266,7 +362,7 @@ def build_routine_turn_handler(  # pragma: no cover - builds models and devices
     from voice_concierge.memory import build_memory_manager
     from voice_concierge.reasoning.factory import build_reasoning_engine
     from voice_concierge.routines import RoutineRunner, build_routine_adapter
-    from voice_concierge.voice_output.factory import build_text_to_speech
+    from voice_concierge.voice_output.factory import build_paced_text_to_speech
 
     if not echo_cancellation_available():
         # Without echo cancellation the assistant hears its own speech as a
@@ -281,7 +377,10 @@ def build_routine_turn_handler(  # pragma: no cover - builds models and devices
         # keeps a partial-result recognizer from firing twice or on noise.
         spotter = StableCommandSpotter(build_vosk_command_spotter())
         player = VoiceProcessingAudioPlayer()
-        speaker = EchoCancelledStepSpeaker(build_text_to_speech(), player, spotter)
+        # A paced voice, so "slower" and "faster" spoken during a step
+        # change the rate and have the step read again at the new speed.
+        paced = build_paced_text_to_speech()
+        speaker = EchoCancelledStepSpeaker(paced, player, spotter, pace=paced)
         waiter = MicCommandWaiter(
             PyAudioSource(rate=DEFAULT_RATE, input_device_index=config.device_index),
             spotter,
@@ -419,6 +518,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Handle one wake/capture attempt and exit.",
     )
     parser.add_argument(
+        "--no-reminders",
+        action="store_true",
+        help="Disable local reminders and timers.",
+    )
+    parser.add_argument(
         "--no-guided-routines",
         action="store_true",
         help="Answer step-by-step requests normally instead of guiding them.",
@@ -441,6 +545,7 @@ def _config_from_args(args: argparse.Namespace) -> LiveAppConfig:
         download_wake_models=args.download_wake_models,
         vad_max_wait_s=args.vad_max_wait_s,
         guided_routines=not args.no_guided_routines,
+        reminders=not args.no_reminders,
     )
 
 

@@ -7,12 +7,14 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal, Protocol, cast
 
+from voice_concierge.local_storage import REASONING_MODEL_SELECTION_PATH
+
 DEFAULT_MODEL_BACKEND = "ollama"
 DEFAULT_REASONING_MODEL = "granite4.1:8b"
 DEFAULT_FALLBACK_MODEL = "granite3.3:2b"
 DEFAULT_MODEL_FALLBACK_POLICY = "startup_missing_primary"
 DEFAULT_OLLAMA_HOST = "http://localhost:11434"
-DEFAULT_MODEL_SELECTION_PATH = Path(".local/reasoning-model-selection.json")
+DEFAULT_MODEL_SELECTION_PATH = REASONING_MODEL_SELECTION_PATH
 MODEL_SELECTION_SCHEMA_VERSION = 2
 _LEGACY_MODEL_SELECTION_SCHEMA_VERSION = 1
 

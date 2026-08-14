@@ -197,3 +197,104 @@ class TestNoActiveRoutine:
 
         assert last == "I couldn't load that routine right now."
         assert waiter.timeouts == []
+
+
+@pytest.mark.unit
+class TestConfirmingBack:
+    """ "back" undoes progress, so it is only acted on when confirmed."""
+
+    def test_back_asks_before_acting(self) -> None:
+        adapter = _adapter(3)
+        speaker = _Speaker()
+        waiter = _Waiter([_event("back"), _event("yes"), _event("stop")])
+
+        _runner(adapter, speaker, waiter).run(adapter.start_routine("tea"))
+
+        assert "Go back a step? Say yes to confirm." in speaker.said
+
+    def test_yes_applies_the_command(self) -> None:
+        adapter = _adapter(3)
+        speaker = _Speaker()
+        waiter = _Waiter([_event("next"), _event("back"), _event("yes")])
+
+        _runner(adapter, speaker, waiter).run(adapter.start_routine("tea"))
+
+        # Step 1 is read once at the start and again after the confirmed back.
+        assert speaker.said.count("Step 1 of 3. step 1") == 2
+
+    def test_silence_ignores_the_command(self) -> None:
+        """Silence must mean no: the misheard word is what silence produced."""
+        adapter = _adapter(2)
+        speaker = _Speaker()
+        waiter = _Waiter([_event("next"), _event("back")])  # then only silence
+
+        _runner(adapter, speaker, waiter).run(adapter.start_routine("tea"))
+
+        assert adapter.status == "finished"  # carried on rather than going back
+        assert speaker.said.count("Step 1 of 2. step 1") == 1  # never re-read
+
+    def test_no_ignores_the_command(self) -> None:
+        adapter = _adapter(2)
+        speaker = _Speaker()
+        waiter = _Waiter([_event("next"), _event("back"), _event("no")])
+
+        _runner(adapter, speaker, waiter).run(adapter.start_routine("tea"))
+
+        assert adapter.status == "finished"
+        assert speaker.said.count("Step 1 of 2. step 1") == 1
+
+    def test_an_answer_spoken_over_the_question_counts(self) -> None:
+        """The user should not have to wait for the question to finish."""
+        adapter = _adapter(3)
+        # The confirmation prompt is interrupted by "yes".
+        speaker = _Speaker([None, _event("yes"), _event("stop")])
+        waiter = _Waiter([_event("back")])
+
+        _runner(adapter, speaker, waiter).run(adapter.start_routine("tea"))
+
+        assert any("You're at the start" in said for said in speaker.said)
+
+
+@pytest.mark.unit
+class TestCommandsThatAreNotConfirmed:
+    @pytest.mark.parametrize("command", ["next", "repeat", "stop", "pause"])
+    def test_other_commands_act_immediately(self, command: str) -> None:
+        adapter = _adapter(3)
+        speaker = _Speaker()
+        waiter = _Waiter([_event(command), _event("stop")])
+
+        _runner(adapter, speaker, waiter).run(adapter.start_routine("tea"))
+
+        assert "Go back a step? Say yes to confirm." not in speaker.said
+
+    def test_the_confirmed_set_is_configurable(self) -> None:
+        adapter = _adapter(3)
+        speaker = _Speaker()
+        waiter = _Waiter([_event("stop"), _event("yes")])
+
+        RoutineRunner(
+            adapter,
+            speaker,
+            waiter,
+            confirm_commands=frozenset({"stop"}),
+            auto_advance_delay=5.0,
+        ).run(adapter.start_routine("tea"))
+
+        assert any("Say yes" in said for said in speaker.said)
+
+
+@pytest.mark.unit
+class TestStrayConfirmationWords:
+    """A yes or no on its own means nothing and must not reach the adapter."""
+
+    @pytest.mark.parametrize("word", ["yes", "no"])
+    def test_a_stray_answer_is_ignored(self, word: str) -> None:
+        adapter = _adapter(2)
+        speaker = _Speaker()
+        waiter = _Waiter([_event(word), _event("stop")])
+
+        _runner(adapter, speaker, waiter).run(adapter.start_routine("tea"))
+
+        # Passing it through would have made the adapter apologise instead.
+        assert not any("didn't catch" in said for said in speaker.said)
+        assert speaker.said[-1] == "Routine stopped."

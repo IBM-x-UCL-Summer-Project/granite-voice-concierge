@@ -20,6 +20,7 @@ from voice_concierge.memory import (
     StructuredListMutation,
     VectorStore,
 )
+from voice_concierge.privacy import PrivacyCentre
 
 
 def _shopping_add(*items: str) -> StructuredListMutation:
@@ -251,6 +252,31 @@ class TestMemoryManagerBasic:
 
         memories = memory_manager.get_all_memories()
         assert len(memories) == 0
+
+    def test_privacy_centre_uses_typed_manager_boundary(self, memory_manager):
+        """The real manager supports privacy review, correction, and deletion."""
+
+        stored = memory_manager.store_memory(
+            content="I prefer coffee",
+            layer="profile",
+            validate=False,
+        )
+        memory_id = stored.memory_id
+        assert memory_id is not None
+        centre = PrivacyCentre(memory_manager)
+
+        listed = centre.list_memories()
+        assert [(memory.identifier, memory.content) for memory in listed] == [
+            (memory_id, "I prefer coffee")
+        ]
+
+        updated = centre.edit_memory(memory_id, "I prefer tea")
+        assert updated.content == "I prefer tea"
+        assert updated.revision == 2
+
+        centre.delete_memory(memory_id)
+        assert memory_manager.get_memory_by_id(memory_id) is None
+        assert not memory_manager.vector_store.has_vector(memory_id)
 
     def test_execute_memory_store_command(self, memory_manager):
         command = StoreMemoryCommand(
