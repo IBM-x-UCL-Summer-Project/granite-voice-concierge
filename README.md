@@ -75,6 +75,23 @@ models. If the virtual environment has not been installed yet, run
 `python -m pip install -e .` after activating it. See
 [the web UI guide](web/README.md) for details.
 
+## Reminders and timers
+
+Set one-off or repeating reminders by voice ("set a timer for ten minutes",
+"remind me to take my pills every day at 8"), or from the command line:
+
+```bash
+python -m voice_concierge.scheduling                   # what is set
+python -m voice_concierge.scheduling add "remind me to stretch in 10 minutes"
+python -m voice_concierge.scheduling cancel 3
+python -m voice_concierge.scheduling watch             # announce as they fall due
+```
+
+Reminders are stored at `.local/reminders/` and work offline. One missed while
+the assistant was not running is announced on the next start rather than
+skipped. Use `--no-reminders` to switch the feature off. See
+[the scheduling package](src/voice_concierge/scheduling/README.md).
+
 ## Project Documentation
 
 - [Repository Structure Guide](docs/repository-structure.md)
