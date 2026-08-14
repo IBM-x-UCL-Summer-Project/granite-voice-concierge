@@ -80,6 +80,22 @@ class PyAudioSource:
             raise AudioDeviceError("Audio source read before open().")
         return self._stream.read(num_samples, exception_on_overflow=False)
 
+    def available(self) -> int:
+        """Frames that can be read right now without blocking.
+
+        A read for more frames than this blocks until they arrive, which never
+        happens if the device has been left in a bad state by another audio
+        framework: the stream stays open, no frames are delivered, and the
+        blocking read cannot even be interrupted by Ctrl+C. Callers with a
+        deadline should check this first.
+        """
+        if self._stream is None:
+            return 0
+        try:
+            return int(self._stream.get_read_available())
+        except Exception:
+            return 0  # a wedged stream reports nothing rather than raising
+
     def close(self) -> None:
         """Stop and release the stream and PyAudio, tolerating partial state."""
         try:

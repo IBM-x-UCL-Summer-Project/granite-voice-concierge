@@ -35,6 +35,7 @@ from voice_concierge.audio.types import CapturedAudio
 VOSK_RATE: int = 16000  # sample rate the command recognizer expects
 DEFAULT_BLOCKSIZE: int = 1024  # frames per tap callback
 _POLL: float = 0.02  # seconds to wait for a captured block
+MAX_PAUSE_HOLD: float = 300.0  # longest a pause may hold the device open
 
 
 def mic_to_command_bytes(
@@ -194,12 +195,20 @@ class VoiceProcessingAudioPlayer:
         # down only while actually playing, so a pause holds the audio open
         # instead of ending it at the original duration.
         remaining = len(floats) / play_rate + 1.0
+        # An absolute ceiling as well as the playing-time budget. A pause stops
+        # the budget counting down, which is what makes "pause" useful, but a
+        # pause nobody asked for (a misheard word) would otherwise hold the
+        # audio device open forever, leaving the engine running and the caller
+        # stuck in this loop.
+        deadline = time.monotonic() + remaining + MAX_PAUSE_HOLD
         last = time.monotonic()
         try:
             while not done.is_set() and remaining > 0:
                 if self._pump_once(player, on_input_frame):
                     break
                 now = time.monotonic()
+                if now >= deadline:
+                    break  # held far too long; release the device
                 if not self._paused:
                     remaining -= now - last
                 last = now

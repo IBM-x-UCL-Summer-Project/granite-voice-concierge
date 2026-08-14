@@ -53,6 +53,7 @@ While a step is being read, or in the quiet window after it:
 | `next` / `back` / `repeat` | move through the routine |
 | `pause` / `continue` | hold and resume; a paused routine will not auto-advance |
 | `stop` | end the routine |
+| `slower` / `faster` | change the speaking pace and re-read the step |
 
 Barge-in during playback uses the macOS voice-processing unit for echo
 cancellation, so the assistant does not hear its own speech as a command. It

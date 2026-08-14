@@ -7,7 +7,8 @@ two things RoutineRunner needs, both of which listen while a routine is running:
   player, so the microphone stays live during playback and the assistant does
   not hear itself. A playback word (pause/continue) is applied to the speech, a
   navigation word (next/back/repeat/stop) cuts the speech short and is handed
-  back to the runner.
+  back to the runner, and a pacing word (slower/faster) changes the rate and
+  has the step read again at the new speed.
 * MicCommandWaiter listens in the quiet gap after a step. Nothing is playing
   there, so a plain input stream is safe; the concurrent-stream CoreAudio -50
   only bites while output is open.
@@ -33,8 +34,19 @@ from voice_concierge.routines.adapter import RoutineCommandAdapter
 from voice_concierge.routines.intent import is_routine_request
 from voice_concierge.routines.runner import RoutineRunner
 
+#: How long to wait before looking again when the microphone has no frames.
+IDLE_POLL: float = 0.01
+
 #: Words that act on the speech itself rather than moving through the routine.
 PLAYBACK_HOLD = frozenset({"pause", "resume"})
+
+#: Words that change how the step is spoken rather than which step is spoken.
+PACING = frozenset({"slower", "faster"})
+
+#: Phrase reported when a pacing word re-reads the step at the new speed. It
+#: stands in for a spoken "repeat" so the routine holds its place, and is
+#: distinct so a log shows the reading was restarted, not requested again.
+PACE_CHANGED_PHRASE = "(pace changed)"
 
 #: Phrase reported when playback failed rather than a command being spoken. It
 #: stands in for a spoken "stop" so the runner ends the routine, and is distinct
@@ -48,6 +60,20 @@ class StepSynthesizer(Protocol):
 
     def synthesize(self, text: str) -> CapturedAudio:
         """Render the text to audio."""
+
+
+@runtime_checkable
+class PaceControl(Protocol):
+    """The slice of a paced voice needed to step the speaking rate."""
+
+    def slower(self) -> str:
+        """Speak more slowly from now on; returns what to say about it."""
+
+    def faster(self) -> str:
+        """Speak faster from now on; returns what to say about it."""
+
+    def take_announcement(self) -> str | None:
+        """Return the last pace acknowledgement, clearing it."""
 
 
 @runtime_checkable
@@ -72,6 +98,22 @@ class ListeningPlayer(Protocol):
         """Resume paused playback."""
 
 
+def apply_pacing(event: CommandEvent, pace: "PaceControl | None") -> CommandEvent:
+    """Apply a pacing word and return the command the routine should act on.
+
+    Rendered audio cannot change speed, so a pace change becomes a request to
+    read the current step again. Shared by both listening contexts: a word
+    spoken over the speech and the same word spoken into the quiet gap after it
+    have to mean the same thing, or the control works only half the time.
+    """
+    if pace is not None:
+        if event.command == "slower":
+            pace.slower()
+        else:
+            pace.faster()
+    return CommandEvent(command="repeat", phrase=PACE_CHANGED_PHRASE)
+
+
 class EchoCancelledStepSpeaker:
     """Speaks a step with the mic live, returning any command that cut it off."""
 
@@ -81,12 +123,14 @@ class EchoCancelledStepSpeaker:
         player: ListeningPlayer,
         spotter: CommandSpotter,
         *,
+        pace: PaceControl | None = None,
         on_event: Callable[[CommandEvent], None] | None = None,
     ) -> None:
         self._text_to_speech = text_to_speech
         self._player = player
         self._spotter = spotter
         self._dispatcher = CommandDispatcher(player)
+        self._pace = pace
         self._on_event = on_event
 
     def speak(self, text: str) -> CommandEvent | None:
@@ -96,6 +140,7 @@ class EchoCancelledStepSpeaker:
         resumed), so the caller decides what happens next.
         """
         interrupt: list[CommandEvent] = []
+        text = self._with_pace_announcement(text)
         audio = self._text_to_speech.synthesize(text)
         try:
             self._player.play(
@@ -112,6 +157,17 @@ class EchoCancelledStepSpeaker:
             return event
         return interrupt[0] if interrupt else None
 
+    def _with_pace_announcement(self, text: str) -> str:
+        """Lead with any pending pace acknowledgement.
+
+        Said at the front of the step rather than on its own, so the user hears
+        why the speed changed, or why it did not, without an extra utterance.
+        """
+        if self._pace is None:
+            return text
+        announcement = self._pace.take_announcement()
+        return f"{announcement} {text}" if announcement else text
+
     def _route(self, frame: bytes, interrupt: list[CommandEvent]) -> None:
         """Send one mic frame to the spotter and act on anything it hears."""
         event = self._spotter.process(frame)
@@ -121,6 +177,10 @@ class EchoCancelledStepSpeaker:
             self._on_event(event)
         if event.command in PLAYBACK_HOLD:
             self._dispatcher.dispatch(event)  # hold or resume the speech
+            return
+        if event.command in PACING:
+            interrupt.append(apply_pacing(event, self._pace))
+            self._player.stop()
             return
         interrupt.append(event)
         self._player.stop()
@@ -136,12 +196,14 @@ class MicCommandWaiter:
         *,
         chunk: int = DEFAULT_CHUNK,
         clock: Callable[[], float] = time.monotonic,
+        pace: "PaceControl | None" = None,
         on_event: Callable[[CommandEvent], None] | None = None,
     ) -> None:
         self._source = source
         self._spotter = spotter
         self._chunk = chunk
         self._clock = clock
+        self._pace = pace
         self._on_event = on_event
 
     def wait(self, timeout: float) -> CommandEvent | None:
@@ -152,11 +214,21 @@ class MicCommandWaiter:
             return None  # no mic: the runner falls back to auto-advancing
         try:
             deadline = self._clock() + timeout
+            available = getattr(self._source, "available", None)
             while self._clock() < deadline:
+                if available is not None and available() < self._chunk:
+                    # Nothing ready. Waiting here rather than in a blocking read
+                    # keeps the deadline real: a device left in a bad state
+                    # never delivers, and a read for frames that never arrive
+                    # cannot be interrupted, not even by Ctrl+C.
+                    time.sleep(IDLE_POLL)
+                    continue
                 event = self._spotter.process(self._source.read(self._chunk))
                 if event is not None:
                     if self._on_event is not None:
                         self._on_event(event)
+                    if event.command in PACING:
+                        return apply_pacing(event, self._pace)
                     return event
             return None
         finally:
