@@ -387,3 +387,66 @@ class TestPacing:
 
     def test_the_pace_fake_matches_the_protocol(self) -> None:
         assert isinstance(_Pace(), PaceControl)
+
+
+@pytest.mark.unit
+class TestPacingBetweenSteps:
+    """A pacing word in the quiet gap must work exactly as it does over speech."""
+
+    def test_slower_in_the_quiet_window_changes_the_rate(self) -> None:
+        pace = _Pace()
+        waiter = MicCommandWaiter(
+            _Source(), _Spotter([_event("slower")]), clock=_Clock(), pace=pace
+        )
+
+        waiter.wait(5.0)
+
+        assert pace.moves == ["slower"]
+
+    def test_it_is_reported_as_a_repeat_not_as_an_unknown_command(self) -> None:
+        """Passing "slower" through raw made the adapter say it did not catch it."""
+        waiter = MicCommandWaiter(
+            _Source(), _Spotter([_event("slower")]), clock=_Clock(), pace=_Pace()
+        )
+
+        event = waiter.wait(5.0)
+
+        assert event is not None
+        assert event.command == "repeat"
+        assert event.phrase == PACE_CHANGED_PHRASE
+
+    def test_the_adapter_understands_what_the_waiter_returns(self) -> None:
+        """End to end: the step is re-read rather than an apology being spoken."""
+        routine = Routine(
+            name="tea", steps=(RoutineStep("step one"), RoutineStep("step two"))
+        )
+        adapter = RoutineCommandAdapter(StaticRoutineProvider({"tea": routine}))
+        adapter.start_routine("tea")
+        waiter = MicCommandWaiter(
+            _Source(), _Spotter([_event("faster")]), clock=_Clock(), pace=_Pace()
+        )
+
+        said = adapter.handle_command(waiter.wait(5.0))
+
+        assert "Step 1 of 2" in said
+        assert "didn't catch" not in said
+
+    def test_navigation_words_still_pass_through_untouched(self) -> None:
+        waiter = MicCommandWaiter(
+            _Source(), _Spotter([_event("next")]), clock=_Clock(), pace=_Pace()
+        )
+
+        event = waiter.wait(5.0)
+
+        assert event is not None
+        assert event.command == "next"
+
+    def test_a_waiter_without_pacing_still_re_reads(self) -> None:
+        waiter = MicCommandWaiter(
+            _Source(), _Spotter([_event("slower")]), clock=_Clock()
+        )
+
+        event = waiter.wait(5.0)
+
+        assert event is not None
+        assert event.command == "repeat"

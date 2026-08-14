@@ -92,6 +92,22 @@ class ListeningPlayer(Protocol):
         """Resume paused playback."""
 
 
+def apply_pacing(event: CommandEvent, pace: "PaceControl | None") -> CommandEvent:
+    """Apply a pacing word and return the command the routine should act on.
+
+    Rendered audio cannot change speed, so a pace change becomes a request to
+    read the current step again. Shared by both listening contexts: a word
+    spoken over the speech and the same word spoken into the quiet gap after it
+    have to mean the same thing, or the control works only half the time.
+    """
+    if pace is not None:
+        if event.command == "slower":
+            pace.slower()
+        else:
+            pace.faster()
+    return CommandEvent(command="repeat", phrase=PACE_CHANGED_PHRASE)
+
+
 class EchoCancelledStepSpeaker:
     """Speaks a step with the mic live, returning any command that cut it off."""
 
@@ -145,26 +161,11 @@ class EchoCancelledStepSpeaker:
             self._dispatcher.dispatch(event)  # hold or resume the speech
             return
         if event.command in PACING:
-            interrupt.append(self._change_pace(event))
+            interrupt.append(apply_pacing(event, self._pace))
             self._player.stop()
             return
         interrupt.append(event)
         self._player.stop()
-
-    def _change_pace(self, event: CommandEvent) -> CommandEvent:
-        """Apply a pacing word and ask for the step to be read again.
-
-        The audio for this step was rendered before playback began, so its speed
-        cannot be changed mid-sentence. Re-reading the same step is both the only
-        way to apply the new rate and what the user is asking for: they want to
-        hear it again, slower.
-        """
-        if self._pace is not None:
-            if event.command == "slower":
-                self._pace.slower()
-            else:
-                self._pace.faster()
-        return CommandEvent(command="repeat", phrase=PACE_CHANGED_PHRASE)
 
 
 class MicCommandWaiter:
@@ -177,12 +178,14 @@ class MicCommandWaiter:
         *,
         chunk: int = DEFAULT_CHUNK,
         clock: Callable[[], float] = time.monotonic,
+        pace: "PaceControl | None" = None,
         on_event: Callable[[CommandEvent], None] | None = None,
     ) -> None:
         self._source = source
         self._spotter = spotter
         self._chunk = chunk
         self._clock = clock
+        self._pace = pace
         self._on_event = on_event
 
     def wait(self, timeout: float) -> CommandEvent | None:
@@ -198,6 +201,8 @@ class MicCommandWaiter:
                 if event is not None:
                     if self._on_event is not None:
                         self._on_event(event)
+                    if event.command in PACING:
+                        return apply_pacing(event, self._pace)
                     return event
             return None
         finally:

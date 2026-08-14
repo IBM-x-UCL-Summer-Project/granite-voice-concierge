@@ -117,7 +117,7 @@ def main() -> None:
         ),
         voice,
     )
-    waiter = MicCommandWaiter(PyAudioSource(), spotter, on_event=_log)
+    waiter = MicCommandWaiter(PyAudioSource(), spotter, pace=voice, on_event=_log)
     handler = RoutineTurnHandler(adapter, RoutineRunner(adapter, speaker, waiter))
 
     print("Type a request, e.g. 'guide me through making pasta'. Ctrl+C to quit.\n")
