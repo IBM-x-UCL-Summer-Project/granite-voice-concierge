@@ -347,7 +347,7 @@ def build_routine_turn_handler(  # pragma: no cover - builds models and devices
     from voice_concierge.memory import build_memory_manager
     from voice_concierge.reasoning.factory import build_reasoning_engine
     from voice_concierge.routines import RoutineRunner, build_routine_adapter
-    from voice_concierge.voice_output.factory import build_text_to_speech
+    from voice_concierge.voice_output.factory import build_paced_text_to_speech
 
     if not echo_cancellation_available():
         # Without echo cancellation the assistant hears its own speech as a
@@ -362,7 +362,10 @@ def build_routine_turn_handler(  # pragma: no cover - builds models and devices
         # keeps a partial-result recognizer from firing twice or on noise.
         spotter = StableCommandSpotter(build_vosk_command_spotter())
         player = VoiceProcessingAudioPlayer()
-        speaker = EchoCancelledStepSpeaker(build_text_to_speech(), player, spotter)
+        # A paced voice, so "slower" and "faster" spoken during a step
+        # change the rate and have the step read again at the new speed.
+        paced = build_paced_text_to_speech()
+        speaker = EchoCancelledStepSpeaker(paced, player, spotter, pace=paced)
         waiter = MicCommandWaiter(
             PyAudioSource(rate=DEFAULT_RATE, input_device_index=config.device_index),
             spotter,
