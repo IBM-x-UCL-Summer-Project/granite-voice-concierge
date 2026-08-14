@@ -53,6 +53,7 @@ from voice_concierge.app import (
     app_pipeline_state_to_dict,
     app_turn_request_from_dict,
     app_turn_result_to_dict,
+    handle_audio_turn,
     handle_turn,
 )
 
@@ -86,8 +87,9 @@ type AppTurnRequest = {
 };
 ```
 
-For the web UI, use `transcript`. Audio input can be added later by a backend
-wrapper using the pipeline's `process_audio(...)` method.
+The included web wrapper accepts transcripts at `POST /api/turn`. It accepts a
+base64-encoded, mono 16-bit PCM WAV at `POST /api/audio` and routes it through
+the pipeline's `process_audio(...)` method.
 
 ## Backend Adapter
 
@@ -95,14 +97,16 @@ The framework-free adapter accepts and returns plain dictionaries:
 
 ```py
 response_payload = handle_turn(request_payload, pipeline)
+audio_response_payload = handle_audio_turn(audio_request_payload, pipeline)
 ```
 
 `handle_turn(...)` parses the request with `app_turn_request_from_dict(...)`,
 calls `pipeline.process_request(...)`, then serializes the result with
-`app_turn_result_to_dict(...)`.
+`app_turn_result_to_dict(...)`. `handle_audio_turn(...)` decodes the browser WAV
+and calls `pipeline.process_audio(...)` with the same state and options contract.
 
-Malformed payloads raise `PayloadValidationError`. An HTTP wrapper should
-translate that exception into a 400 response.
+Malformed payloads raise `PayloadValidationError`. The included HTTP wrapper
+translates that exception into a 400 response.
 
 ## Fake Smoke Runner
 
@@ -342,4 +346,6 @@ Display fields such as `spoken_response`, `context.mode`,
 `context.needs_confirmation`, and `errors`. Always send the full returned `state`
 back on the next turn. Store `conversation_history` as opaque pipeline state;
 the UI can maintain a separate display-message list if it needs richer rendering
-metadata.
+metadata. Treat `state.context.accessibility` as authoritative for persisted
+verbosity and speech pace; browser audio controls may apply device-local volume
+and rate multipliers without rewriting that state.

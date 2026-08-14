@@ -41,6 +41,43 @@ class ContextManagerTest(unittest.TestCase):
         self.assertEqual(decision.policy.response_style, "step_by_step")
         self.assertEqual(decision.policy.memory_scope, "task_relevant_only")
 
+    def test_negated_mode_commands_do_not_switch_modes(self) -> None:
+        examples = (
+            "Do not switch to cooking mode",
+            "Don't switch to shopping mode",
+            "Please do not enter driving mode",
+            "Never switch to cooking mode",
+        )
+
+        for transcript in examples:
+            with self.subTest(transcript=transcript):
+                decision = self.manager.handle(transcript, ContextState(mode="home"))
+
+                self.assertEqual(decision.state.mode, "home")
+                self.assertIsNone(decision.state.pending_mode)
+                self.assertFalse(decision.mode_changed)
+                self.assertFalse(decision.needs_confirmation)
+
+    def test_questions_mentioning_modes_do_not_switch_modes(self) -> None:
+        examples = (
+            "What is cooking mode?",
+            "How does shopping mode work?",
+            "Can you explain driving mode?",
+            "Why would I use home mode?",
+        )
+
+        for transcript in examples:
+            with self.subTest(transcript=transcript):
+                decision = self.manager.handle(
+                    transcript,
+                    ContextState(mode="home"),
+                )
+
+                self.assertEqual(decision.state.mode, "home")
+                self.assertIsNone(decision.state.pending_mode)
+                self.assertFalse(decision.mode_changed)
+                self.assertFalse(decision.needs_confirmation)
+
     def test_switch_back_phrase_selects_mode_despite_trailing_typo(self) -> None:
         state = ContextState(mode="driving")
 
@@ -126,6 +163,23 @@ class ContextManagerTest(unittest.TestCase):
                 )
 
                 self.assertEqual(decision.command_action, expected_action)
+                self.assertEqual(decision.state.mode, "cooking")
+
+    def test_negated_stop_phrases_do_not_execute_stop_command(self) -> None:
+        examples = (
+            "Do not stop",
+            "Don't stop speaking",
+            "Please do not stop",
+        )
+
+        for transcript in examples:
+            with self.subTest(transcript=transcript):
+                decision = self.manager.handle(
+                    transcript,
+                    ContextState(mode="cooking"),
+                )
+
+                self.assertIsNone(decision.command_action)
                 self.assertEqual(decision.state.mode, "cooking")
 
     def test_updates_accessibility_profile_from_voice_preferences(self) -> None:
