@@ -92,6 +92,23 @@ the assistant was not running is announced on the next start rather than
 skipped. Use `--no-reminders` to switch the feature off. See
 [the scheduling package](src/voice_concierge/scheduling/README.md).
 
+## Memory and privacy centre
+
+Review, correct and remove what the assistant has stored about you:
+
+```bash
+python -m voice_concierge.privacy              # what is stored, and what is not
+python -m voice_concierge.privacy list -v      # review stored memories
+python -m voice_concierge.privacy export       # take a copy as JSON
+python -m voice_concierge.privacy edit 3 "likes tea, not coffee"
+python -m voice_concierge.privacy delete 3     # asks first
+python -m voice_concierge.privacy forget-all   # asks you to type DELETE
+```
+
+Memories and their search index are kept under `.local/memory/`. Recorded audio,
+conversation history and spoken preferences are never written to disk. See
+[the privacy package](src/voice_concierge/privacy/README.md) for details.
+
 ## Project Documentation
 
 - [Repository Structure Guide](docs/repository-structure.md)
