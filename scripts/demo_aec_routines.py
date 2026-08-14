@@ -25,6 +25,8 @@ Run from the repo root:
 """
 
 # Standard library
+import os
+import signal
 import sys
 from pathlib import Path
 
@@ -54,6 +56,23 @@ from voice_concierge.voice_output.factory import (  # noqa: E402
 )
 
 
+def _install_force_quit() -> None:
+    """Make a second Ctrl+C exit immediately.
+
+    The first interrupt unwinds normally so the audio device is released. If
+    that unwind stalls, which native audio teardown occasionally does, a second
+    press leaves without waiting rather than stranding the user in a session
+    they cannot quit.
+    """
+
+    def _handler(signum: int, frame: object) -> None:
+        signal.signal(signal.SIGINT, signal.SIG_DFL)  # next one is the OS default
+        print("\nInterrupted. Press Ctrl+C again to force quit.", flush=True)
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGINT, _handler)
+
+
 def _log(event: CommandEvent) -> None:
     """Show what the recognizer heard, so a mishear is easy to spot."""
     print(f"    [heard] {event.phrase!r} -> {event.command}", flush=True)
@@ -77,6 +96,7 @@ class _AnnouncingSpeaker:
 
 
 def main() -> None:
+    _install_force_quit()
     print("Loading models (first run downloads them)...")
     adapter = build_routine_adapter(
         memory_manager=build_memory_manager(),
@@ -113,6 +133,10 @@ def main() -> None:
             print(handler.run(request), end="\n\n", flush=True)
     except (KeyboardInterrupt, EOFError):
         print("\nStopped.")
+        # Leave without waiting on audio threads: the routine is over, and a
+        # stalled native teardown should not hold the terminal.
+        sys.stdout.flush()
+        os._exit(0)
 
 
 if __name__ == "__main__":
