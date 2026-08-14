@@ -19,6 +19,20 @@ from voice_concierge.command_control.types import CommandEvent
 from voice_concierge.routines.adapter import RoutineCommandAdapter
 from voice_concierge.routines.interfaces import CommandWaiter, StepSpeaker
 
+#: Commands too costly to act on when misheard, so they are confirmed first.
+#: "back" undoes progress the user has already made, and a recognizer working
+#: from a small grammar does occasionally hear it when nobody spoke.
+DEFAULT_CONFIRM_COMMANDS: frozenset[str] = frozenset({"back"})
+
+#: Answers that mean nothing outside a confirmation and are ignored elsewhere.
+CONFIRMATION_WORDS: frozenset[str] = frozenset({"yes", "no"})
+
+#: What is asked before acting on a command that needs confirming.
+CONFIRM_PROMPTS: dict[str, str] = {
+    "back": "Go back a step? Say yes to confirm.",
+}
+
+DEFAULT_CONFIRM_TIMEOUT: float = 6.0  # seconds to wait for a yes
 DEFAULT_AUTO_ADVANCE_DELAY: float = 6.0  # quiet seconds before the next step
 DEFAULT_IDLE_TIMEOUT: float = 120.0  # quiet seconds a paused routine waits
 AUTO_ADVANCE_PHRASE = "(auto-advance)"  # stands in for a spoken "next" in logs
@@ -37,12 +51,16 @@ class RoutineRunner:
         *,
         auto_advance_delay: float = DEFAULT_AUTO_ADVANCE_DELAY,
         idle_timeout: float = DEFAULT_IDLE_TIMEOUT,
+        confirm_commands: frozenset[str] = DEFAULT_CONFIRM_COMMANDS,
+        confirm_timeout: float = DEFAULT_CONFIRM_TIMEOUT,
     ) -> None:
         self._adapter = adapter
         self._speaker = speaker
         self._waiter = waiter
         self._auto_advance_delay = auto_advance_delay
         self._idle_timeout = idle_timeout
+        self._confirm_commands = confirm_commands
+        self._confirm_timeout = confirm_timeout
 
     def run(self, response: str) -> str:
         """Speak the opening response, then run the routine to completion.
@@ -60,11 +78,44 @@ class RoutineRunner:
                 # Nothing to steer, so do not hold the microphone open waiting
                 # for a command that could not act on anything.
                 return response
+            event = self._next_command(event)
+            if event is None:
+                return response  # idle: hand control back to the caller
+            response = self._adapter.handle_command(event)
+
+    def _next_command(self, event: CommandEvent | None) -> CommandEvent | None:
+        """Return the command to act on, or None to hand control back.
+
+        Listens again rather than acting whenever a command needing
+        confirmation is not confirmed, so a misheard word costs a question and
+        nothing else. A stray yes or no outside a confirmation is dropped the
+        same way: on its own it means nothing, and passing it on would make the
+        assistant apologise for a word the user never said.
+        """
+        while True:
             if event is None:
                 event = self._await_next()
                 if event is None:
-                    return response  # idle: hand control back to the caller
-            response = self._adapter.handle_command(event)
+                    return None
+            if event.command in CONFIRMATION_WORDS:
+                event = None  # nothing is being confirmed; ignore it
+                continue
+            if event.command not in self._confirm_commands or self._confirmed(event):
+                return event
+            event = None  # not confirmed, so listen again from where we are
+
+    def _confirmed(self, event: CommandEvent) -> bool:
+        """Ask before acting, and treat anything but a yes as no.
+
+        Silence has to mean no. The command being guarded is one the recognizer
+        produces without anybody speaking, so a confirmation that could be
+        satisfied by more silence would guard nothing.
+        """
+        prompt = CONFIRM_PROMPTS.get(event.command, f"{event.command}? Say yes.")
+        answered = self._speaker.speak(prompt)  # they may answer over the question
+        if answered is None:
+            answered = self._waiter.wait(self._confirm_timeout)
+        return answered is not None and answered.command == "yes"
 
     def _await_next(self) -> CommandEvent | None:
         """Listen after a step; fall back to advancing when nothing is said."""
