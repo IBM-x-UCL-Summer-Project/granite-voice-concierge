@@ -22,6 +22,10 @@ DEFAULT_PHRASE_COMMANDS: dict[str, VoiceCommand] = {
     "slower": "slower",
     "faster": "faster",
     "quicker": "faster",
+    # Answers to a confirmation question. They mean nothing on their own, and a
+    # caller that is not confirming anything ignores them.
+    "yes": "yes",
+    "no": "no",
 }
 
 
