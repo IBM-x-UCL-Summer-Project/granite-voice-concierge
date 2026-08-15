@@ -5,8 +5,8 @@ from voice_concierge.command_control.interfaces import PhraseRecognizer
 from voice_concierge.command_control.types import CommandEvent, VoiceCommand
 
 # The single shared vocabulary: both the recognizer grammar and this mapping are
-# built from it, so playback (stop/pause/resume) and routine (next/back/repeat)
-# words are spotted through one table.
+# built from it, so playback (stop/pause/resume), routine (next/back/repeat) and
+# pacing (slower/faster) words are spotted through one table.
 DEFAULT_PHRASE_COMMANDS: dict[str, VoiceCommand] = {
     "stop": "stop",
     "pause": "pause",
@@ -16,6 +16,16 @@ DEFAULT_PHRASE_COMMANDS: dict[str, VoiceCommand] = {
     "next": "next",
     "back": "back",
     "repeat": "repeat",
+    # Single words only: the recognizer emits from partial results and reports
+    # the last word it heard, so a two-word trigger such as "speed up" would
+    # arrive as "up".
+    "slower": "slower",
+    "faster": "faster",
+    "quicker": "faster",
+    # Answers to a confirmation question. They mean nothing on their own, and a
+    # caller that is not confirming anything ignores them.
+    "yes": "yes",
+    "no": "no",
 }
 
 

@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from voice_concierge.memory.decay import MemoryDecayPolicy
-from voice_concierge.memory.embedding_service import EmbeddingService
-from voice_concierge.memory.memory_manager import MemoryManager
-from voice_concierge.memory.memory_store import MemoryStore
-from voice_concierge.memory.memory_validator import MemoryValidator
-from voice_concierge.memory.vector_store import VectorStore
+
+if TYPE_CHECKING:
+    from voice_concierge.memory.embedding_service import EmbeddingService
+    from voice_concierge.memory.memory_manager import MemoryManager
+    from voice_concierge.memory.memory_validator import MemoryValidator
 
 DEFAULT_MEMORY_DB_PATH = Path(".local/memory/memories.sqlite3")
 DEFAULT_VECTOR_DB_PATH = Path(".local/memory/vectors.sqlite3")
@@ -36,6 +37,11 @@ def build_memory_manager(
     validator: MemoryValidator | None = None,
 ) -> MemoryManager:
     """Build local SQLite memory storage and semantic retrieval components."""
+
+    from voice_concierge.memory.embedding_service import EmbeddingService
+    from voice_concierge.memory.memory_manager import MemoryManager
+    from voice_concierge.memory.memory_store import MemoryStore
+    from voice_concierge.memory.vector_store import VectorStore
 
     runtime_config = config or LocalMemoryConfig()
     memory_db_path = Path(runtime_config.memory_db_path)

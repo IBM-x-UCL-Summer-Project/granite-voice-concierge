@@ -93,6 +93,31 @@ class VoiceConciergePipeline:
         self._memory_context_limit = memory_context_limit
         self._conversation_history_limit = conversation_history_limit
 
+    @property
+    def speech_to_text(self) -> SpeechToTextAdapter | None:
+        """The configured speech-to-text backend, if any.
+
+        Exposed so a caller that must inspect a transcript before the turn is
+        reasoned about (the live app routes guided routines this way) can reuse
+        this backend instead of loading a second copy of the model.
+        """
+        return self._speech_to_text
+
+    @property
+    def text_to_speech(self) -> TextToSpeechAdapter | None:
+        """The configured speech synthesiser, if any.
+
+        Exposed alongside speech_to_text so a caller that must speak outside a
+        turn (a reminder falling due) reuses this backend instead of loading a
+        second copy of the voice.
+        """
+        return self._text_to_speech
+
+    @property
+    def audio_player(self) -> AudioPlayerAdapter | None:
+        """The configured audio player, if any."""
+        return self._audio_player
+
     def process_request(self, request: AppTurnRequest) -> AppTurnResult:
         """Process a typed transcript request."""
 
