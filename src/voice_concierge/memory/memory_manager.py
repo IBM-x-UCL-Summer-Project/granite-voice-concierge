@@ -2,6 +2,7 @@
 
 from typing import Optional, Tuple
 
+from voice_concierge.memory.decay import MemoryDecayPolicy
 from voice_concierge.memory.embedding_service import EmbeddingService
 from voice_concierge.memory.memory_retriever import MemoryRetriever
 from voice_concierge.memory.memory_store import MemoryStore
@@ -19,6 +20,7 @@ class MemoryManager:
         vector_store: VectorStore,
         embedding_service: EmbeddingService,
         validator: Optional[MemoryValidator] = None,
+        decay_policy: MemoryDecayPolicy | None = None,
     ):
         """
         Initialize the memory manager with required components.
@@ -33,7 +35,12 @@ class MemoryManager:
         self.vector_store = vector_store
         self.embedding_service = embedding_service
         self.validator = validator or MemoryValidator()
-        self.retriever = MemoryRetriever(memory_store, vector_store, embedding_service)
+        self.retriever = MemoryRetriever(
+            memory_store,
+            vector_store,
+            embedding_service,
+            decay_policy=decay_policy,
+        )
 
     def find_similar_memory(
         self,
@@ -53,7 +60,12 @@ class MemoryManager:
             Most similar memory dict if found above threshold, else None
         """
         try:
-            results = self.retrieve_similar(content, top_k=top_k)
+            results = self.retrieve_similar(
+                content,
+                top_k=top_k,
+                apply_decay=False,
+                track_access=False,
+            )
             if results and results[0].get("distance", 1.0) < (1.0 - threshold):
                 return results[0]
             return None
@@ -162,6 +174,8 @@ class MemoryManager:
         person: Optional[str] = None,
         topic: Optional[str] = None,
         layer: Optional[str] = None,
+        apply_decay: bool = True,
+        track_access: bool = True,
     ) -> list[dict]:
         """
         Retrieve semantically similar memories.
@@ -179,6 +193,23 @@ class MemoryManager:
         return self.retriever.retrieve_similar(
             query=query,
             top_k=top_k,
+            person=person,
+            topic=topic,
+            layer=layer,
+            apply_decay=apply_decay,
+            track_access=track_access,
+        )
+
+    def retrieve_by_metadata(
+        self,
+        *,
+        person: Optional[str] = None,
+        topic: Optional[str] = None,
+        layer: Optional[str] = None,
+    ) -> list[dict]:
+        """Retrieve the complete matching collection without semantic ranking."""
+
+        return self.retriever.retrieve_by_metadata(
             person=person,
             topic=topic,
             layer=layer,

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from voice_concierge.memory.decay import MemoryDecayPolicy
 
 if TYPE_CHECKING:
     from voice_concierge.memory.embedding_service import EmbeddingService
@@ -25,6 +27,7 @@ class LocalMemoryConfig:
     vector_db_path: str | Path = DEFAULT_VECTOR_DB_PATH
     embedding_model: str = DEFAULT_EMBEDDING_MODEL
     embedding_dimension: int = DEFAULT_EMBEDDING_DIMENSION
+    decay_policy: MemoryDecayPolicy = field(default_factory=MemoryDecayPolicy)
 
 
 def build_memory_manager(
@@ -64,4 +67,5 @@ def build_memory_manager(
         vector_store=vector_store,
         embedding_service=embeddings,
         validator=validator,
+        decay_policy=runtime_config.decay_policy,
     )

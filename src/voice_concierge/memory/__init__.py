@@ -24,6 +24,7 @@ __all__ = [
     "EmbeddingService",
     "LocalMemoryConfig",
     "MemoryManager",
+    "MemoryDecayPolicy",
     "MemoryRetriever",
     "MemoryStore",
     "MemoryValidator",
@@ -35,6 +36,7 @@ __all__ = [
 def __getattr__(name: str) -> Any:
     modules = {
         "EmbeddingService": ("voice_concierge.memory.embedding_service", name),
+        "MemoryDecayPolicy": ("voice_concierge.memory.decay", name),
         "MemoryManager": ("voice_concierge.memory.memory_manager", name),
         "MemoryRetriever": ("voice_concierge.memory.memory_retriever", name),
         "MemoryStore": ("voice_concierge.memory.memory_store", name),

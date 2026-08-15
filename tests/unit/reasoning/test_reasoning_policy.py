@@ -83,7 +83,14 @@ def test_policy_guard_uses_supplied_shopping_list_memory() -> None:
         ReasoningRequest(
             transcript="What is on my shopping list?",
             mode="shopping",
-            memories=("Shopping list: milk, bread.",),
+            memories=(
+                "shopping_list:add:cookies",
+                "shopping_list:add:milk",
+                "shopping_list:add:tea",
+                "shopping_list:add:meat",
+                "shopping_list:add:onions",
+                "shopping_list:add:milk",
+            ),
         ),
         ReasoningResponse(
             spoken_response="Eggs are on your list.",
@@ -98,11 +105,26 @@ def test_policy_guard_uses_supplied_shopping_list_memory() -> None:
     )
 
     assert response.spoken_response == (
-        "I found this in local memory: Shopping list: milk, bread."
+        "Your shopping list contains cookies, milk, tea, meat, onions."
     )
     assert response.needs_confirmation is False
     assert response.proposed_memory_action is None
     assert response.metadata["policy_guard"] == "supplied_shopping_list_memory"
+
+
+def test_policy_guard_reads_legacy_bare_shopping_list_item() -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(
+            transcript="What is on my shopping list?",
+            mode="shopping",
+            memories=("ice cream", "shopping_list:add:onions"),
+        ),
+        ReasoningResponse(spoken_response="The list is empty.", confidence="medium"),
+    )
+
+    assert response.spoken_response == (
+        "Your shopping list contains ice cream, onions."
+    )
 
 
 def test_policy_guard_blocks_time_sensitive_info_without_context() -> None:
@@ -151,6 +173,32 @@ def test_policy_guard_does_not_treat_bread_as_read_request() -> None:
 
     assert response.proposed_memory_action is not None
     assert response.proposed_memory_action.action == "update"
+    assert response.metadata["policy_guard"] == "shopping_list_add_confirmation"
+
+
+def test_policy_guard_accepts_the_list_shorthand_in_shopping_mode() -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(
+            transcript="Add mouth to the list",
+            mode="shopping",
+        ),
+        ReasoningResponse(
+            spoken_response="Mouth added. Please confirm.",
+            needs_confirmation=True,
+            proposed_memory_action=MemoryAction(
+                action="update",
+                content="mouth",
+                rationale="User asked to add an item.",
+            ),
+            confidence="medium",
+        ),
+    )
+
+    assert response.proposed_memory_action is not None
+    assert response.proposed_memory_action.content == "shopping_list:add:mouth"
+    assert response.spoken_response == (
+        "I can add mouth to your shopping list. Please confirm before I save it."
+    )
     assert response.metadata["policy_guard"] == "shopping_list_add_confirmation"
 
 

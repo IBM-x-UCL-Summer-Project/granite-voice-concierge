@@ -8,6 +8,7 @@ from collections.abc import Mapping, Sequence
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 from voice_concierge.app.adapter import handle_audio_turn, handle_turn
@@ -47,6 +48,9 @@ class PipelineWebServer(ThreadingHTTPServer):
             "voice_output": voice_output_enabled,
         }
         self.runtime = {"model": model_name}
+        # VoiceConciergePipeline owns stateful adapters, including shared SQLite
+        # connections. Serialize turns while static assets remain concurrent.
+        self.pipeline_lock = Lock()
         super().__init__(server_address, PipelineRequestHandler)
 
 
@@ -97,7 +101,8 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
 
         try:
             payload = self._read_json_body()
-            response = handler(payload, self.server.pipeline)
+            with self.server.pipeline_lock:
+                response = handler(payload, self.server.pipeline)
         except PayloadValidationError as exc:
             self._write_json(
                 HTTPStatus.BAD_REQUEST,

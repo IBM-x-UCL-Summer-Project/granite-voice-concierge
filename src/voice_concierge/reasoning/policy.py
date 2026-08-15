@@ -21,8 +21,8 @@ def apply_reasoning_policy_guards(
     text = transcript.lower()
 
     if _shopping_list_read_requested(text):
-        shopping_list_memory = _shopping_list_memory(request.memories)
-        if shopping_list_memory is None:
+        shopping_list_items = _shopping_list_items(request.memories)
+        if not shopping_list_items:
             return _replace_response(
                 response,
                 spoken_response="I do not have a saved shopping list yet.",
@@ -34,7 +34,9 @@ def apply_reasoning_policy_guards(
 
         return _replace_response(
             response,
-            spoken_response=f"I found this in local memory: {shopping_list_memory}",
+            spoken_response=(
+                "Your shopping list contains " + ", ".join(shopping_list_items) + "."
+            ),
             needs_confirmation=False,
             proposed_memory_action=None,
             confidence="high",
@@ -64,7 +66,11 @@ def apply_reasoning_policy_guards(
             guard="supplied_memory_recall",
         )
 
-    shopping_items = _shopping_items_to_add(transcript, text)
+    shopping_items = _shopping_items_to_add(
+        transcript,
+        text,
+        mode=request.mode,
+    )
     accessibility_preference = _accessibility_preference(text)
     memory_write_requested = _memory_write_requested(text)
     delete_target = memory_delete_target(transcript)
@@ -273,10 +279,49 @@ def _time_sensitive_info_requested(text: str) -> bool:
     )
 
 
-def _shopping_list_memory(memories: tuple[str, ...]) -> str | None:
+def _shopping_list_items(memories: tuple[str, ...]) -> tuple[str, ...]:
+    """Extract and de-duplicate items from shopping-list memory events."""
+
+    items: list[str] = []
+    seen: set[str] = set()
     for memory in memories:
-        if "shopping list" in memory.lower():
-            return memory
+        item = _shopping_list_item(memory)
+        if item is None:
+            continue
+        normalized = item.casefold()
+        if normalized not in seen:
+            seen.add(normalized)
+            items.append(item)
+    return tuple(items)
+
+
+def _shopping_list_item(memory: str) -> str | None:
+    text = memory.strip()
+    canonical = re.match(r"shopping_list:add:(.+)", text, flags=re.IGNORECASE)
+    if canonical:
+        return canonical.group(1).strip(" .'\"") or None
+
+    addition = re.match(
+        r"add\s+['\"]?(.+?)['\"]?\s+to\s+(?:my|the)\s+shopping\s+list\.?$",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if addition:
+        return addition.group(1).strip(" .'\"") or None
+
+    labelled = re.match(r"shopping\s+list\s*:\s*(.+)", text, flags=re.IGNORECASE)
+    if labelled:
+        return labelled.group(1).strip(" .") or None
+
+    # Legacy shopping records were stored as short bare item names before the
+    # canonical shopping_list:add: format was introduced.
+    if (
+        len(text.split()) <= 5
+        and re.fullmatch(r"[\w][\w '&-]*", text)
+        and not re.search(r"\b(user|prefers?|likes?|remembers?)\b", text, re.I)
+    ):
+        return text
+
     return None
 
 
@@ -291,8 +336,10 @@ def _memory_recall_requested(text: str) -> bool:
     return any(phrase in text for phrase in phrases)
 
 
-def _shopping_items_to_add(transcript: str, text: str) -> str | None:
-    if "shopping list" not in text or not re.search(r"\badd\b", text):
+def _shopping_items_to_add(transcript: str, text: str, *, mode: str) -> str | None:
+    if not re.search(r"\badd\b", text):
+        return None
+    if "shopping list" not in text and mode.casefold() != "shopping":
         return None
 
     cleaned = re.sub(
@@ -302,7 +349,7 @@ def _shopping_items_to_add(transcript: str, text: str) -> str | None:
         flags=re.IGNORECASE,
     )
     cleaned = re.sub(
-        r"\s+to\s+my\s+shopping\s+list\.?\s*$",
+        r"\s+to\s+(?:my|the)\s+(?:shopping\s+)?list\.?\s*$",
         "",
         cleaned,
         flags=re.IGNORECASE,
