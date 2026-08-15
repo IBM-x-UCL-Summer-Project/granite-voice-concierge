@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import re
+
 from voice_concierge.memory.types import StructuredListMutation
+from voice_concierge.memory_contracts import StructuredListName
 
 
 def create_structured_list(mutation: StructuredListMutation) -> str:
@@ -49,6 +52,55 @@ def parse_structured_list(
     if not items:
         return None
     return items
+
+
+def parse_legacy_structured_list(
+    content: str,
+    list_name: StructuredListName,
+) -> tuple[str, ...] | None:
+    """Extract items from list records written before stable keyed storage."""
+
+    text = content.strip()
+    name_pattern = (
+        r"shopping\s+list" if list_name == "shopping" else r"(?:task|to-do|todo)\s+list"
+    )
+    canonical = re.fullmatch(
+        rf"{list_name}_list:add:(.+)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if canonical:
+        return _split_legacy_items(canonical.group(1))
+
+    addition = re.fullmatch(
+        rf"add\s+(.+?)\s+to\s+(?:my|the)\s+{name_pattern}\.?",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if addition:
+        return _split_legacy_items(addition.group(1))
+
+    labelled = re.fullmatch(
+        rf"{name_pattern}\s*:\s*(.+)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if labelled:
+        return _split_legacy_items(labelled.group(1))
+
+    return None
+
+
+def _split_legacy_items(value: str) -> tuple[str, ...] | None:
+    items: list[str] = []
+    seen: set[str] = set()
+    for candidate in re.split(r"\s*(?:,|\band\b)\s*", value, flags=re.I):
+        item = candidate.strip(" .'\"")
+        key = item.casefold()
+        if item and key not in seen:
+            seen.add(key)
+            items.append(item)
+    return tuple(items) or None
 
 
 def _render(label: str, items: tuple[str, ...]) -> str:

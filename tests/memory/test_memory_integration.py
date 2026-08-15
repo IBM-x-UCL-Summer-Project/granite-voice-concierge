@@ -116,6 +116,65 @@ class TestMemoryManagerBasic:
         assert memory.id == memory_id
         assert memory.content == "Shopping list: milk."
 
+    def test_legacy_shopping_events_are_migrated_into_one_stable_list(
+        self,
+        memory_manager,
+    ):
+        existing = memory_manager.store_memory(
+            content="Shopping list: bread.",
+            layer="feedback",
+            memory_key="list:shopping",
+            topic="shopping",
+            validate=False,
+        )
+        first_legacy_id = memory_manager.memory_store.create_memory(
+            "shopping_list:add:milk and bread",
+            "feedback",
+            topic="shopping",
+        )
+        second_legacy_id = memory_manager.memory_store.create_memory(
+            "Add eggs to my shopping list.",
+            "feedback",
+            topic="shopping",
+        )
+        unrelated_id = memory_manager.memory_store.create_memory(
+            "compare shopping prices",
+            "feedback",
+            topic="shopping",
+        )
+
+        migrated = memory_manager.migrate_legacy_structured_lists()
+
+        assert migrated == 2
+        shopping_list = memory_manager.get_memory_by_key("list:shopping")
+        assert shopping_list is not None
+        assert shopping_list.id == existing.memory_id
+        assert shopping_list.content == "Shopping list: bread, milk, eggs."
+        assert memory_manager.get_memory_by_id(first_legacy_id) is None
+        assert memory_manager.get_memory_by_id(second_legacy_id) is None
+        assert memory_manager.get_memory_by_id(unrelated_id) is not None
+
+        revision = shopping_list.revision
+        assert memory_manager.migrate_legacy_structured_lists() == 0
+        assert memory_manager.get_memory_by_key("list:shopping").revision == revision
+
+    def test_legacy_task_event_creates_first_stable_task_list(
+        self,
+        memory_manager,
+    ):
+        legacy_id = memory_manager.memory_store.create_memory(
+            "task_list:add:call Mum",
+            "feedback",
+            topic="task",
+        )
+
+        assert memory_manager.migrate_legacy_structured_lists() == 1
+
+        task_list = memory_manager.get_memory_by_key("list:tasks")
+        assert task_list is not None
+        assert task_list.content == "Task list: call Mum."
+        assert memory_manager.get_memory_by_id(legacy_id) is None
+
     def test_update_memory(self, memory_manager):
         """Update an existing memory."""
         store_outcome = memory_manager.store_memory(
@@ -362,6 +421,34 @@ class TestMemoryManagerBasic:
             memory_manager.memory_store.get_memory_by_id(shopping_id).content
             == "Shopping list: bread, milk, eggs."
         )
+
+    def test_readding_only_existing_list_items_is_idempotent(self, memory_manager):
+        stored = memory_manager.store_memory(
+            content="Shopping list: bread, milk.",
+            layer="feedback",
+            memory_key="list:shopping",
+            topic="shopping",
+            validate=False,
+        )
+        shopping_id = stored.memory_id
+        assert shopping_id is not None
+        command = ApplyStructuredListCommand(
+            target=MemoryCommandTarget(
+                memory_id=shopping_id,
+                memory_key="list:shopping",
+                expected_revision=1,
+            ),
+            mutation=_shopping_add("MILK", "bread"),
+        )
+
+        outcome = memory_manager.execute_memory_command(command)
+
+        assert outcome.status is MemoryOperationStatus.NO_CHANGES
+        assert outcome.succeeded is True
+        memory = memory_manager.get_memory_by_id(shopping_id)
+        assert memory is not None
+        assert memory.content == "Shopping list: bread, milk."
+        assert memory.revision == 1
 
     def test_structured_list_operation_rejects_exact_non_list_target(
         self,

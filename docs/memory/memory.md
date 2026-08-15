@@ -10,9 +10,20 @@ Use the memory factory for application code instead of constructing each
 storage component directly:
 
 ```python
-from voice_concierge.memory import LocalMemoryConfig, build_memory_manager
+from voice_concierge.memory import (
+    LocalMemoryConfig,
+    MemoryDecayPolicy,
+    build_memory_manager,
+)
 
-manager = build_memory_manager(LocalMemoryConfig())
+config = LocalMemoryConfig(
+    decay_policy=MemoryDecayPolicy(
+        base_half_life_days=30.0,
+        minimum_retention=0.1,
+        retrieval_weight=0.35,
+    )
+)
+manager = build_memory_manager(config)
 ```
 
 The defaults create:
@@ -22,9 +33,9 @@ The defaults create:
 - 768-dimension vectors from the local Ollama
   `granite-embedding:278m` model.
 
-`LocalMemoryConfig` can override both paths, the embedding model, and vector
-dimension. Parent directories are created automatically. Call `manager.close()`
-when the owner shuts down.
+`LocalMemoryConfig` can override both paths, the embedding model, vector
+dimension, and memory-decay policy. Parent directories are created
+automatically. Call `manager.close()` when the owner shuts down.
 
 The SQL memory record is authoritative; sqlite-vec is a rebuildable derived
 index. Each record stores both its current `revision` and `indexed_revision`.
@@ -39,6 +50,12 @@ rebuilds stale or missing vectors, finishes tombstoned deletions, and removes
 orphan vectors left by an interrupted older implementation. Semantic retrieval
 also reconciles before searching. Exact stable-key reads do not require the
 embedding service.
+
+Startup also consolidates identifiable legacy shopping/task-list event records
+such as `shopping_list:add:milk` into the stable `list:shopping` or
+`list:tasks` record. Source records are removed only after the keyed list write
+succeeds. Ambiguous topic-only memories are left untouched rather than guessed
+to be list items.
 
 The app pipeline normally wraps this manager with `MemoryManagerGateway` by
 calling `build_voice_concierge_pipeline(load_memory=True)`.
@@ -74,6 +91,7 @@ but semantic ranking cannot displace that record.
 - [MemoryManager](#memorymanager) - Main interface
 - [MemoryStore](#memorystore) - Storage layer
 - [MemoryRetriever](#memoryretriever) - Query layer
+- [Memory Decay](#memory-decay) - Non-destructive retrieval weighting
 - [MemoryValidator](#memoryvalidator) - Validation layer
 - [VectorStore](#vectorstore) - Vector layer
 - [EmbeddingService](#embeddingservice) - Embedding layer
@@ -92,6 +110,7 @@ manager = MemoryManager(
     vector_store: VectorStore,
     embedding_service: EmbeddingService,
     validator: Optional[MemoryValidator] = None,
+    decay_policy: Optional[MemoryDecayPolicy] = None,
 )
 ```
 
@@ -101,6 +120,7 @@ manager = MemoryManager(
 - `vector_store`: Vector store instance
 - `embedding_service`: Embedding service instance
 - `validator`: Validator (optional, created by default)
+- `decay_policy`: Semantic retrieval decay configuration (optional)
 
 ### Methods
 
@@ -204,7 +224,7 @@ memories = manager.retrieve_similar(
 ```python
 list[MemorySearchResult]
 
-# Each result keeps semantic ranking separate from the authoritative record:
+# Each result keeps ranking data separate from the authoritative record:
 MemorySearchResult(
     memory=MemoryRecord(
         id=1,
@@ -216,6 +236,8 @@ MemorySearchResult(
         # ... timestamps and metadata
     ),
     distance=0.23,
+    retention_score=0.91,
+    retrieval_score=0.68,
 )
 ```
 
@@ -229,8 +251,13 @@ results = manager.retrieve_similar(
 )
 
 for mem in results:
-    print(f"{mem.memory.content} (distance: {mem.distance:.3f})")
+    print(f"{mem.memory.content} (score: {mem.retrieval_score:.3f})")
 ```
+
+Semantic retrieval applies memory decay by default and records `last_accessed`
+for the memories it returns. Internal duplicate checks disable both behaviours
+so that checking a proposed write does not refresh an existing memory or change
+pure distance ordering.
 
 **Exceptions:**
 
@@ -249,6 +276,63 @@ memory = manager.get_memory_by_key("list:shopping")
 
 This returns a validated `MemoryRecord` or `None`. Use it for stable keys;
 use `retrieve_similar()` only when relevance discovery is actually intended.
+
+---
+
+#### Memory Decay
+
+Memory decay is a non-destructive ranking mechanism. It does not delete old
+records and does not reduce their stored `strength`. Instead, it lowers the
+ranking contribution of memories that have not been created or accessed
+recently. Important memories decay more slowly.
+
+The reference timestamp is `last_accessed` when present, otherwise
+`created_at`. With the default policy, retention is calculated as:
+
+```text
+half_life_days = 30 * strength
+natural_retention = 0.5 ^ (age_days / half_life_days)
+retention = 0.1 + (0.9 * natural_retention)
+```
+
+Vector distance is converted to a higher-is-better semantic score and combined
+with retention:
+
+```text
+semantic = 1 / (1 + distance)
+decay_multiplier = (1 - retrieval_weight) + retrieval_weight * retention
+retrieval_score = semantic * decay_multiplier
+```
+
+The defaults are:
+
+| Setting | Default | Meaning |
+|---|---:|---|
+| `base_half_life_days` | 30.0 | Half-life in days for strength 1 |
+| `minimum_retention` | 0.1 | Lower bound for retention |
+| `retrieval_weight` | 0.35 | Influence of decay on final ranking |
+
+A memory with strength 5 therefore has a 150-day half-life under the default
+policy. Retrieval updates `last_accessed` only for the final returned results,
+using one timestamp and one database operation.
+
+To configure a different policy:
+
+```python
+from voice_concierge.memory import LocalMemoryConfig, MemoryDecayPolicy
+
+config = LocalMemoryConfig(
+    decay_policy=MemoryDecayPolicy(
+        base_half_life_days=14,
+        minimum_retention=0.25,
+        retrieval_weight=0.6,
+    )
+)
+```
+
+Identity-owned collections such as the shopping and task lists bypass semantic
+decay and are retrieved by their exact stable key. Explicit deletion remains a
+separate, confirmed operation; a low retention score never deletes user data.
 
 ---
 

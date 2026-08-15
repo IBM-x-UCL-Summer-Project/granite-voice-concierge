@@ -1,7 +1,14 @@
-"""Retrieves memories using semantic similarity and metadata filters."""
+"""Retrieves memories using semantic similarity, decay, and metadata filters."""
 
+import time
+from collections.abc import Callable
 from typing import Optional
 
+from voice_concierge.memory.decay import (
+    MemoryDecayPolicy,
+    retention_score,
+    retrieval_score,
+)
 from voice_concierge.memory.embedding_service import EmbeddingService
 from voice_concierge.memory.memory_store import MemoryStore
 from voice_concierge.memory.types import MemoryRecord, MemorySearchResult
@@ -16,6 +23,8 @@ class MemoryRetriever:
         memory_store: MemoryStore,
         vector_store: VectorStore,
         embedding_service: EmbeddingService,
+        decay_policy: MemoryDecayPolicy | None = None,
+        clock: Callable[[], int] | None = None,
     ) -> None:
         """
         Initialize retriever with required components.
@@ -28,6 +37,8 @@ class MemoryRetriever:
         self.memory_store = memory_store
         self.vector_store = vector_store
         self.embedding_service = embedding_service
+        self.decay_policy = decay_policy or MemoryDecayPolicy()
+        self._clock = clock or (lambda: int(time.time()))
 
     def retrieve_similar(
         self,
@@ -36,6 +47,8 @@ class MemoryRetriever:
         person: Optional[str] = None,
         topic: Optional[str] = None,
         layer: Optional[str] = None,
+        apply_decay: bool = True,
+        track_access: bool = True,
     ) -> list[MemorySearchResult]:
         """
         Retrieve similar memories using semantic search with optional filters.
@@ -59,18 +72,17 @@ class MemoryRetriever:
                 for memory in self.memory_store.get_memories()
                 if memory.indexed_revision == memory.revision
             }
-            search_limit = top_k * 2
-            if person is not None or topic is not None or layer is not None:
-                # sqlite-vec ranks before SQL metadata is available. Search all
-                # active vectors for a scoped query so globally close records
-                # cannot crowd the requested scope out of the candidate set.
-                search_limit = max(search_limit, len(indexed_memories))
+            # sqlite-vec only knows semantic distance. Decay and metadata can
+            # reorder any active record, so a fixed candidate multiplier can
+            # silently exclude the actual highest-ranked result.
+            search_limit = max(top_k, len(indexed_memories))
             vector_results = self.vector_store.search_similar(
                 query_embedding,
                 top_k=search_limit,
             )
 
             memories: list[MemorySearchResult] = []
+            now = self._clock()
             for result in vector_results:
                 memory_id = result.memory_id
                 memory = indexed_memories.get(memory_id)
@@ -85,14 +97,48 @@ class MemoryRetriever:
                 if layer and memory.layer != layer:
                     continue
 
+                retention = None
+                combined_score = None
+                if apply_decay:
+                    retention = retention_score(
+                        memory,
+                        now=now,
+                        policy=self.decay_policy,
+                    )
+                    combined_score = retrieval_score(
+                        result.distance,
+                        retention,
+                        policy=self.decay_policy,
+                    )
                 memories.append(
-                    MemorySearchResult(memory=memory, distance=result.distance)
+                    MemorySearchResult(
+                        memory=memory,
+                        distance=result.distance,
+                        retention_score=retention,
+                        retrieval_score=combined_score,
+                    )
                 )
 
-                if len(memories) >= top_k:
+                if not apply_decay and len(memories) >= top_k:
                     break
 
-            return memories
+            if apply_decay:
+                memories.sort(
+                    key=lambda item: (
+                        item.retrieval_score
+                        if item.retrieval_score is not None
+                        else 0.0
+                    ),
+                    reverse=True,
+                )
+
+            selected = memories[:top_k]
+            if track_access and selected:
+                self.memory_store.touch_memories(
+                    [result.memory.id for result in selected],
+                    accessed_at=now,
+                )
+            return selected
 
         except Exception as e:
             raise RuntimeError(f"Memory retrieval failed: {str(e)}")

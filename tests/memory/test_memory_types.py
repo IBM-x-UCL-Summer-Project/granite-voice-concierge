@@ -71,6 +71,16 @@ def test_search_result_keeps_distance_out_of_authoritative_record() -> None:
     assert not hasattr(record, "distance")
 
 
+@pytest.mark.parametrize("retention", (-0.1, 1.1, math.nan, math.inf, True))
+def test_search_result_rejects_invalid_retention_score(retention: object) -> None:
+    with pytest.raises(ValueError, match="finite number between"):
+        MemorySearchResult(
+            memory=_record(),
+            distance=0.25,
+            retention_score=retention,
+        )
+
+
 def test_memory_scope_treats_none_as_an_exact_value() -> None:
     scope = MemoryRecordScope(layer="profile", topic=None)
 
@@ -91,6 +101,7 @@ def test_vector_result_rejects_invalid_distance(distance: float) -> None:
         MemoryOperationStatus.STORED_PENDING_INDEX,
         MemoryOperationStatus.UPDATED_SUCCESSFULLY,
         MemoryOperationStatus.UPDATED_PENDING_INDEX,
+        MemoryOperationStatus.NO_CHANGES,
         MemoryOperationStatus.DELETED_SUCCESSFULLY,
         MemoryOperationStatus.DELETED_PENDING_INDEX_CLEANUP,
     ),

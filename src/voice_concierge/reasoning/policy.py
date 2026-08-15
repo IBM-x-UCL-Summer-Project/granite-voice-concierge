@@ -28,7 +28,11 @@ def apply_reasoning_policy_guards(
 
     transcript = request.transcript.strip()
     text = transcript.lower()
-    shopping_items = _shopping_items_to_add(transcript, text)
+    shopping_items = _shopping_items_to_add(
+        transcript,
+        text,
+        mode=request.mode,
+    )
     task_items = _task_items_to_add(transcript, text)
     accessibility_preference = _accessibility_preference(text)
     memory_write_requested = _memory_write_requested(text)
@@ -63,30 +67,6 @@ def apply_reasoning_policy_guards(
 
     information_decision = decide_information_policy(request, response)
     if not information_decision.allowed:
-        if (
-            information_decision.disposition
-            in {
-                "missing_local_context_evidence",
-                "invalid_local_context_evidence",
-            }
-            and request.memories
-        ):
-            memory = request.memories[0]
-            spoken_response = f"I found this in local memory: {memory.content}"
-            if response.freshness_requirement == "current":
-                spoken_response = (
-                    f"{spoken_response} I cannot verify whether it is current."
-                )
-            return _replace_response(
-                response,
-                spoken_response=spoken_response,
-                needs_confirmation=False,
-                proposed_memory_action=None,
-                confidence="high",
-                guard="recovered_local_memory_evidence",
-                required_information_source="local_context",
-                information_evidence=(memory.information_evidence(),),
-            )
         assert information_decision.spoken_response is not None
         return _replace_response(
             response,
@@ -141,7 +121,7 @@ def apply_reasoning_policy_guards(
     ):
         return _memory_changes_disabled_response(response)
 
-    if request.mode.lower() == "shopping" and shopping_items:
+    if shopping_items:
         shopping_list_memory = _shopping_list_memory(request.memories)
         action = "update" if shopping_list_memory is not None else "store"
         list_operation = StructuredListOperation(
@@ -477,8 +457,12 @@ def _memory_recall_requested(text: str) -> bool:
 def _shopping_items_to_add(
     transcript: str,
     text: str,
+    *,
+    mode: str,
 ) -> tuple[str, ...] | None:
-    if "shopping list" not in text or not re.search(r"\badd\b", text):
+    if not re.search(r"\badd\b", text):
+        return None
+    if "shopping list" not in text and mode.casefold() != "shopping":
         return None
 
     cleaned = re.sub(
@@ -488,7 +472,7 @@ def _shopping_items_to_add(
         flags=re.IGNORECASE,
     )
     cleaned = re.sub(
-        r"\s+to\s+my\s+shopping\s+list\.?\s*$",
+        r"\s+to\s+(?:my|the)\s+(?:shopping\s+)?list\.?\s*$",
         "",
         cleaned,
         flags=re.IGNORECASE,

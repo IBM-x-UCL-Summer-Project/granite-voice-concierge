@@ -355,15 +355,24 @@ class VectorSearchResult:
 
 @dataclass(frozen=True)
 class MemorySearchResult:
-    """An authoritative memory paired with its semantic distance."""
+    """An authoritative memory paired with semantic and retention scores."""
 
     memory: MemoryRecord
     distance: float
+    retention_score: float | None = None
+    retrieval_score: float | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.memory, MemoryRecord):
             raise TypeError("Memory search results require a MemoryRecord.")
         _require_distance(self.distance, "Memory distance")
+        if self.retention_score is not None:
+            _require_unit_interval(
+                self.retention_score,
+                "Memory retention score",
+            )
+        if self.retrieval_score is not None:
+            _require_distance(self.retrieval_score, "Memory retrieval score")
 
 
 @dataclass(frozen=True)
@@ -403,7 +412,7 @@ class MemoryOperationStatus(StrEnum):
     UPDATED_PENDING_INDEX = ("updated_pending_index", True)
     MEMORY_NOT_FOUND = ("memory_not_found", False)
     MEMORY_REVISION_CONFLICT = ("memory_revision_conflict", False)
-    NO_CHANGES = ("no_changes", False)
+    NO_CHANGES = ("no_changes", True)
     UPDATE_ERROR = ("update_error", False)
     DELETED_SUCCESSFULLY = ("deleted_successfully", True)
     DELETED_PENDING_INDEX_CLEANUP = ("deleted_pending_index_cleanup", True)
@@ -542,3 +551,13 @@ def _require_distance(value: object, label: str) -> None:
         or value < 0
     ):
         raise ValueError(f"{label} must be a finite non-negative number.")
+
+
+def _require_unit_interval(value: object, label: str) -> None:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or not 0 <= value <= 1
+    ):
+        raise ValueError(f"{label} must be a finite number between 0 and 1.")

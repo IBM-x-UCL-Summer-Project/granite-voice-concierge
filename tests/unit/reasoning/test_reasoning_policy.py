@@ -227,7 +227,7 @@ def test_policy_guard_uses_relevant_conversation_summary() -> None:
     )
 
 
-def test_policy_guard_falls_back_to_exact_memory_when_model_omits_evidence() -> None:
+def test_policy_guard_rejects_local_answer_when_model_omits_evidence() -> None:
     response = apply_reasoning_policy_guards(
         ReasoningRequest(
             transcript="When is my appointment?",
@@ -240,12 +240,31 @@ def test_policy_guard_falls_back_to_exact_memory_when_model_omits_evidence() -> 
     )
 
     assert response.spoken_response == (
-        "I found this in local memory: Appointment is at noon."
+        "I could not verify which local information supports that answer."
     )
-    assert response.information_evidence == (
-        memory_reference("Appointment is at noon.").information_evidence(),
+    assert response.information_evidence == ()
+    assert response.metadata["policy_guard"] == "missing_local_context_evidence"
+
+
+def test_policy_guard_does_not_substitute_unrelated_memory_for_missing_evidence() -> (
+    None
+):
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(
+            transcript="When is my appointment?",
+            memories=(memory_reference("User prefers tea."),),
+        ),
+        ReasoningResponse(
+            spoken_response="Your appointment is at noon.",
+            required_information_source="local_context",
+        ),
     )
-    assert response.metadata["policy_guard"] == "recovered_local_memory_evidence"
+
+    assert response.spoken_response == (
+        "I could not verify which local information supports that answer."
+    )
+    assert response.information_evidence == ()
+    assert response.metadata["policy_guard"] == "missing_local_context_evidence"
 
 
 def test_policy_guard_attributes_current_information_supplied_by_user() -> None:
@@ -474,6 +493,51 @@ def test_policy_guard_does_not_treat_bread_as_read_request() -> None:
     )
     assert response.proposed_memory_action.target == MemoryTarget(
         memory_key="list:shopping"
+    )
+    assert response.metadata["policy_guard"] == "shopping_list_add_confirmation"
+
+
+def test_policy_guard_handles_explicit_shopping_list_outside_shopping_mode() -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(
+            transcript="Add milk to my shopping list.",
+            mode="home",
+        ),
+        ReasoningResponse(spoken_response="Okay.", confidence="medium"),
+    )
+
+    assert response.proposed_memory_action is not None
+    assert response.proposed_memory_action.action == "store"
+    assert response.proposed_memory_action.content is None
+    assert response.proposed_memory_action.list_operation == _add_items(
+        "shopping", "milk"
+    )
+    assert response.proposed_memory_action.target == MemoryTarget(
+        memory_key="list:shopping"
+    )
+    assert response.metadata["policy_guard"] == "shopping_list_add_confirmation"
+
+
+def test_policy_guard_accepts_the_list_shorthand_in_shopping_mode() -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(
+            transcript="Add mouth to the list",
+            mode="shopping",
+        ),
+        ReasoningResponse(spoken_response="Okay.", confidence="medium"),
+    )
+
+    assert response.proposed_memory_action is not None
+    assert response.proposed_memory_action.action == "store"
+    assert response.proposed_memory_action.content is None
+    assert response.proposed_memory_action.list_operation == _add_items(
+        "shopping", "mouth"
+    )
+    assert response.proposed_memory_action.target == MemoryTarget(
+        memory_key="list:shopping"
+    )
+    assert response.spoken_response == (
+        "I can add mouth to your shopping list. Please confirm before I save it."
     )
     assert response.metadata["policy_guard"] == "shopping_list_add_confirmation"
 

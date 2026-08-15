@@ -5,6 +5,7 @@ import pytest
 from voice_concierge.memory.structured_lists import (
     apply_structured_list_operation,
     create_structured_list,
+    parse_legacy_structured_list,
     parse_structured_list,
 )
 from voice_concierge.memory.types import (
@@ -82,3 +83,35 @@ def test_structured_list_operation_must_match_target_key() -> None:
             target=MemoryCommandTarget(memory_key="list:tasks"),
             mutation=_shopping_add("milk"),
         )
+
+
+@pytest.mark.parametrize(
+    ("content", "list_name", "expected"),
+    (
+        ("shopping_list:add:milk and bread", "shopping", ("milk", "bread")),
+        ("Add milk to my shopping list.", "shopping", ("milk",)),
+        ("Shopping list: milk, bread.", "shopping", ("milk", "bread")),
+        ("task_list:add:call Mum", "task", ("call Mum",)),
+        ("Task list: call Mum, book dentist.", "task", ("call Mum", "book dentist")),
+    ),
+)
+def test_legacy_structured_list_parser_accepts_identifiable_list_records(
+    content: str,
+    list_name: str,
+    expected: tuple[str, ...],
+) -> None:
+    assert parse_legacy_structured_list(content, list_name) == expected
+
+
+@pytest.mark.parametrize(
+    "content",
+    (
+        "milk",
+        "compare shopping prices",
+        "User prefers tea",
+    ),
+)
+def test_legacy_structured_list_parser_preserves_ambiguous_topic_records(
+    content: str,
+) -> None:
+    assert parse_legacy_structured_list(content, "shopping") is None

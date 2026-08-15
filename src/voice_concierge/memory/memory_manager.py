@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from typing import Optional
 
+from voice_concierge.memory.decay import MemoryDecayPolicy
 from voice_concierge.memory.embedding_service import EmbeddingService
 from voice_concierge.memory.memory_retriever import MemoryRetriever
 from voice_concierge.memory.memory_store import MemoryStore
@@ -10,6 +11,7 @@ from voice_concierge.memory.memory_validator import MemoryValidator
 from voice_concierge.memory.structured_lists import (
     apply_structured_list_operation,
     create_structured_list,
+    parse_legacy_structured_list,
 )
 from voice_concierge.memory.types import (
     ApplyStructuredListCommand,
@@ -24,6 +26,7 @@ from voice_concierge.memory.types import (
     MemorySearchResult,
     MemorySimilarityAdvisory,
     StoreMemoryCommand,
+    StructuredListMutation,
     UpdateMemoryCommand,
 )
 from voice_concierge.memory.vector_store import VectorStore
@@ -48,6 +51,7 @@ class MemoryManager:
         vector_store: VectorStore,
         embedding_service: EmbeddingService,
         validator: Optional[MemoryValidator] = None,
+        decay_policy: MemoryDecayPolicy | None = None,
     ):
         """
         Initialize the memory manager with required components.
@@ -62,7 +66,12 @@ class MemoryManager:
         self.vector_store = vector_store
         self.embedding_service = embedding_service
         self.validator = validator or MemoryValidator()
-        self.retriever = MemoryRetriever(memory_store, vector_store, embedding_service)
+        self.retriever = MemoryRetriever(
+            memory_store,
+            vector_store,
+            embedding_service,
+            decay_policy=decay_policy,
+        )
 
     def find_similar_memory(
         self,
@@ -92,6 +101,8 @@ class MemoryManager:
             results = self.retrieve_similar(
                 content,
                 top_k=search_limit,
+                apply_decay=False,
+                track_access=False,
             )
             for result in results:
                 if scope is not None and not scope.contains(result.memory):
@@ -382,6 +393,8 @@ class MemoryManager:
         person: Optional[str] = None,
         topic: Optional[str] = None,
         layer: Optional[str] = None,
+        apply_decay: bool = True,
+        track_access: bool = True,
     ) -> list[MemorySearchResult]:
         """
         Retrieve semantically similar memories.
@@ -403,6 +416,23 @@ class MemoryManager:
             person=person,
             topic=topic,
             layer=layer,
+            apply_decay=apply_decay,
+            track_access=track_access,
+        )
+
+    def retrieve_by_metadata(
+        self,
+        *,
+        person: Optional[str] = None,
+        topic: Optional[str] = None,
+        layer: Optional[str] = None,
+    ) -> list[MemoryRecord]:
+        """Retrieve the complete matching collection without semantic ranking."""
+
+        return self.retriever.retrieve_by_metadata(
+            person=person,
+            topic=topic,
+            layer=layer,
         )
 
     def get_memory_by_key(self, memory_key: str) -> MemoryRecord | None:
@@ -414,6 +444,59 @@ class MemoryManager:
         """Retrieve one active record by its stable SQL identity."""
 
         return self.memory_store.get_memory_by_id(memory_id)
+
+    def migrate_legacy_structured_lists(self) -> int:
+        """Consolidate legacy per-item records into stable keyed lists."""
+
+        migrated_records = 0
+        for list_name, topic in (("shopping", "shopping"), ("task", "task")):
+            legacy_items: list[str] = []
+            legacy_records: list[MemoryRecord] = []
+            seen: set[str] = set()
+            for memory in self.memory_store.get_memories(topic=topic):
+                if memory.memory_key is not None:
+                    continue
+                items = parse_legacy_structured_list(memory.content, list_name)
+                if items is None:
+                    continue
+                legacy_records.append(memory)
+                for item in items:
+                    key = item.casefold()
+                    if key not in seen:
+                        seen.add(key)
+                        legacy_items.append(item)
+
+            if not legacy_items:
+                continue
+
+            mutation = StructuredListMutation(
+                list_name=list_name,
+                items=tuple(legacy_items),
+            )
+            existing = self.memory_store.get_memory_by_key(mutation.memory_key)
+            target = MemoryCommandTarget(
+                memory_id=existing.id if existing is not None else None,
+                memory_key=mutation.memory_key,
+                expected_revision=(existing.revision if existing is not None else None),
+            )
+            outcome = self.execute_memory_command(
+                ApplyStructuredListCommand(target=target, mutation=mutation)
+            )
+            if not outcome.succeeded:
+                raise RuntimeError(
+                    "Could not migrate legacy "
+                    f"{list_name} list: {outcome.status.value}"
+                )
+
+            for memory in legacy_records:
+                deletion = self.delete_memory(
+                    memory.id,
+                    expected_revision=memory.revision,
+                )
+                if deletion.succeeded:
+                    migrated_records += 1
+
+        return migrated_records
 
     def update_memory(
         self,
@@ -679,6 +762,11 @@ class MemoryManager:
         if updated_content is None:
             return MemoryOperationOutcome(
                 MemoryOperationStatus.INVALID_STRUCTURED_LIST_CONTENT
+            )
+        if updated_content == memory.content:
+            return MemoryOperationOutcome(
+                MemoryOperationStatus.NO_CHANGES,
+                memory_id=memory.id,
             )
         return self.update_memory(
             memory.id,
