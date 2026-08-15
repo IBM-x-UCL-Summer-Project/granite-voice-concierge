@@ -5,7 +5,11 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Protocol
 
-from voice_concierge.app.memory import MemoryGateway, NullMemoryGateway
+from voice_concierge.app.memory import (
+    MemoryGateway,
+    NullMemoryGateway,
+    retrieval_scope_for_turn,
+)
 from voice_concierge.app.reasoning import (
     ReasoningFailure,
     ReasoningTurnContext,
@@ -39,12 +43,18 @@ from voice_concierge.context.types import (
     ContextDecision,
     ContextMode,
     ContextState,
+    MemoryScope,
 )
 from voice_concierge.memory.types import (
     MemoryOperationOutcome,
     MemoryOperationStatus,
 )
+from voice_concierge.memory_contracts import (
+    SHOPPING_LIST_MEMORY_KEY,
+    TASK_LIST_MEMORY_KEY,
+)
 from voice_concierge.reasoning.types import (
+    MemoryAction,
     MemoryReference,
     ReasoningResponse,
     RuntimeReference,
@@ -54,6 +64,7 @@ _EMPTY_TRANSCRIPT_RESPONSE = "I didn't catch that. Could you say it again?"
 _STT_FAILED_RESPONSE = "I couldn't transcribe that. Please try again."
 _MEMORY_CANCELLED_RESPONSE = "Okay, I won't save that."
 _MEMORY_SAVED_RESPONSE = "I've saved that."
+_MEMORY_ALREADY_SAVED_RESPONSE = "I already had that saved."
 _MEMORY_FAILED_RESPONSE = "I couldn't save that yet."
 _NOTHING_TO_REPEAT_RESPONSE = "I don't have anything to repeat yet."
 _STOP_RESPONSE = "Okay, I'll stop."
@@ -276,11 +287,15 @@ class VoiceConciergePipeline:
         memories: tuple[MemoryReference, ...] = ()
         runtime_context: tuple[RuntimeReference, ...] = ()
         errors: list[AppTurnError] = []
-        if context_decision.policy.memory_scope != "none":
+        retrieval_scope = retrieval_scope_for_turn(
+            normalized_text,
+            context_decision.policy.memory_scope,
+        )
+        if retrieval_scope != "none":
             try:
                 memories = self._memory.retrieve(
                     normalized_text,
-                    context_decision.policy.memory_scope,
+                    retrieval_scope,
                     limit=self._memory_context_limit,
                 )
             except Exception:
@@ -328,7 +343,10 @@ class VoiceConciergePipeline:
             proposed_memory_action is not None
             and context_decision.policy.memory_scope != "none"
         ):
-            pending_memory_scope = context_decision.policy.memory_scope
+            pending_memory_scope = _memory_action_scope(
+                proposed_memory_action,
+                fallback=context_decision.policy.memory_scope,
+            )
 
         next_state = AppPipelineState(
             context=context_decision.state,
@@ -414,11 +432,15 @@ class VoiceConciergePipeline:
             attempted=True,
             outcome=outcome,
         )
-        spoken_response = (
-            _MEMORY_SAVED_RESPONSE if outcome.succeeded else _MEMORY_FAILED_RESPONSE
-        )
+        already_stored = outcome.status is MemoryOperationStatus.DUPLICATE_FOUND
+        if outcome.succeeded:
+            spoken_response = _MEMORY_SAVED_RESPONSE
+        elif already_stored:
+            spoken_response = _MEMORY_ALREADY_SAVED_RESPONSE
+        else:
+            spoken_response = _MEMORY_FAILED_RESPONSE
         errors: tuple[AppTurnError, ...] = (
-            () if outcome.succeeded else ("memory_action_failed",)
+            () if outcome.succeeded or already_stored else ("memory_action_failed",)
         )
         next_state = AppPipelineState(
             context=context_decision.state,
@@ -428,8 +450,13 @@ class VoiceConciergePipeline:
                 transcript,
                 spoken_response,
             ),
-            pending_memory_action=None if outcome.succeeded else pending_action,
-            pending_memory_scope=None if outcome.succeeded else pending_scope,
+            # A confirmation is one transaction attempt. Retaining a failed
+            # action traps every later utterance in the yes/no branch even
+            # though repeating "yes" cannot repair a stale target, invalid
+            # scope, or unavailable store. The user can restate the mutation
+            # after the failure has been reported.
+            pending_memory_action=None,
+            pending_memory_scope=None,
         )
         return self._finalize_result(
             state=next_state,
@@ -590,6 +617,36 @@ def _to_app_transcript(transcript: TranscriptResult) -> AppTranscript:
 
 def _normalize(text: str) -> str:
     return " ".join(text.strip().split())
+
+
+def _memory_action_scope(
+    action: MemoryAction,
+    *,
+    fallback: MemoryScope,
+) -> MemoryScope:
+    """Resolve mutation authority from the typed target, not the UI mode.
+
+    Mode policy controls what is retrieved for a turn. An explicit shopping or
+    task-list mutation remains that mutation when spoken from home or cooking
+    mode; treating the current mode as its write scope makes valid operations
+    fail after confirmation. Driving mode is filtered before this helper.
+    """
+
+    if action.list_operation is not None:
+        return (
+            "list_relevant"
+            if action.list_operation.list_name == "shopping"
+            else "task_relevant_only"
+        )
+
+    target_key = action.target.memory_key if action.target is not None else None
+    if target_key == SHOPPING_LIST_MEMORY_KEY:
+        return "list_relevant"
+    if target_key == TASK_LIST_MEMORY_KEY:
+        return "task_relevant_only"
+    if action.action == "store":
+        return "personal_relevant"
+    return fallback
 
 
 def _conversation_summary(history: tuple[ConversationTurn, ...]) -> str | None:

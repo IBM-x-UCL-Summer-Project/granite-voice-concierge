@@ -458,6 +458,12 @@ def _print_turn_result(result: AppTurnResult, *, stdout: TextIO) -> None:
     print(f"Mode: {result.state.context.mode}", file=stdout)
     if result.errors:
         print(f"Errors: {', '.join(result.errors)}", file=stdout)
+    if result.memory_operation.outcome is not None:
+        outcome = result.memory_operation.outcome
+        diagnostic = outcome.status.value
+        if outcome.detail is not None:
+            diagnostic = f"{diagnostic} ({outcome.detail})"
+        print(f"Memory operation: {diagnostic}", file=stdout)
 
 
 def _build_parser() -> argparse.ArgumentParser:

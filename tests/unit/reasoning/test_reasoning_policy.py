@@ -227,7 +227,7 @@ def test_policy_guard_uses_relevant_conversation_summary() -> None:
     )
 
 
-def test_policy_guard_fails_closed_when_local_evidence_is_missing() -> None:
+def test_policy_guard_falls_back_to_exact_memory_when_model_omits_evidence() -> None:
     response = apply_reasoning_policy_guards(
         ReasoningRequest(
             transcript="When is my appointment?",
@@ -240,10 +240,12 @@ def test_policy_guard_fails_closed_when_local_evidence_is_missing() -> None:
     )
 
     assert response.spoken_response == (
-        "I could not verify which local information supports that answer."
+        "I found this in local memory: Appointment is at noon."
     )
-    assert response.information_evidence == ()
-    assert response.metadata["policy_guard"] == "missing_local_context_evidence"
+    assert response.information_evidence == (
+        memory_reference("Appointment is at noon.").information_evidence(),
+    )
+    assert response.metadata["policy_guard"] == "recovered_local_memory_evidence"
 
 
 def test_policy_guard_attributes_current_information_supplied_by_user() -> None:

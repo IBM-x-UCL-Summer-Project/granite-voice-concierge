@@ -17,7 +17,12 @@ from voice_concierge.memory.types import (
 class MemoryStore:
     def __init__(self, db_path: str | Path) -> None:
         self.db_path = db_path
-        self.con = sqlite3.connect(self.db_path)
+        # Application adapters may construct the local manager on a server's
+        # owner thread and execute serialized turns on request threads. The
+        # MemoryManagerGateway owns the corresponding operation lock; disabling
+        # SQLite's creator-thread check lets that single serialized connection
+        # follow the project-owned gateway rather than the HTTP implementation.
+        self.con = sqlite3.connect(self.db_path, check_same_thread=False)
         self.con.row_factory = sqlite3.Row
         self.cur = self.con.cursor()
         self._create_table()

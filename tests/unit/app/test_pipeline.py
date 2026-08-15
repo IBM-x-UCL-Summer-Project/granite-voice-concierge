@@ -26,6 +26,7 @@ from voice_concierge.reasoning.types import (
     MemoryTarget,
     ReasoningResponse,
     RuntimeReference,
+    StructuredListOperation,
 )
 
 
@@ -192,6 +193,40 @@ def test_process_transcript_calls_memory_and_reasoning_with_context_policy() -> 
             assistant_response="Tea sounds good.",
         ),
     )
+
+
+@pytest.mark.parametrize(
+    ("transcript", "expected_scope"),
+    (
+        ("What is on my shopping list?", "list_relevant"),
+        ("Read my to-do list", "task_relevant_only"),
+        ("Please update the task list", "task_relevant_only"),
+    ),
+)
+def test_explicit_structured_list_routes_retrieval_outside_list_mode(
+    transcript: str,
+    expected_scope: str,
+) -> None:
+    memory = FakeMemory()
+    pipeline = VoiceConciergePipeline(FakeReasoning(), memory=memory)
+
+    pipeline.process_transcript(transcript)
+
+    assert memory.retrieve_calls == [
+        {"query": transcript, "scope": expected_scope, "limit": 3}
+    ]
+
+
+def test_driving_mode_still_blocks_explicit_list_retrieval() -> None:
+    memory = FakeMemory()
+    pipeline = VoiceConciergePipeline(FakeReasoning(), memory=memory)
+
+    pipeline.process_transcript(
+        "What is on my shopping list?",
+        AppPipelineState(context=ContextState(mode="driving")),
+    )
+
+    assert memory.retrieve_calls == []
 
 
 def test_prior_conversation_turns_are_passed_to_reasoning() -> None:
@@ -390,6 +425,35 @@ def test_reasoning_memory_proposal_becomes_pending_state() -> None:
     )
 
 
+def test_structured_list_proposal_uses_typed_scope_outside_list_mode() -> None:
+    action = MemoryAction(
+        action="store",
+        content=None,
+        rationale="User asked to add the first shopping item.",
+        target=MemoryTarget(memory_key="list:shopping"),
+        list_operation=StructuredListOperation(
+            list_name="shopping",
+            operation="add_items",
+            items=("milk",),
+        ),
+    )
+    reasoning = FakeReasoning(
+        ReasoningResponse(
+            spoken_response="Please confirm before I add milk.",
+            needs_confirmation=True,
+            proposed_memory_action=action,
+            confidence="high",
+        )
+    )
+    pipeline = VoiceConciergePipeline(reasoning, memory=FakeMemory())
+
+    result = pipeline.process_transcript("add milk to my shopping list")
+
+    assert result.state.context.mode == "home"
+    assert result.state.pending_memory_action == action
+    assert result.state.pending_memory_scope == "list_relevant"
+
+
 def test_pending_memory_confirmation_applies_and_clears_action() -> None:
     action = MemoryAction(
         action="store",
@@ -414,6 +478,59 @@ def test_pending_memory_confirmation_applies_and_clears_action() -> None:
     assert result.state.pending_memory_action is None
     assert result.state.pending_memory_scope is None
     assert memory.apply_calls == [{"action": action, "scope": "personal_relevant"}]
+
+
+def test_duplicate_confirmation_is_an_idempotent_completed_request() -> None:
+    action = MemoryAction(
+        action="store",
+        content="User prefers tea.",
+        rationale="User asked the assistant to remember it.",
+    )
+    state = AppPipelineState(
+        pending_memory_action=action,
+        pending_memory_scope="personal_relevant",
+    )
+    memory = FakeMemory(
+        apply_result=MemoryOperationOutcome(MemoryOperationStatus.DUPLICATE_FOUND)
+    )
+    pipeline = VoiceConciergePipeline(FakeReasoning(), memory=memory)
+
+    result = pipeline.process_transcript("yes", state)
+
+    assert result.spoken_response == "I already had that saved."
+    assert result.memory_operation.succeeded is False
+    assert result.errors == ()
+    assert result.state.pending_memory_action is None
+    assert result.state.pending_memory_scope is None
+
+
+def test_failed_confirmation_clears_pending_action_for_the_next_turn() -> None:
+    action = MemoryAction(
+        action="store",
+        content="User prefers tea.",
+        rationale="User asked the assistant to remember it.",
+    )
+    state = AppPipelineState(
+        pending_memory_action=action,
+        pending_memory_scope="personal_relevant",
+    )
+    memory = FakeMemory(
+        apply_result=MemoryOperationOutcome(
+            MemoryOperationStatus.MEMORY_GATEWAY_ERROR,
+            detail="store unavailable",
+        )
+    )
+    reasoning = FakeReasoning()
+    pipeline = VoiceConciergePipeline(reasoning, memory=memory)
+
+    failed = pipeline.process_transcript("yes", state)
+    next_turn = pipeline.process_transcript("what drink do I prefer?", failed.state)
+
+    assert failed.errors == ("memory_action_failed",)
+    assert failed.state.pending_memory_action is None
+    assert failed.state.pending_memory_scope is None
+    assert next_turn.spoken_response == "Reasoned response."
+    assert reasoning.calls[-1]["transcript"] == "what drink do I prefer?"
 
 
 def test_memory_confirmation_does_not_also_confirm_pending_mode() -> None:

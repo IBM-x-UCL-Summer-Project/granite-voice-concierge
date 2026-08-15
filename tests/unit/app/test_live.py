@@ -8,10 +8,16 @@ import numpy as np
 import pytest
 
 from voice_concierge.app import live
-from voice_concierge.app.types import AppPipelineState, AppTranscript, AppTurnResult
+from voice_concierge.app.types import (
+    AppPipelineState,
+    AppTranscript,
+    AppTurnResult,
+    MemoryOperationResult,
+)
 from voice_concierge.audio import CapturedAudio
 from voice_concierge.context.policies import policy_for_mode
 from voice_concierge.context.types import ContextDecision
+from voice_concierge.memory import MemoryOperationOutcome, MemoryOperationStatus
 from voice_concierge.reasoning import (
     ReasoningBackendUnavailableError,
     ReasoningConfigurationError,
@@ -120,6 +126,37 @@ def test_run_live_app_without_wake_word_uses_vad_only() -> None:
     assert capturer.capture_count == 1
     assert pipeline.calls[0]["synthesize"] is False
     assert pipeline.calls[0]["play"] is False
+
+
+def test_live_result_prints_memory_failure_status_and_detail() -> None:
+    state = AppPipelineState()
+    result = AppTurnResult(
+        state=state,
+        spoken_response="I couldn't save that yet.",
+        context_decision=ContextDecision(
+            state=state.context,
+            policy=policy_for_mode(
+                state.context.mode,
+                state.context.accessibility,
+            ),
+        ),
+        transcript=AppTranscript(text="yes"),
+        memory_operation=MemoryOperationResult(
+            attempted=True,
+            outcome=MemoryOperationOutcome(
+                MemoryOperationStatus.MEMORY_GATEWAY_ERROR,
+                detail="database unavailable",
+            ),
+        ),
+        errors=("memory_action_failed",),
+    )
+    stdout = io.StringIO()
+
+    live._print_turn_result(result, stdout=stdout)
+
+    assert "Memory operation: memory_gateway_error (database unavailable)" in (
+        stdout.getvalue()
+    )
 
 
 def test_owned_pipeline_is_closed(monkeypatch) -> None:

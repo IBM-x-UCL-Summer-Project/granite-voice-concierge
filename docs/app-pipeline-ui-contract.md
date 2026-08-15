@@ -335,11 +335,15 @@ write rejection. `reason` is retained as a display/logging string; clients
 should not parse it to make decisions.
 
 The app memory gateway translates reasoning proposals into memory-owned
-commands only after checking the active `memory_scope`. Personal retrieval is
-restricted to profile records, task retrieval to feedback/task records, and
-shopping retrieval to the stable shopping-list record. An update or delete
-whose exact target falls outside that scope returns `memory_scope_mismatch`
-without reaching persistence.
+commands only after checking their typed target and the active safety policy.
+Personal retrieval is restricted to profile records, task retrieval to
+feedback/task records, and shopping retrieval to the stable shopping-list
+record. Explicit shopping-list and task-list queries route to those stable
+records even when the UI is in another non-driving mode. Structured mutations
+derive their scope from their stable list target rather than the current UI
+mode; an untyped store is personal. Driving mode still disables memory access.
+An update or delete whose exact target falls outside its resolved scope returns
+`memory_scope_mismatch` without reaching persistence.
 
 ## Error Codes
 
@@ -461,8 +465,12 @@ cookie identifies the server-owned pending state:
 }
 ```
 
-The backend applies the pending memory action and returns updated state with
-`pending_memory_action: null`.
+The backend makes one mutation attempt and returns updated state with
+`pending_memory_action: null`, whether that attempt succeeds or fails. This
+prevents later conversation from being trapped in a stale yes/no prompt; the
+user can restate a failed request. Confirming a record that is already stored
+is reported as an idempotent completion and does not surface
+`memory_action_failed`.
 
 ## Frontend Rule
 

@@ -13,7 +13,9 @@ class VectorStore:
         self.db_path = Path(db_path)
         self.dimension = dimension
 
-        self.con = sqlite3.connect(self.db_path)
+        # See MemoryStore: access is serialized by MemoryManagerGateway, while
+        # a web transport is free to execute different turns on worker threads.
+        self.con = sqlite3.connect(self.db_path, check_same_thread=False)
         self._load_sqlite_vec()
         self._create_vector_table()
 

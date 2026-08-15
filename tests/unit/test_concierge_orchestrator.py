@@ -235,7 +235,7 @@ class ConciergeOrchestratorTest(unittest.TestCase):
         self.assertEqual(memory.apply_calls, [])
         self.assertFalse(result.memory_operation.attempted)
 
-    def test_confirmed_memory_action_is_applied_and_cleared(self) -> None:
+    def test_confirmed_untyped_store_uses_personal_scope(self) -> None:
         action = MemoryAction(
             action="store",
             content="User likes oat milk.",
@@ -262,7 +262,7 @@ class ConciergeOrchestratorTest(unittest.TestCase):
 
         result = orchestrator.handle_transcript("yes")
 
-        self.assertEqual(memory.apply_calls, [(action, "list_relevant")])
+        self.assertEqual(memory.apply_calls, [(action, "personal_relevant")])
         self.assertTrue(result.memory_operation.attempted)
         self.assertTrue(result.memory_operation.succeeded)
         self.assertEqual(result.memory_operation.reason, "stored_successfully")
@@ -329,7 +329,7 @@ class ConciergeOrchestratorTest(unittest.TestCase):
         self.assertEqual(result.spoken_response, "Sorry, was that a yes or a no?")
         self.assertEqual(len(reasoning.requests), 1)
 
-    def test_failed_memory_action_is_retained_for_retry(self) -> None:
+    def test_failed_memory_action_is_cleared_before_next_turn(self) -> None:
         action = MemoryAction(
             action="store",
             content="User likes oat milk.",
@@ -359,9 +359,10 @@ class ConciergeOrchestratorTest(unittest.TestCase):
         failed = orchestrator.handle_transcript("yes")
         retried = orchestrator.handle_transcript("yes")
 
-        self.assertEqual(len(memory.apply_calls), 2)
+        self.assertEqual(len(memory.apply_calls), 1)
         self.assertIn("memory_action_failed", failed.errors)
-        self.assertIn("memory_action_failed", retried.errors)
+        self.assertNotIn("memory_action_failed", retried.errors)
+        self.assertEqual(len(reasoning.requests), 2)
 
     def test_cooking_next_step_forwards_task_scope_and_word_limit(self) -> None:
         memory = RecordingMemoryGateway()

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+from threading import RLock
 from typing import TYPE_CHECKING, Protocol
 
 from voice_concierge.context.types import MemoryScope
@@ -55,6 +57,22 @@ class MemoryGateway(Protocol):
         """Release persistent memory resources."""
 
 
+def retrieval_scope_for_turn(
+    transcript: str,
+    fallback: MemoryScope,
+) -> MemoryScope:
+    """Route explicitly named structured records independently of UI mode."""
+
+    if fallback == "none":
+        return "none"
+    normalized = " ".join(transcript.casefold().split())
+    if "shopping list" in normalized:
+        return "list_relevant"
+    if re.search(r"\b(?:task|to-do|todo)\s+list\b", normalized):
+        return "task_relevant_only"
+    return fallback
+
+
 class NullMemoryGateway:
     """No-op memory gateway for tests and installations without memory wiring."""
 
@@ -83,6 +101,7 @@ class MemoryManagerGateway:
 
     def __init__(self, manager: MemoryManagerPort) -> None:
         self._manager = manager
+        self._operation_lock = RLock()
 
     def retrieve(
         self,
@@ -90,6 +109,16 @@ class MemoryManagerGateway:
         scope: MemoryScope,
         *,
         limit: int = 3,
+    ) -> tuple[MemoryReference, ...]:
+        with self._operation_lock:
+            return self._retrieve(query, scope, limit=limit)
+
+    def _retrieve(
+        self,
+        query: str,
+        scope: MemoryScope,
+        *,
+        limit: int,
     ) -> tuple[MemoryReference, ...]:
         if scope == "none" or limit <= 0:
             return ()
@@ -128,6 +157,14 @@ class MemoryManagerGateway:
         return (*exact_memories, *semantic_memories[:semantic_limit])
 
     def apply(
+        self,
+        action: MemoryAction,
+        scope: MemoryScope,
+    ) -> MemoryOperationOutcome:
+        with self._operation_lock:
+            return self._apply(action, scope)
+
+    def _apply(
         self,
         action: MemoryAction,
         scope: MemoryScope,
@@ -186,7 +223,8 @@ class MemoryManagerGateway:
     def close(self) -> None:
         """Close the underlying memory manager."""
 
-        self._manager.close()
+        with self._operation_lock:
+            self._manager.close()
 
 
 def build_local_memory_gateway(
