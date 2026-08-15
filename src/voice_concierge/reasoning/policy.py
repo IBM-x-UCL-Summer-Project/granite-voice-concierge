@@ -21,8 +21,8 @@ def apply_reasoning_policy_guards(
     text = transcript.lower()
 
     if _shopping_list_read_requested(text):
-        shopping_list_memory = _shopping_list_memory(request.memories)
-        if shopping_list_memory is None:
+        shopping_list_items = _shopping_list_items(request.memories)
+        if not shopping_list_items:
             return _replace_response(
                 response,
                 spoken_response="I do not have a saved shopping list yet.",
@@ -34,7 +34,9 @@ def apply_reasoning_policy_guards(
 
         return _replace_response(
             response,
-            spoken_response=f"I found this in local memory: {shopping_list_memory}",
+            spoken_response=(
+                "Your shopping list contains " + ", ".join(shopping_list_items) + "."
+            ),
             needs_confirmation=False,
             proposed_memory_action=None,
             confidence="high",
@@ -273,10 +275,40 @@ def _time_sensitive_info_requested(text: str) -> bool:
     )
 
 
-def _shopping_list_memory(memories: tuple[str, ...]) -> str | None:
+def _shopping_list_items(memories: tuple[str, ...]) -> tuple[str, ...]:
+    """Extract and de-duplicate items from shopping-list memory events."""
+
+    items: list[str] = []
+    seen: set[str] = set()
     for memory in memories:
-        if "shopping list" in memory.lower():
-            return memory
+        item = _shopping_list_item(memory)
+        if item is None:
+            continue
+        normalized = item.casefold()
+        if normalized not in seen:
+            seen.add(normalized)
+            items.append(item)
+    return tuple(items)
+
+
+def _shopping_list_item(memory: str) -> str | None:
+    text = memory.strip()
+    canonical = re.match(r"shopping_list:add:(.+)", text, flags=re.IGNORECASE)
+    if canonical:
+        return canonical.group(1).strip(" .'\"") or None
+
+    addition = re.match(
+        r"add\s+['\"]?(.+?)['\"]?\s+to\s+(?:my|the)\s+shopping\s+list\.?$",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if addition:
+        return addition.group(1).strip(" .'\"") or None
+
+    labelled = re.match(r"shopping\s+list\s*:\s*(.+)", text, flags=re.IGNORECASE)
+    if labelled:
+        return labelled.group(1).strip(" .") or None
+
     return None
 
 

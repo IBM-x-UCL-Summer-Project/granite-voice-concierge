@@ -184,6 +184,21 @@ class MemoryManager:
             layer=layer,
         )
 
+    def retrieve_by_metadata(
+        self,
+        *,
+        person: Optional[str] = None,
+        topic: Optional[str] = None,
+        layer: Optional[str] = None,
+    ) -> list[dict]:
+        """Retrieve the complete matching collection without semantic ranking."""
+
+        return self.retriever.retrieve_by_metadata(
+            person=person,
+            topic=topic,
+            layer=layer,
+        )
+
     def update_memory(
         self,
         memory_id: int,

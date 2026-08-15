@@ -19,7 +19,7 @@ class MemoryGateway(Protocol):
         *,
         limit: int = 3,
     ) -> tuple[str, ...]:
-        """Return memory snippets relevant to one user query."""
+        """Return relevant snippets, or the complete owned list for list scope."""
 
     def apply(self, action: MemoryAction, scope: MemoryScope) -> tuple[bool, str]:
         """Apply a previously confirmed memory action."""
@@ -64,11 +64,16 @@ class MemoryManagerGateway:
             return ()
 
         topic = _retrieval_topic(scope)
-        memories = self._manager.retrieve_similar(
-            query=query,
-            top_k=limit,
-            topic=topic,
-        )
+        if scope == "list_relevant":
+            # A shopping list is an owned collection, not a similarity-ranked
+            # context window. Returning every event prevents silent truncation.
+            memories = self._manager.retrieve_by_metadata(topic=topic)
+        else:
+            memories = self._manager.retrieve_similar(
+                query=query,
+                top_k=limit,
+                topic=topic,
+            )
         return tuple(
             memory["content"]
             for memory in memories
@@ -79,7 +84,12 @@ class MemoryManagerGateway:
         if scope == "none":
             return False, "memory_scope_none"
 
-        if action.action == "store":
+        is_shopping_list_addition = (
+            scope == "list_relevant"
+            and action.action == "update"
+            and action.content.casefold().startswith("shopping_list:add:")
+        )
+        if action.action == "store" or is_shopping_list_addition:
             layer, topic = _storage_metadata(scope)
             success, reason, _memory_id = self._manager.store_memory(
                 content=action.content,
