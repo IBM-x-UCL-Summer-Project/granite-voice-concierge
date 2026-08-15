@@ -10,9 +10,20 @@ Use the memory factory for application code instead of constructing each
 storage component directly:
 
 ```python
-from voice_concierge.memory import LocalMemoryConfig, build_memory_manager
+from voice_concierge.memory import (
+    LocalMemoryConfig,
+    MemoryDecayPolicy,
+    build_memory_manager,
+)
 
-manager = build_memory_manager(LocalMemoryConfig())
+config = LocalMemoryConfig(
+    decay_policy=MemoryDecayPolicy(
+        base_half_life_days=30.0,
+        minimum_retention=0.1,
+        retrieval_weight=0.35,
+    )
+)
+manager = build_memory_manager(config)
 ```
 
 The defaults create:
@@ -22,9 +33,9 @@ The defaults create:
 - 768-dimension vectors from the local Ollama
   `granite-embedding:278m` model.
 
-`LocalMemoryConfig` can override both paths, the embedding model, and vector
-dimension. Parent directories are created automatically. Call `manager.close()`
-when the owner shuts down.
+`LocalMemoryConfig` can override both paths, the embedding model, vector
+dimension, and memory-decay policy. Parent directories are created
+automatically. Call `manager.close()` when the owner shuts down.
 
 The app pipeline normally wraps this manager with `MemoryManagerGateway` by
 calling `build_voice_concierge_pipeline(load_memory=True)`.
@@ -36,6 +47,7 @@ calling `build_voice_concierge_pipeline(load_memory=True)`.
 - [MemoryManager](#memorymanager) - Main interface
 - [MemoryStore](#memorystore) - Storage layer
 - [MemoryRetriever](#memoryretriever) - Query layer
+- [Memory Decay](#memory-decay) - Non-destructive retrieval weighting
 - [MemoryValidator](#memoryvalidator) - Validation layer
 - [VectorStore](#vectorstore) - Vector layer
 - [EmbeddingService](#embeddingservice) - Embedding layer
@@ -145,7 +157,7 @@ memories = manager.retrieve_similar(
 **Return values:**
 
 ```python
-List[dict]  # Memory list sorted by similarity
+List[dict]  # Memory list sorted by combined retrieval score
 
 # Structure of each memory:
 {
@@ -156,6 +168,8 @@ List[dict]  # Memory list sorted by similarity
     'person': 'Kenny',    # Related person
     'topic': 'semantic',  # Memory type or topic
     'distance': 0.23,     # Similarity distance (lower = more similar)
+    'retention_score': 0.91, # Time/strength retention in [0, 1]
+    'retrieval_score': 0.68, # Combined score (higher = better)
     'strength': 1,        # Importance/strength
     'event_time': None,   # Event occurrence time
     'last_accessed': None,# Last access time
@@ -172,12 +186,74 @@ results = manager.retrieve_similar(
 )
 
 for mem in results:
-    print(f"{mem['content']} (distance: {mem['distance']:.3f})")
+    print(f"{mem['content']} (score: {mem['retrieval_score']:.3f})")
 ```
+
+Semantic retrieval applies memory decay by default and records `last_accessed`
+for the memories it returns. Internal duplicate checks disable both behaviours
+so that checking a proposed write does not refresh an existing memory or change
+pure distance ordering.
 
 **Exceptions:**
 
 - `RuntimeError` - Retrieval failed (network, model, etc.)
+
+---
+
+#### Memory Decay
+
+Memory decay is a non-destructive ranking mechanism. It does not delete old
+records and does not reduce their stored `strength`. Instead, it lowers the
+ranking contribution of memories that have not been created or accessed
+recently. Important memories decay more slowly.
+
+The reference timestamp is `last_accessed` when present, otherwise
+`created_at`. With the default policy, retention is calculated as:
+
+```text
+half_life_days = 30 * strength
+natural_retention = 0.5 ^ (age_days / half_life_days)
+retention = 0.1 + (0.9 * natural_retention)
+```
+
+Vector distance is converted to a higher-is-better semantic score and combined
+with retention:
+
+```text
+semantic = 1 / (1 + distance)
+decay_multiplier = (1 - retrieval_weight) + retrieval_weight * retention
+retrieval_score = semantic * decay_multiplier
+```
+
+The defaults are:
+
+| Setting | Default | Meaning |
+|---|---:|---|
+| `base_half_life_days` | 30.0 | Half-life in days for strength 1 |
+| `minimum_retention` | 0.1 | Lower bound for retention |
+| `retrieval_weight` | 0.35 | Influence of decay on final ranking |
+
+A memory with strength 5 therefore has a 150-day half-life under the default
+policy. Retrieval updates `last_accessed` only for the final returned results,
+using one timestamp and one database operation.
+
+To configure a different policy:
+
+```python
+from voice_concierge.memory import LocalMemoryConfig, MemoryDecayPolicy
+
+config = LocalMemoryConfig(
+    decay_policy=MemoryDecayPolicy(
+        base_half_life_days=14,
+        minimum_retention=0.25,
+        retrieval_weight=0.6,
+    )
+)
+```
+
+Metadata-owned collections such as the shopping list bypass semantic decay and
+are retrieved as complete collections. Explicit deletion remains a separate,
+confirmed operation; a low retention score never deletes user data.
 
 ---
 
