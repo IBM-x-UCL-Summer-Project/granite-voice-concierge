@@ -209,8 +209,9 @@ def test_memory_manager_gateway_treats_existing_list_items_as_success() -> None:
     assert manager.store_calls == []
 
 
-def test_memory_manager_gateway_treats_canonical_store_of_legacy_item_as_success(
-) -> None:
+def test_memory_manager_gateway_treats_canonical_store_of_legacy_item_as_success() -> (
+    None
+):
     manager = FakeMemoryManager()
     manager.metadata_memories = [{"content": "ice cream"}]
     gateway = MemoryManagerGateway(manager)

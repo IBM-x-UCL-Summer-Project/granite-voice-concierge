@@ -39,12 +39,8 @@ class FakeMemoryStore:
             if all(memory.get(key) == value for key, value in filters.items())
         ]
 
-    def touch_memories(
-        self, memory_ids: list[int], *, accessed_at: int
-    ) -> int:
-        self.touch_calls.append(
-            {"memory_ids": memory_ids, "accessed_at": accessed_at}
-        )
+    def touch_memories(self, memory_ids: list[int], *, accessed_at: int) -> int:
+        self.touch_calls.append({"memory_ids": memory_ids, "accessed_at": accessed_at})
         return len(memory_ids)
 
 

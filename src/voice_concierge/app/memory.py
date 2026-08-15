@@ -87,14 +87,11 @@ class MemoryManagerGateway:
         if scope == "none":
             return False, "memory_scope_none"
 
-        is_shopping_list_addition = (
-            scope == "list_relevant"
-            and (
-                action.action == "update"
-                or (
-                    action.action == "store"
-                    and action.content.casefold().startswith("shopping_list:add:")
-                )
+        is_shopping_list_addition = scope == "list_relevant" and (
+            action.action == "update"
+            or (
+                action.action == "store"
+                and action.content.casefold().startswith("shopping_list:add:")
             )
         )
         if is_shopping_list_addition:
@@ -124,8 +121,7 @@ class MemoryManagerGateway:
         existing_items = {
             item.casefold()
             for memory in memories
-            if isinstance(memory, dict)
-            and isinstance(memory.get("content"), str)
+            if isinstance(memory, dict) and isinstance(memory.get("content"), str)
             for item in _stored_shopping_list_items(memory["content"])
         }
         missing_items = [

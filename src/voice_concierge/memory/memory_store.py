@@ -106,8 +106,7 @@ class MemoryStore:
         timestamp = int(time.time()) if accessed_at is None else accessed_at
         placeholders = ", ".join("?" for _ in unique_ids)
         self.cur.execute(
-            f"UPDATE memories SET last_accessed = ? "
-            f"WHERE id IN ({placeholders})",
+            f"UPDATE memories SET last_accessed = ? " f"WHERE id IN ({placeholders})",
             (timestamp, *unique_ids),
         )
         self.con.commit()
