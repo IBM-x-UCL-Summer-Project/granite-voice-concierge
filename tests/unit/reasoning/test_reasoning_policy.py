@@ -83,7 +83,14 @@ def test_policy_guard_uses_supplied_shopping_list_memory() -> None:
         ReasoningRequest(
             transcript="What is on my shopping list?",
             mode="shopping",
-            memories=("Shopping list: milk, bread.",),
+            memories=(
+                "shopping_list:add:cookies",
+                "shopping_list:add:milk",
+                "shopping_list:add:tea",
+                "shopping_list:add:meat",
+                "shopping_list:add:onions",
+                "shopping_list:add:milk",
+            ),
         ),
         ReasoningResponse(
             spoken_response="Eggs are on your list.",
@@ -98,7 +105,7 @@ def test_policy_guard_uses_supplied_shopping_list_memory() -> None:
     )
 
     assert response.spoken_response == (
-        "I found this in local memory: Shopping list: milk, bread."
+        "Your shopping list contains cookies, milk, tea, meat, onions."
     )
     assert response.needs_confirmation is False
     assert response.proposed_memory_action is None

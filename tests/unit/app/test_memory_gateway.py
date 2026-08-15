@@ -13,6 +13,24 @@ class FakeMemoryManager:
         self.processed_actions: list[MemoryAction] = []
         self.closed = False
 
+    def retrieve_by_metadata(
+        self,
+        *,
+        topic: str | None,
+        person: str | None = None,
+        layer: str | None = None,
+    ) -> list[dict[str, object]]:
+        self.retrieve_calls.append(
+            {"topic": topic, "person": person, "layer": layer, "metadata": True}
+        )
+        return [
+            {"content": "shopping_list:add:cookies"},
+            {"content": "shopping_list:add:milk"},
+            {"content": "shopping_list:add:tea"},
+            {"content": "shopping_list:add:meat"},
+            {"content": "shopping_list:add:onions"},
+        ]
+
     def retrieve_similar(
         self,
         *,
@@ -86,12 +104,19 @@ def test_memory_manager_gateway_retrieves_content_for_scoped_query() -> None:
         "What is on my shopping list?", "list_relevant", limit=2
     )
 
-    assert memories == ("Remembered milk.", "Remembered bread.")
+    assert memories == (
+        "shopping_list:add:cookies",
+        "shopping_list:add:milk",
+        "shopping_list:add:tea",
+        "shopping_list:add:meat",
+        "shopping_list:add:onions",
+    )
     assert manager.retrieve_calls == [
         {
-            "query": "What is on my shopping list?",
-            "top_k": 2,
             "topic": "shopping",
+            "person": None,
+            "layer": None,
+            "metadata": True,
         }
     ]
 
@@ -124,6 +149,29 @@ def test_memory_manager_gateway_applies_store_with_scope_metadata() -> None:
             "auto_extract": False,
         }
     ]
+
+
+def test_memory_manager_gateway_appends_owned_shopping_list_event() -> None:
+    manager = FakeMemoryManager()
+    gateway = MemoryManagerGateway(manager)
+    action = MemoryAction(
+        action="update",
+        content="shopping_list:add:onions",
+        rationale="User asked to add an item.",
+    )
+
+    assert gateway.apply(action, "list_relevant") == (True, "stored_successfully")
+    assert manager.store_calls == [
+        {
+            "content": "shopping_list:add:onions",
+            "layer": "feedback",
+            "topic": "shopping",
+            "validate": False,
+            "auto_classify": False,
+            "auto_extract": False,
+        }
+    ]
+    assert manager.processed_actions == []
 
 
 def test_memory_manager_gateway_delegates_update_and_delete_actions() -> None:
