@@ -209,6 +209,24 @@ def test_memory_manager_gateway_treats_existing_list_items_as_success() -> None:
     assert manager.store_calls == []
 
 
+def test_memory_manager_gateway_treats_canonical_store_of_legacy_item_as_success(
+) -> None:
+    manager = FakeMemoryManager()
+    manager.metadata_memories = [{"content": "ice cream"}]
+    gateway = MemoryManagerGateway(manager)
+    action = MemoryAction(
+        action="store",
+        content="shopping_list:add:ice cream",
+        rationale="User asked to add an item already stored in the legacy format.",
+    )
+
+    assert gateway.apply(action, "list_relevant") == (
+        True,
+        "shopping_list_unchanged",
+    )
+    assert manager.store_calls == []
+
+
 def test_memory_manager_gateway_normalizes_model_generated_list_update() -> None:
     manager = FakeMemoryManager()
     manager.metadata_memories = []

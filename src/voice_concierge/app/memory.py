@@ -89,7 +89,13 @@ class MemoryManagerGateway:
 
         is_shopping_list_addition = (
             scope == "list_relevant"
-            and action.action == "update"
+            and (
+                action.action == "update"
+                or (
+                    action.action == "store"
+                    and action.content.casefold().startswith("shopping_list:add:")
+                )
+            )
         )
         if is_shopping_list_addition:
             return self._append_shopping_list_items(action.content)
