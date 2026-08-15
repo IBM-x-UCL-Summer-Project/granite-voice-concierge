@@ -1,5 +1,6 @@
 """Local memory management system for voice concierge."""
 
+from voice_concierge.memory.decay import MemoryDecayPolicy
 from voice_concierge.memory.embedding_service import EmbeddingService
 from voice_concierge.memory.factory import (
     DEFAULT_EMBEDDING_DIMENSION,
@@ -23,6 +24,7 @@ __all__ = [
     "EmbeddingService",
     "LocalMemoryConfig",
     "MemoryManager",
+    "MemoryDecayPolicy",
     "MemoryRetriever",
     "MemoryStore",
     "MemoryValidator",

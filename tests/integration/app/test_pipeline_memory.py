@@ -10,7 +10,11 @@ from voice_concierge.app.reasoning import (
     ReasoningTurnContext,
     ReasoningTurnResult,
 )
-from voice_concierge.memory import LocalMemoryConfig, build_memory_manager
+from voice_concierge.memory import (
+    LocalMemoryConfig,
+    MemoryDecayPolicy,
+    build_memory_manager,
+)
 from voice_concierge.reasoning.types import MemoryAction, ReasoningResponse
 
 
@@ -77,6 +81,31 @@ class RecallReasoning:
                 confidence="high",
             )
         )
+
+
+def test_local_memory_config_injects_decay_policy(tmp_path) -> None:
+    decay_policy = MemoryDecayPolicy(
+        base_half_life_days=14,
+        minimum_retention=0.25,
+        retrieval_weight=0.6,
+    )
+    config = LocalMemoryConfig(
+        memory_db_path=tmp_path / "memories.sqlite3",
+        vector_db_path=tmp_path / "vectors.sqlite3",
+        embedding_dimension=4,
+        decay_policy=decay_policy,
+    )
+
+    manager = build_memory_manager(
+        config,
+        embedding_service=DeterministicEmbeddingService(),
+        validator=FailingValidator(),
+    )
+
+    try:
+        assert manager.retriever.decay_policy is decay_policy
+    finally:
+        manager.close()
 
 
 @pytest.mark.integration

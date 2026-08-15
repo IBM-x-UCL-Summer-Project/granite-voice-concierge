@@ -2,6 +2,7 @@
 
 from typing import Optional, Tuple
 
+from voice_concierge.memory.decay import MemoryDecayPolicy
 from voice_concierge.memory.embedding_service import EmbeddingService
 from voice_concierge.memory.memory_retriever import MemoryRetriever
 from voice_concierge.memory.memory_store import MemoryStore
@@ -19,6 +20,7 @@ class MemoryManager:
         vector_store: VectorStore,
         embedding_service: EmbeddingService,
         validator: Optional[MemoryValidator] = None,
+        decay_policy: MemoryDecayPolicy | None = None,
     ):
         """
         Initialize the memory manager with required components.
@@ -33,7 +35,12 @@ class MemoryManager:
         self.vector_store = vector_store
         self.embedding_service = embedding_service
         self.validator = validator or MemoryValidator()
-        self.retriever = MemoryRetriever(memory_store, vector_store, embedding_service)
+        self.retriever = MemoryRetriever(
+            memory_store,
+            vector_store,
+            embedding_service,
+            decay_policy=decay_policy,
+        )
 
     def find_similar_memory(
         self,
