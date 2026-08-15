@@ -138,6 +138,33 @@ def test_delete_nonexistent(store):
     assert store.delete_memory(999) is False
 
 
+def test_touch_memories_records_shared_access_time(store):
+    first_id = store.create_memory("first", "raw")
+    second_id = store.create_memory("second", "raw")
+
+    touched = store.touch_memories([first_id, second_id], accessed_at=1_234_567)
+
+    memories = {memory["id"]: memory for memory in store.get_memories()}
+    assert touched == 2
+    assert memories[first_id]["last_accessed"] == 1_234_567
+    assert memories[second_id]["last_accessed"] == 1_234_567
+
+
+def test_touch_memories_deduplicates_ids_and_ignores_missing_records(store):
+    memory_id = store.create_memory("first", "raw")
+
+    touched = store.touch_memories(
+        [memory_id, memory_id, 999],
+        accessed_at=1_234_567,
+    )
+
+    assert touched == 1
+
+
+def test_touch_memories_accepts_empty_collection(store):
+    assert store.touch_memories([], accessed_at=1_234_567) == 0
+
+
 def test_update_memory(store):
     mid = store.create_memory("old content", "raw", topic="shopping")
     assert store.update_memory(mid, content="new content") is True

@@ -94,6 +94,23 @@ class MemoryStore:
         self.con.commit()
         return self.cur.rowcount > 0
 
+    def touch_memories(self, memory_ids, accessed_at=None):
+        """Record access for existing memories in one database transaction."""
+
+        unique_ids = tuple(dict.fromkeys(memory_ids))
+        if not unique_ids:
+            return 0
+
+        timestamp = int(time.time()) if accessed_at is None else accessed_at
+        placeholders = ", ".join("?" for _ in unique_ids)
+        self.cur.execute(
+            f"UPDATE memories SET last_accessed = ? "
+            f"WHERE id IN ({placeholders})",
+            (timestamp, *unique_ids),
+        )
+        self.con.commit()
+        return self.cur.rowcount
+
     def update_memory(
         self,
         memory_id,
