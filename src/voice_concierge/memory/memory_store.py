@@ -7,7 +7,9 @@ import pysqlite3 as sqlite3
 class MemoryStore:
     def __init__(self, db_path):
         self.db_path = db_path
-        self.con = sqlite3.connect(self.db_path)
+        # The web adapter creates the pipeline on the server thread and handles
+        # turns on worker threads. Access is serialized by the web server lock.
+        self.con = sqlite3.connect(self.db_path, check_same_thread=False)
         self.con.row_factory = sqlite3.Row
         self.cur = self.con.cursor()
         self._create_table()

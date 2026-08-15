@@ -66,7 +66,11 @@ def apply_reasoning_policy_guards(
             guard="supplied_memory_recall",
         )
 
-    shopping_items = _shopping_items_to_add(transcript, text)
+    shopping_items = _shopping_items_to_add(
+        transcript,
+        text,
+        mode=request.mode,
+    )
     accessibility_preference = _accessibility_preference(text)
     memory_write_requested = _memory_write_requested(text)
     delete_target = memory_delete_target(transcript)
@@ -309,6 +313,15 @@ def _shopping_list_item(memory: str) -> str | None:
     if labelled:
         return labelled.group(1).strip(" .") or None
 
+    # Legacy shopping records were stored as short bare item names before the
+    # canonical shopping_list:add: format was introduced.
+    if (
+        len(text.split()) <= 5
+        and re.fullmatch(r"[\w][\w '&-]*", text)
+        and not re.search(r"\b(user|prefers?|likes?|remembers?)\b", text, re.I)
+    ):
+        return text
+
     return None
 
 
@@ -323,8 +336,10 @@ def _memory_recall_requested(text: str) -> bool:
     return any(phrase in text for phrase in phrases)
 
 
-def _shopping_items_to_add(transcript: str, text: str) -> str | None:
-    if "shopping list" not in text or not re.search(r"\badd\b", text):
+def _shopping_items_to_add(transcript: str, text: str, *, mode: str) -> str | None:
+    if not re.search(r"\badd\b", text):
+        return None
+    if "shopping list" not in text and mode.casefold() != "shopping":
         return None
 
     cleaned = re.sub(
@@ -334,7 +349,7 @@ def _shopping_items_to_add(transcript: str, text: str) -> str | None:
         flags=re.IGNORECASE,
     )
     cleaned = re.sub(
-        r"\s+to\s+my\s+shopping\s+list\.?\s*$",
+        r"\s+to\s+(?:my|the)\s+(?:shopping\s+)?list\.?\s*$",
         "",
         cleaned,
         flags=re.IGNORECASE,

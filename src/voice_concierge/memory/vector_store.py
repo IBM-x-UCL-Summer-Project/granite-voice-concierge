@@ -10,7 +10,9 @@ class VectorStore:
         self.db_path = Path(db_path)
         self.dimension = dimension
 
-        self.con = sqlite3.connect(self.db_path)
+        # The web adapter serializes pipeline turns but may execute them on a
+        # worker thread different from the construction thread.
+        self.con = sqlite3.connect(self.db_path, check_same_thread=False)
         self._load_sqlite_vec()
         self._create_vector_table()
 

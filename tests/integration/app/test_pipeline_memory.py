@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 
 from voice_concierge.app.memory import MemoryManagerGateway
@@ -106,6 +108,40 @@ def test_local_memory_config_injects_decay_policy(tmp_path) -> None:
         assert manager.retriever.decay_policy is decay_policy
     finally:
         manager.close()
+
+
+def test_memory_gateway_can_write_from_web_worker_thread(tmp_path) -> None:
+    config = LocalMemoryConfig(
+        memory_db_path=tmp_path / "memories.sqlite3",
+        vector_db_path=tmp_path / "vectors.sqlite3",
+        embedding_dimension=4,
+    )
+    manager = build_memory_manager(
+        config,
+        embedding_service=DeterministicEmbeddingService(),
+        validator=FailingValidator(),
+    )
+    gateway = MemoryManagerGateway(manager)
+    action = MemoryAction(
+        action="update",
+        content="shopping_list:add:bananas",
+        rationale="User asked to add an item.",
+    )
+
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            result = executor.submit(
+                gateway.apply,
+                action,
+                "list_relevant",
+            ).result()
+
+        assert result == (True, "stored_successfully")
+        assert manager.retrieve_by_metadata(topic="shopping")[0]["content"] == (
+            "shopping_list:add:bananas"
+        )
+    finally:
+        gateway.close()
 
 
 @pytest.mark.integration

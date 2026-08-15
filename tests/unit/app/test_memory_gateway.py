@@ -11,6 +11,13 @@ class FakeMemoryManager:
         self.retrieve_calls: list[dict[str, object]] = []
         self.store_calls: list[dict[str, object]] = []
         self.processed_actions: list[MemoryAction] = []
+        self.metadata_memories: list[dict[str, object]] = [
+            {"content": "shopping_list:add:cookies"},
+            {"content": "shopping_list:add:milk"},
+            {"content": "shopping_list:add:tea"},
+            {"content": "shopping_list:add:meat"},
+            {"content": "shopping_list:add:onions"},
+        ]
         self.closed = False
 
     def retrieve_by_metadata(
@@ -23,13 +30,7 @@ class FakeMemoryManager:
         self.retrieve_calls.append(
             {"topic": topic, "person": person, "layer": layer, "metadata": True}
         )
-        return [
-            {"content": "shopping_list:add:cookies"},
-            {"content": "shopping_list:add:milk"},
-            {"content": "shopping_list:add:tea"},
-            {"content": "shopping_list:add:meat"},
-            {"content": "shopping_list:add:onions"},
-        ]
+        return self.metadata_memories
 
     def retrieve_similar(
         self,
@@ -60,6 +61,7 @@ class FakeMemoryManager:
         validate: bool,
         auto_classify: bool,
         auto_extract: bool,
+        check_duplicates: bool = True,
     ) -> tuple[bool, str, int]:
         self.store_calls.append(
             {
@@ -69,6 +71,7 @@ class FakeMemoryManager:
                 "validate": validate,
                 "auto_classify": auto_classify,
                 "auto_extract": auto_extract,
+                "check_duplicates": check_duplicates,
             }
         )
         return True, "stored_successfully", 42
@@ -147,21 +150,32 @@ def test_memory_manager_gateway_applies_store_with_scope_metadata() -> None:
             "validate": False,
             "auto_classify": False,
             "auto_extract": False,
+            "check_duplicates": True,
         }
     ]
 
 
 def test_memory_manager_gateway_appends_owned_shopping_list_event() -> None:
     manager = FakeMemoryManager()
+    manager.metadata_memories = []
     gateway = MemoryManagerGateway(manager)
     action = MemoryAction(
         action="update",
-        content="shopping_list:add:onions",
+        content="shopping_list:add:ice cream and onions",
         rationale="User asked to add an item.",
     )
 
     assert gateway.apply(action, "list_relevant") == (True, "stored_successfully")
     assert manager.store_calls == [
+        {
+            "content": "shopping_list:add:ice cream",
+            "layer": "feedback",
+            "topic": "shopping",
+            "validate": False,
+            "auto_classify": False,
+            "auto_extract": False,
+            "check_duplicates": False,
+        },
         {
             "content": "shopping_list:add:onions",
             "layer": "feedback",
@@ -169,8 +183,44 @@ def test_memory_manager_gateway_appends_owned_shopping_list_event() -> None:
             "validate": False,
             "auto_classify": False,
             "auto_extract": False,
-        }
+            "check_duplicates": False,
+        },
     ]
+    assert manager.processed_actions == []
+
+
+def test_memory_manager_gateway_treats_existing_list_items_as_success() -> None:
+    manager = FakeMemoryManager()
+    manager.metadata_memories = [
+        {"content": "ice cream"},
+        {"content": "shopping_list:add:onions"},
+    ]
+    gateway = MemoryManagerGateway(manager)
+    action = MemoryAction(
+        action="update",
+        content="shopping_list:add:ice cream and onions",
+        rationale="User asked to add items.",
+    )
+
+    assert gateway.apply(action, "list_relevant") == (
+        True,
+        "shopping_list_unchanged",
+    )
+    assert manager.store_calls == []
+
+
+def test_memory_manager_gateway_normalizes_model_generated_list_update() -> None:
+    manager = FakeMemoryManager()
+    manager.metadata_memories = []
+    gateway = MemoryManagerGateway(manager)
+    action = MemoryAction(
+        action="update",
+        content="Add mouth to the list",
+        rationale="Model proposed a non-canonical list update.",
+    )
+
+    assert gateway.apply(action, "list_relevant") == (True, "stored_successfully")
+    assert manager.store_calls[0]["content"] == "shopping_list:add:mouth"
     assert manager.processed_actions == []
 
 
