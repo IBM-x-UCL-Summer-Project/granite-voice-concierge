@@ -31,7 +31,9 @@ selection alone does not load Whisper or Piper. With `--voice-io`, click the
 microphone once to start recording and again to transcribe and send it. The
 **Voice first** setting automatically plays every Piper response; **Push to
 talk** automatically plays only responses to microphone turns; **Text first**
-keeps playback manual.
+keeps playback manual. The browser unlocks one reusable response-audio element
+during the initiating click or key action so delayed local Piper responses can
+still play under browser autoplay rules.
 
 The web transport does not continuously stream microphone audio, so wake-word
 detection remains a live-runner capability rather than a browser capability.
@@ -74,9 +76,17 @@ Text turns send:
 ```js
 {
   transcript,
-  options: { synthesize: voiceOutputEnabled, play: false }
+  options: {
+    synthesize: voiceOutputEnabled,
+    play: false,
+    response_length: "short" | "normal" | "detailed"
+  }
 }
 ```
+
+Response length is applied to the server-owned accessibility profile and the
+reasoning word limit. Detailed responses never relax Driving mode's shorter
+safety limit.
 
 The server ignores any posted `state` field for backwards compatibility. This
 prevents browser storage or a manually crafted request from manufacturing a

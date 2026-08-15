@@ -1,5 +1,7 @@
 const STORAGE_KEY = "granite-pipeline-state-v1";
 const SETTINGS_STORAGE_KEY = "granite-personal-settings-v1";
+const SILENT_WAV_URL = "data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQIAAAAAAA==";
+const { shouldAutoPlayResponse: playbackPolicyAllows } = window.GranitePlaybackPolicy;
 
 const defaultSettings = {
   version: 1,
@@ -44,6 +46,7 @@ const state = {
   },
   recorder: null,
   playback: null,
+  responseAudioElement: null,
 };
 
 const elements = {
@@ -465,6 +468,7 @@ function turnOptions() {
   return {
     synthesize: Boolean(state.capabilities.voice_output),
     play: false,
+    response_length: state.settings.response_length,
   };
 }
 
@@ -491,12 +495,36 @@ function confirmationKind(response) {
 function stopPlayback() {
   window.speechSynthesis?.cancel();
   if (!state.playback) return;
-  state.playback.audio.pause();
-  state.playback.audio.currentTime = 0;
-  state.playback.button?.classList.remove("is-playing");
-  if (state.playback.button) state.playback.button.lastChild.textContent = " Play response";
-  URL.revokeObjectURL(state.playback.url);
+  const playback = state.playback;
   state.playback = null;
+  playback.audio.onended = null;
+  playback.audio.pause();
+  playback.audio.currentTime = 0;
+  playback.button?.classList.remove("is-playing");
+  if (playback.button) playback.button.lastChild.textContent = " Play response";
+  URL.revokeObjectURL(playback.url);
+}
+
+function unlockResponsePlayback() {
+  if (!state.capabilities.voice_output || state.responseAudioElement) return;
+
+  const audio = new Audio(SILENT_WAV_URL);
+  audio.muted = true;
+  state.responseAudioElement = audio;
+  const unlock = audio.play();
+  if (!unlock?.then) {
+    audio.muted = false;
+    return;
+  }
+  unlock.then(() => {
+    if (state.playback?.audio === audio) return;
+    audio.pause();
+    audio.currentTime = 0;
+    audio.muted = false;
+  }).catch(() => {
+    if (state.playback?.audio === audio) return;
+    if (state.responseAudioElement === audio) state.responseAudioElement = null;
+  });
 }
 
 async function playResponse(button) {
@@ -517,7 +545,10 @@ async function playResponse(button) {
   const binary = window.atob(audioPayload.wav_base64);
   const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
   const url = URL.createObjectURL(new Blob([bytes], { type: "audio/wav" }));
-  const audio = new Audio(url);
+  const audio = state.responseAudioElement || new Audio();
+  state.responseAudioElement = audio;
+  audio.muted = false;
+  audio.src = url;
   audio.volume = Number(state.settings.volume) / 100;
   audio.playbackRate = effectiveSpeechRate(state.settings);
   if (state.settings.speaker_id !== "default" && typeof audio.setSinkId === "function") {
@@ -530,7 +561,7 @@ async function playResponse(button) {
   state.playback = { audio, button, url };
   button.classList.add("is-playing");
   button.lastChild.textContent = " Stop response";
-  audio.addEventListener("ended", stopPlayback, { once: true });
+  audio.onended = stopPlayback;
   try {
     await audio.play();
   } catch {
@@ -540,11 +571,14 @@ async function playResponse(button) {
 }
 
 function shouldAutoPlayResponse(response, isAudioTurn) {
-  if (!state.capabilities.voice_output || !response?.audio?.wav_base64) return false;
-  if (confirmationKind(response) && !state.settings.speak_confirmations) return false;
-  if (state.settings.interaction_mode === "text_first") return false;
-  if (state.settings.interaction_mode === "push_to_talk") return isAudioTurn;
-  return true;
+  return playbackPolicyAllows({
+    voiceOutput: state.capabilities.voice_output,
+    audioAvailable: Boolean(response?.audio?.wav_base64),
+    confirmationRequired: Boolean(confirmationKind(response)),
+    speakConfirmations: state.settings.speak_confirmations,
+    interactionMode: state.settings.interaction_mode,
+    isAudioTurn,
+  });
 }
 
 async function startVoiceRecording() {
@@ -669,6 +703,7 @@ async function runTurn(input) {
   const transcript = isAudio ? "" : String(input || "").trim();
   if (!isAudio && !transcript) return;
 
+  unlockResponsePlayback();
   state.running = true;
   if (!isAudio) {
     elements.input.value = "";
@@ -846,6 +881,7 @@ elements.modeSelect.addEventListener("change", () => {
 });
 
 elements.microphoneButton.addEventListener("click", async () => {
+  unlockResponsePlayback();
   if (state.recorder) {
     await stopVoiceRecording();
   } else {

@@ -103,7 +103,8 @@ def test_static_ui_disables_browser_cache() -> None:
             cache_control = response.headers.get("Cache-Control")
 
     assert cache_control == "no-store"
-    assert "./app.js?v=20260815" in html
+    assert "./playback-policy.js?v=20260815" in html
+    assert "./app.js?v=20260815-2" in html
     assert "./styles.css?v=20260812" in html
 
 
@@ -126,6 +127,27 @@ def test_text_turn_runs_through_serialized_pipeline_contract() -> None:
             "assistant_response": "Fake pipeline response for: hello",
         }
     ]
+
+
+def test_web_turn_applies_response_length_to_server_owned_session() -> None:
+    opener = build_opener(HTTPCookieProcessor(CookieJar()))
+    with running_server() as base_url:
+        configured = read_json(
+            f"{base_url}/api/turn",
+            payload={
+                "transcript": "hello",
+                "options": {"response_length": "detailed"},
+            },
+            opener=opener,
+        )
+        retained = read_json(
+            f"{base_url}/api/turn",
+            payload={"transcript": "hello again"},
+            opener=opener,
+        )
+
+    assert configured["state"]["context"]["accessibility"]["verbosity"] == ("detailed")
+    assert retained["state"]["context"]["accessibility"]["verbosity"] == "detailed"
 
 
 def test_turn_log_reports_pipeline_status_without_transcript(

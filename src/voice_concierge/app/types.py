@@ -7,7 +7,12 @@ from typing import Literal, Protocol
 
 from voice_concierge.app.reasoning import ReasoningTurnResult
 from voice_concierge.audio.types import CapturedAudio
-from voice_concierge.context.types import ContextDecision, ContextState, MemoryScope
+from voice_concierge.context.types import (
+    ContextDecision,
+    ContextState,
+    MemoryScope,
+    Verbosity,
+)
 from voice_concierge.memory.types import MemoryOperationOutcome
 from voice_concierge.reasoning.types import MemoryAction, RuntimeReference
 
@@ -65,6 +70,13 @@ class AppTurnOptions:
 
     synthesize: bool = False
     play: bool = False
+    response_length: Verbosity | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.synthesize, bool) or not isinstance(self.play, bool):
+            raise TypeError("Turn audio options must be boolean.")
+        if self.response_length not in {None, "short", "normal", "detailed"}:
+            raise ValueError("Turn response length is invalid.")
 
 
 @dataclass(frozen=True)

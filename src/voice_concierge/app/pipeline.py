@@ -44,6 +44,7 @@ from voice_concierge.context.types import (
     ContextMode,
     ContextState,
     MemoryScope,
+    Verbosity,
 )
 from voice_concierge.memory.types import (
     MemoryOperationOutcome,
@@ -155,6 +156,7 @@ class VoiceConciergePipeline:
             request.state,
             synthesize=request.options.synthesize,
             play=request.options.play,
+            response_length=request.options.response_length,
         )
 
     def close(self) -> None:
@@ -171,15 +173,23 @@ class VoiceConciergePipeline:
         *,
         synthesize: bool = False,
         play: bool = False,
+        response_length: Verbosity | None = None,
     ) -> AppTurnResult:
         """Process one transcript turn and return response plus next state."""
 
-        current_state = self._bounded_state(state or AppPipelineState())
+        current_state = self._with_response_length(
+            self._bounded_state(state or AppPipelineState()),
+            response_length,
+        )
         app_transcript = AppTranscript(text=transcript.strip())
         return self._process_app_transcript(
             app_transcript,
             current_state,
-            options=AppTurnOptions(synthesize=synthesize, play=play),
+            options=AppTurnOptions(
+                synthesize=synthesize,
+                play=play,
+                response_length=response_length,
+            ),
         )
 
     def process_audio(
@@ -189,11 +199,19 @@ class VoiceConciergePipeline:
         *,
         synthesize: bool = False,
         play: bool = False,
+        response_length: Verbosity | None = None,
     ) -> AppTurnResult:
         """Transcribe captured audio, then process it through the same turn path."""
 
-        current_state = self._bounded_state(state or AppPipelineState())
-        options = AppTurnOptions(synthesize=synthesize, play=play)
+        current_state = self._with_response_length(
+            self._bounded_state(state or AppPipelineState()),
+            response_length,
+        )
+        options = AppTurnOptions(
+            synthesize=synthesize,
+            play=play,
+            response_length=response_length,
+        )
         if self._speech_to_text is None:
             return self._finalize_result(
                 state=current_state,
@@ -537,6 +555,24 @@ class VoiceConciergePipeline:
         return replace(
             state,
             conversation_history=self._bounded_history(state.conversation_history),
+        )
+
+    def _with_response_length(
+        self,
+        state: AppPipelineState,
+        response_length: Verbosity | None,
+    ) -> AppPipelineState:
+        """Apply an explicit caller preference without trusting posted state."""
+
+        if response_length is None:
+            return state
+        accessibility = replace(
+            state.context.accessibility,
+            verbosity=response_length,
+        )
+        return replace(
+            state,
+            context=replace(state.context, accessibility=accessibility),
         )
 
     def _record_conversation(

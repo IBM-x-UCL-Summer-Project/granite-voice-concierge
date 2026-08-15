@@ -166,6 +166,7 @@ def test_app_turn_request_from_dict_parses_state_and_options() -> None:
         "options": {
             "synthesize": True,
             "play": False,
+            "response_length": "detailed",
         },
     }
 
@@ -174,7 +175,11 @@ def test_app_turn_request_from_dict_parses_state_and_options() -> None:
     assert request == AppTurnRequest(
         transcript="repeat that",
         state=state,
-        options=AppTurnOptions(synthesize=True, play=False),
+        options=AppTurnOptions(
+            synthesize=True,
+            play=False,
+            response_length="detailed",
+        ),
     )
     assert app_turn_request_to_dict(request) == payload
 
@@ -356,6 +361,18 @@ def test_invalid_option_type_raises_payload_validation_error() -> None:
     }
 
     with pytest.raises(PayloadValidationError, match="synthesize must be a boolean"):
+        app_turn_request_from_dict(payload)
+
+
+def test_invalid_response_length_raises_payload_validation_error() -> None:
+    payload = {
+        "transcript": "hello",
+        "options": {
+            "response_length": "unlimited",
+        },
+    }
+
+    with pytest.raises(PayloadValidationError, match="response_length must be a valid"):
         app_turn_request_from_dict(payload)
 
 

@@ -26,7 +26,7 @@ ResponseStyle = Literal[
     "very_short_safety_aware",
 ]
 SpeechPace = Literal["slow", "normal"]
-Verbosity = Literal["short", "normal"]
+Verbosity = Literal["short", "normal", "detailed"]
 
 
 @dataclass(frozen=True)

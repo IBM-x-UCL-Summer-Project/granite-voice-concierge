@@ -57,6 +57,7 @@ def handle_audio_turn(
         state,
         synthesize=options.synthesize,
         play=options.play,
+        response_length=options.response_length,
     )
     return app_turn_result_to_dict(result)
 

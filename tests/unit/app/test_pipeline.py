@@ -15,6 +15,8 @@ from voice_concierge.app.reasoning import (
 from voice_concierge.app.types import (
     AppPipelineState,
     AppTranscript,
+    AppTurnOptions,
+    AppTurnRequest,
     ConversationTurn,
 )
 from voice_concierge.audio.types import CapturedAudio
@@ -193,6 +195,51 @@ def test_process_transcript_calls_memory_and_reasoning_with_context_policy() -> 
             assistant_response="Tea sounds good.",
         ),
     )
+
+
+@pytest.mark.parametrize(
+    ("response_length", "expected_max_words"),
+    (
+        ("short", 45),
+        ("normal", 60),
+        ("detailed", 90),
+    ),
+)
+def test_request_response_length_controls_reasoning_policy(
+    response_length: str,
+    expected_max_words: int,
+) -> None:
+    reasoning = FakeReasoning()
+    pipeline = VoiceConciergePipeline(reasoning, memory=FakeMemory())
+
+    result = pipeline.process_request(
+        AppTurnRequest(
+            transcript="Explain this.",
+            options=AppTurnOptions(response_length=response_length),
+        )
+    )
+
+    context = reasoning.calls[0]["context"]
+    assert isinstance(context, ReasoningTurnContext)
+    assert context.max_words == expected_max_words
+    assert result.state.context.accessibility.verbosity == response_length
+
+
+def test_detailed_preference_does_not_relax_driving_safety_limit() -> None:
+    reasoning = FakeReasoning()
+    pipeline = VoiceConciergePipeline(reasoning, memory=FakeMemory())
+
+    pipeline.process_request(
+        AppTurnRequest(
+            transcript="Explain this.",
+            state=AppPipelineState(context=ContextState(mode="driving")),
+            options=AppTurnOptions(response_length="detailed"),
+        )
+    )
+
+    context = reasoning.calls[0]["context"]
+    assert isinstance(context, ReasoningTurnContext)
+    assert context.max_words == 25
 
 
 @pytest.mark.parametrize(

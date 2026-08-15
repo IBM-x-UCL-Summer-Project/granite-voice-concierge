@@ -37,7 +37,7 @@ _MEMORY_SCOPES = {
     "list_relevant",
 }
 _MEMORY_ACTIONS = {"store", "delete", "update"}
-_VERBOSITY = {"short", "normal"}
+_VERBOSITY = {"short", "normal", "detailed"}
 _SPEECH_PACE = {"slow", "normal"}
 
 
@@ -79,16 +79,25 @@ def app_turn_options_from_dict(payload: object) -> AppTurnOptions:
     return AppTurnOptions(
         synthesize=_optional_bool(options_payload, "synthesize", default=False),
         play=_optional_bool(options_payload, "play", default=False),
+        response_length=_optional_literal(
+            options_payload,
+            "response_length",
+            _VERBOSITY,
+            "response length",
+        ),
     )
 
 
 def app_turn_options_to_dict(options: AppTurnOptions) -> JsonDict:
     """Serialize per-turn pipeline flags."""
 
-    return {
+    payload: JsonDict = {
         "synthesize": options.synthesize,
         "play": options.play,
     }
+    if options.response_length is not None:
+        payload["response_length"] = options.response_length
+    return payload
 
 
 def app_pipeline_state_from_dict(payload: object) -> AppPipelineState | None:

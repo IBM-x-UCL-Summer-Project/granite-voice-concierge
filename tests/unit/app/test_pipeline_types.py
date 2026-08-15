@@ -41,6 +41,12 @@ def test_app_turn_request_defaults_to_no_state_and_no_audio_side_effects() -> No
     assert request.options == AppTurnOptions()
     assert request.options.synthesize is False
     assert request.options.play is False
+    assert request.options.response_length is None
+
+
+def test_app_turn_options_reject_invalid_response_length() -> None:
+    with pytest.raises(ValueError, match="response length"):
+        AppTurnOptions(response_length="unlimited")
 
 
 def test_memory_operation_result_defaults_to_not_attempted() -> None:

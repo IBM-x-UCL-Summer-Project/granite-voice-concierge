@@ -57,6 +57,7 @@ class FakeAudioPipeline(FakePipeline):
         *,
         synthesize: bool = False,
         play: bool = False,
+        response_length: str | None = None,
     ) -> AppTurnResult:
         self.audio_calls.append(
             {
@@ -64,6 +65,7 @@ class FakeAudioPipeline(FakePipeline):
                 "state": state,
                 "synthesize": synthesize,
                 "play": play,
+                "response_length": response_length,
             }
         )
         next_state = AppPipelineState(last_spoken_response="Voice response.")
@@ -118,7 +120,11 @@ def test_handle_audio_turn_decodes_wav_and_uses_pipeline_audio_path() -> None:
         {
             "wav_base64": base64.b64encode(audio.to_wav_bytes()).decode("ascii"),
             "state": app_pipeline_state_to_dict(previous_state),
-            "options": {"synthesize": True, "play": False},
+            "options": {
+                "synthesize": True,
+                "play": False,
+                "response_length": "detailed",
+            },
         },
         pipeline,
     )
@@ -127,6 +133,7 @@ def test_handle_audio_turn_decodes_wav_and_uses_pipeline_audio_path() -> None:
     assert call["state"] == previous_state
     assert call["synthesize"] is True
     assert call["play"] is False
+    assert call["response_length"] == "detailed"
     assert call["audio"].sample_rate == 16000
     assert call["audio"].samples.tolist() == [0, 200, -200, 0]
     assert response["transcript"]["text"] == "voice request"
