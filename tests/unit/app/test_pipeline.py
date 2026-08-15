@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from tests.support import memory_reference, runtime_reference
 from voice_concierge.app.pipeline import VoiceConciergePipeline
 from voice_concierge.app.reasoning import (
     ReasoningFailure,
@@ -14,11 +15,21 @@ from voice_concierge.app.reasoning import (
 from voice_concierge.app.types import (
     AppPipelineState,
     AppTranscript,
+    AppTurnOptions,
+    AppTurnRequest,
     ConversationTurn,
 )
 from voice_concierge.audio.types import CapturedAudio
 from voice_concierge.context.types import ContextState
-from voice_concierge.reasoning.types import MemoryAction, ReasoningResponse
+from voice_concierge.memory import MemoryOperationOutcome, MemoryOperationStatus
+from voice_concierge.reasoning.types import (
+    MemoryAction,
+    MemoryReference,
+    MemoryTarget,
+    ReasoningResponse,
+    RuntimeReference,
+    StructuredListOperation,
+)
 
 
 class FakeReasoning:
@@ -49,10 +60,12 @@ class FakeReasoning:
 class FakeMemory:
     def __init__(
         self,
-        memories: tuple[str, ...] = (),
+        memories: tuple[MemoryReference, ...] = (),
         *,
         retrieve_error: Exception | None = None,
-        apply_result: tuple[bool, str] = (True, "stored_successfully"),
+        apply_result: MemoryOperationOutcome = MemoryOperationOutcome(
+            MemoryOperationStatus.STORED_SUCCESSFULLY
+        ),
     ) -> None:
         self.memories = memories
         self.retrieve_error = retrieve_error
@@ -67,13 +80,13 @@ class FakeMemory:
         scope: str,
         *,
         limit: int = 3,
-    ) -> tuple[str, ...]:
+    ) -> tuple[MemoryReference, ...]:
         self.retrieve_calls.append({"query": query, "scope": scope, "limit": limit})
         if self.retrieve_error is not None:
             raise self.retrieve_error
         return self.memories
 
-    def apply(self, action: MemoryAction, scope: str) -> tuple[bool, str]:
+    def apply(self, action: MemoryAction, scope: str) -> MemoryOperationOutcome:
         self.apply_calls.append({"action": action, "scope": scope})
         return self.apply_result
 
@@ -128,11 +141,29 @@ class FakeAudioPlayer:
             raise self.error
 
 
+class FakeRuntimeContext:
+    def __init__(
+        self,
+        *,
+        error: Exception | None = None,
+    ) -> None:
+        self.reference = runtime_reference("Local device time: 15:05.")
+        self.error = error
+        self.calls = 0
+
+    def snapshot(self) -> tuple[RuntimeReference, ...]:
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        return (self.reference,)
+
+
 def test_process_transcript_calls_memory_and_reasoning_with_context_policy() -> None:
     reasoning = FakeReasoning(
         ReasoningResponse(spoken_response="Tea sounds good.", confidence="high")
     )
-    memory = FakeMemory(memories=("User prefers tea.",))
+    remembered_preference = memory_reference("User prefers tea.")
+    memory = FakeMemory(memories=(remembered_preference,))
     pipeline = VoiceConciergePipeline(reasoning, memory=memory)
 
     result = pipeline.process_transcript("  What should I drink?  ")
@@ -154,7 +185,7 @@ def test_process_transcript_calls_memory_and_reasoning_with_context_policy() -> 
     assert isinstance(reasoning_context, ReasoningTurnContext)
     assert reasoning.calls[0]["transcript"] == "What should I drink?"
     assert reasoning_context.mode == "home"
-    assert reasoning_context.memories == ("User prefers tea.",)
+    assert reasoning_context.memories == (remembered_preference,)
     assert reasoning_context.conversation_summary is None
     assert reasoning_context.max_words == 60
     assert reasoning_context.allow_memory_writes is True
@@ -164,6 +195,85 @@ def test_process_transcript_calls_memory_and_reasoning_with_context_policy() -> 
             assistant_response="Tea sounds good.",
         ),
     )
+
+
+@pytest.mark.parametrize(
+    ("response_length", "expected_max_words"),
+    (
+        ("short", 45),
+        ("normal", 60),
+        ("detailed", 90),
+    ),
+)
+def test_request_response_length_controls_reasoning_policy(
+    response_length: str,
+    expected_max_words: int,
+) -> None:
+    reasoning = FakeReasoning()
+    pipeline = VoiceConciergePipeline(reasoning, memory=FakeMemory())
+
+    result = pipeline.process_request(
+        AppTurnRequest(
+            transcript="Explain this.",
+            options=AppTurnOptions(response_length=response_length),
+        )
+    )
+
+    context = reasoning.calls[0]["context"]
+    assert isinstance(context, ReasoningTurnContext)
+    assert context.max_words == expected_max_words
+    assert result.state.context.accessibility.verbosity == response_length
+
+
+def test_detailed_preference_does_not_relax_driving_safety_limit() -> None:
+    reasoning = FakeReasoning()
+    pipeline = VoiceConciergePipeline(reasoning, memory=FakeMemory())
+
+    pipeline.process_request(
+        AppTurnRequest(
+            transcript="Explain this.",
+            state=AppPipelineState(context=ContextState(mode="driving")),
+            options=AppTurnOptions(response_length="detailed"),
+        )
+    )
+
+    context = reasoning.calls[0]["context"]
+    assert isinstance(context, ReasoningTurnContext)
+    assert context.max_words == 25
+
+
+@pytest.mark.parametrize(
+    ("transcript", "expected_scope"),
+    (
+        ("What is on my shopping list?", "list_relevant"),
+        ("Read my to-do list", "task_relevant_only"),
+        ("Please update the task list", "task_relevant_only"),
+    ),
+)
+def test_explicit_structured_list_routes_retrieval_outside_list_mode(
+    transcript: str,
+    expected_scope: str,
+) -> None:
+    memory = FakeMemory()
+    pipeline = VoiceConciergePipeline(FakeReasoning(), memory=memory)
+
+    pipeline.process_transcript(transcript)
+
+    assert memory.retrieve_calls == [
+        {"query": transcript, "scope": expected_scope, "limit": 3}
+    ]
+
+
+def test_driving_mode_still_blocks_explicit_list_retrieval() -> None:
+    memory = FakeMemory()
+    pipeline = VoiceConciergePipeline(FakeReasoning(), memory=memory)
+
+    pipeline.process_transcript(
+        "What is on my shopping list?",
+        AppPipelineState(context=ContextState(mode="driving")),
+    )
+
+    assert memory.retrieve_calls == []
 
 
 def test_prior_conversation_turns_are_passed_to_reasoning() -> None:
@@ -362,6 +472,35 @@ def test_reasoning_memory_proposal_becomes_pending_state() -> None:
     )
 
 
+def test_structured_list_proposal_uses_typed_scope_outside_list_mode() -> None:
+    action = MemoryAction(
+        action="store",
+        content=None,
+        rationale="User asked to add the first shopping item.",
+        target=MemoryTarget(memory_key="list:shopping"),
+        list_operation=StructuredListOperation(
+            list_name="shopping",
+            operation="add_items",
+            items=("milk",),
+        ),
+    )
+    reasoning = FakeReasoning(
+        ReasoningResponse(
+            spoken_response="Please confirm before I add milk.",
+            needs_confirmation=True,
+            proposed_memory_action=action,
+            confidence="high",
+        )
+    )
+    pipeline = VoiceConciergePipeline(reasoning, memory=FakeMemory())
+
+    result = pipeline.process_transcript("add milk to my shopping list")
+
+    assert result.state.context.mode == "home"
+    assert result.state.pending_memory_action == action
+    assert result.state.pending_memory_scope == "list_relevant"
+
+
 def test_pending_memory_confirmation_applies_and_clears_action() -> None:
     action = MemoryAction(
         action="store",
@@ -372,7 +511,9 @@ def test_pending_memory_confirmation_applies_and_clears_action() -> None:
         pending_memory_action=action,
         pending_memory_scope="personal_relevant",
     )
-    memory = FakeMemory(apply_result=(True, "stored_successfully"))
+    memory = FakeMemory(
+        apply_result=MemoryOperationOutcome(MemoryOperationStatus.STORED_SUCCESSFULLY)
+    )
     pipeline = VoiceConciergePipeline(FakeReasoning(), memory=memory)
 
     result = pipeline.process_transcript("yes please", state)
@@ -384,6 +525,79 @@ def test_pending_memory_confirmation_applies_and_clears_action() -> None:
     assert result.state.pending_memory_action is None
     assert result.state.pending_memory_scope is None
     assert memory.apply_calls == [{"action": action, "scope": "personal_relevant"}]
+
+
+def test_duplicate_confirmation_is_an_idempotent_completed_request() -> None:
+    action = MemoryAction(
+        action="store",
+        content="User prefers tea.",
+        rationale="User asked the assistant to remember it.",
+    )
+    state = AppPipelineState(
+        pending_memory_action=action,
+        pending_memory_scope="personal_relevant",
+    )
+    memory = FakeMemory(
+        apply_result=MemoryOperationOutcome(MemoryOperationStatus.DUPLICATE_FOUND)
+    )
+    pipeline = VoiceConciergePipeline(FakeReasoning(), memory=memory)
+
+    result = pipeline.process_transcript("yes", state)
+
+    assert result.spoken_response == "I already had that saved."
+    assert result.memory_operation.succeeded is False
+    assert result.errors == ()
+    assert result.state.pending_memory_action is None
+    assert result.state.pending_memory_scope is None
+
+
+def test_failed_confirmation_clears_pending_action_for_the_next_turn() -> None:
+    action = MemoryAction(
+        action="store",
+        content="User prefers tea.",
+        rationale="User asked the assistant to remember it.",
+    )
+    state = AppPipelineState(
+        pending_memory_action=action,
+        pending_memory_scope="personal_relevant",
+    )
+    memory = FakeMemory(
+        apply_result=MemoryOperationOutcome(
+            MemoryOperationStatus.MEMORY_GATEWAY_ERROR,
+            detail="store unavailable",
+        )
+    )
+    reasoning = FakeReasoning()
+    pipeline = VoiceConciergePipeline(reasoning, memory=memory)
+
+    failed = pipeline.process_transcript("yes", state)
+    next_turn = pipeline.process_transcript("what drink do I prefer?", failed.state)
+
+    assert failed.errors == ("memory_action_failed",)
+    assert failed.state.pending_memory_action is None
+    assert failed.state.pending_memory_scope is None
+    assert next_turn.spoken_response == "Reasoned response."
+    assert reasoning.calls[-1]["transcript"] == "what drink do I prefer?"
+
+
+def test_memory_confirmation_does_not_also_confirm_pending_mode() -> None:
+    action = MemoryAction(
+        action="store",
+        content="User prefers tea.",
+        rationale="User asked the assistant to remember it.",
+    )
+    state = AppPipelineState(
+        context=ContextState(mode="home", pending_mode="driving"),
+        pending_memory_action=action,
+        pending_memory_scope="personal_relevant",
+    )
+    pipeline = VoiceConciergePipeline(FakeReasoning(), memory=FakeMemory())
+
+    result = pipeline.process_transcript("yes", state)
+
+    assert result.memory_operation.succeeded is True
+    assert result.state.context.mode == "home"
+    assert result.state.context.pending_mode == "driving"
 
 
 def test_pending_memory_cancel_clears_action_without_apply() -> None:
@@ -407,6 +621,34 @@ def test_pending_memory_cancel_clears_action_without_apply() -> None:
     assert memory.apply_calls == []
 
 
+@pytest.mark.parametrize("transcript", ("yesterday", "I know", "not yet", "yes, no"))
+def test_ambiguous_memory_confirmation_preserves_pending_action(
+    transcript: str,
+) -> None:
+    action = MemoryAction(
+        action="delete",
+        content="shopping list",
+        rationale="User asked to delete it.",
+        target=MemoryTarget(memory_key="list:shopping"),
+    )
+    state = AppPipelineState(
+        pending_memory_action=action,
+        pending_memory_scope="list_relevant",
+    )
+    memory = FakeMemory()
+    reasoning = FakeReasoning()
+    pipeline = VoiceConciergePipeline(reasoning, memory=memory)
+
+    result = pipeline.process_transcript(transcript, state)
+
+    assert result.spoken_response == "Sorry, was that a yes or a no?"
+    assert result.state.pending_memory_action == action
+    assert result.state.pending_memory_scope == "list_relevant"
+    assert result.memory_operation.attempted is False
+    assert memory.apply_calls == []
+    assert reasoning.calls == []
+
+
 def test_memory_retrieval_failure_still_allows_reasoning() -> None:
     reasoning = FakeReasoning(
         ReasoningResponse(spoken_response="Fallback response.", confidence="medium")
@@ -422,6 +664,41 @@ def test_memory_retrieval_failure_still_allows_reasoning() -> None:
     reasoning_context = reasoning.calls[0]["context"]
     assert isinstance(reasoning_context, ReasoningTurnContext)
     assert reasoning_context.memories == ()
+
+
+def test_runtime_context_snapshot_is_passed_to_reasoning() -> None:
+    reasoning = FakeReasoning()
+    runtime_context = FakeRuntimeContext()
+    pipeline = VoiceConciergePipeline(
+        reasoning,
+        memory=FakeMemory(),
+        runtime_context=runtime_context,
+    )
+
+    result = pipeline.process_transcript("what time is it")
+
+    reasoning_context = reasoning.calls[0]["context"]
+    assert isinstance(reasoning_context, ReasoningTurnContext)
+    assert reasoning_context.runtime_context == (runtime_context.reference,)
+    assert runtime_context.calls == 1
+    assert result.errors == ()
+
+
+def test_runtime_context_failure_is_recoverable() -> None:
+    reasoning = FakeReasoning()
+    runtime_context = FakeRuntimeContext(error=RuntimeError("clock unavailable"))
+    pipeline = VoiceConciergePipeline(
+        reasoning,
+        memory=FakeMemory(),
+        runtime_context=runtime_context,
+    )
+
+    result = pipeline.process_transcript("hello")
+
+    reasoning_context = reasoning.calls[0]["context"]
+    assert isinstance(reasoning_context, ReasoningTurnContext)
+    assert reasoning_context.runtime_context == ()
+    assert result.errors == ("runtime_context_failed",)
 
 
 def test_reasoning_exception_returns_stable_failure_result() -> None:

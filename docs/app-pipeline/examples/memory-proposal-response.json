@@ -39,6 +39,14 @@
   },
   "reasoning": {
     "confidence": "high",
+    "required_information_source": "user_input",
+    "information_evidence": [
+      {
+        "source": "user_input",
+        "quote": "remember that I prefer tea"
+      }
+    ],
+    "freshness_requirement": "not_required",
     "needs_confirmation": true,
     "proposed_memory_action": {
       "action": "store",
@@ -51,6 +59,10 @@
   "memory_operation": {
     "attempted": false,
     "succeeded": false,
+    "status": null,
+    "memory_id": null,
+    "detail": null,
+    "similarity_advisories": [],
     "reason": ""
   },
   "errors": [],

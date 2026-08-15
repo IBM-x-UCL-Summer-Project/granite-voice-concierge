@@ -27,8 +27,14 @@ from voice_concierge.reasoning import (
 class RecordingModelManager:
     """Test double that records factory model-management calls."""
 
-    def __init__(self, failure: str | None = None) -> None:
+    def __init__(
+        self,
+        failure: str | None = None,
+        *,
+        model_failures: dict[str, str] | None = None,
+    ) -> None:
         self.failure = failure
+        self.model_failures = model_failures or {}
         self.show_calls: list[str] = []
         self.pull_calls: list[str] = []
 
@@ -37,12 +43,13 @@ class RecordingModelManager:
 
     def show_model(self, model: str) -> LocalModelDetails:
         self.show_calls.append(model)
-        if self.failure == "missing":
+        failure = self.model_failures.get(model, self.failure)
+        if failure == "missing":
             try:
                 raise ResponseError("model not found", status_code=404)
             except ResponseError as exc:
                 raise OllamaModelManagementError("missing model") from exc
-        if self.failure == "backend":
+        if failure == "backend":
             raise OllamaModelManagementError("connection failed") from ConnectionError(
                 "refused"
             )
@@ -152,6 +159,82 @@ def test_factory_checks_selected_primary_model_only(tmp_path: Path) -> None:
     assert manager.pull_calls == []
 
 
+def test_factory_uses_configured_fallback_when_primary_is_missing(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "model-selection.json"
+    save_model_selection(
+        ReasoningModelSelection(
+            model="granite-primary:latest",
+            fallback_model="granite-fallback:latest",
+            fallback_policy="startup_missing_primary",
+        ),
+        path,
+    )
+    manager = RecordingModelManager(
+        model_failures={"granite-primary:latest": "missing"}
+    )
+
+    engine = build_reasoning_engine(path, model_manager=manager)
+
+    assert isinstance(engine, OllamaReasoningEngine)
+    assert engine.config.model == "granite-fallback:latest"
+    assert engine.config.model_role == "fallback"
+    assert manager.show_calls == [
+        "granite-primary:latest",
+        "granite-fallback:latest",
+    ]
+    assert manager.pull_calls == []
+
+
+def test_factory_does_not_check_fallback_when_policy_is_disabled(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "model-selection.json"
+    save_model_selection(
+        ReasoningModelSelection(
+            model="granite-primary:latest",
+            fallback_model="granite-fallback:latest",
+            fallback_policy="disabled",
+        ),
+        path,
+    )
+    manager = RecordingModelManager(failure="missing")
+
+    with pytest.raises(ReasoningModelUnavailableError, match="disabled"):
+        build_reasoning_engine(path, model_manager=manager)
+
+    assert manager.show_calls == ["granite-primary:latest"]
+
+
+def test_factory_preserves_backend_failure_while_checking_fallback(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "model-selection.json"
+    save_model_selection(
+        ReasoningModelSelection(
+            model="granite-primary:latest",
+            fallback_model="granite-fallback:latest",
+            fallback_policy="startup_missing_primary",
+        ),
+        path,
+    )
+    manager = RecordingModelManager(
+        model_failures={
+            "granite-primary:latest": "missing",
+            "granite-fallback:latest": "backend",
+        }
+    )
+
+    with pytest.raises(ReasoningBackendUnavailableError, match="fallback"):
+        build_reasoning_engine(path, model_manager=manager)
+
+    assert manager.show_calls == [
+        "granite-primary:latest",
+        "granite-fallback:latest",
+    ]
+
+
 def test_factory_maps_missing_selected_model(tmp_path: Path) -> None:
     manager = RecordingModelManager(failure="missing")
 
@@ -160,6 +243,8 @@ def test_factory_maps_missing_selected_model(tmp_path: Path) -> None:
             tmp_path / "missing-model-selection.json",
             model_manager=manager,
         )
+
+    assert manager.show_calls == [DEFAULT_REASONING_MODEL, DEFAULT_FALLBACK_MODEL]
 
 
 def test_factory_maps_unavailable_backend(tmp_path: Path) -> None:
@@ -170,3 +255,5 @@ def test_factory_maps_unavailable_backend(tmp_path: Path) -> None:
             tmp_path / "missing-model-selection.json",
             model_manager=manager,
         )
+
+    assert manager.show_calls == [DEFAULT_REASONING_MODEL]

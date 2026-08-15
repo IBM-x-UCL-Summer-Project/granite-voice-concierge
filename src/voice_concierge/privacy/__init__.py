@@ -5,6 +5,7 @@ from voice_concierge.privacy.disclosure import (
     NOT_RETAINED,
     build_report,
     describe_location,
+    describe_storage_file,
     format_report,
 )
 from voice_concierge.privacy.errors import PrivacyError
@@ -35,5 +36,6 @@ __all__ = [
     "build_report",
     "default_database_paths",
     "describe_location",
+    "describe_storage_file",
     "format_report",
 ]

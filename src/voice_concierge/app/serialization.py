@@ -20,7 +20,11 @@ from voice_concierge.context.types import (
     AccessibilityProfile,
     ContextState,
 )
-from voice_concierge.reasoning.types import MemoryAction
+from voice_concierge.reasoning.types import (
+    MemoryAction,
+    MemoryTarget,
+    StructuredListOperation,
+)
 
 JsonDict = dict[str, Any]
 
@@ -33,7 +37,7 @@ _MEMORY_SCOPES = {
     "list_relevant",
 }
 _MEMORY_ACTIONS = {"store", "delete", "update"}
-_VERBOSITY = {"short", "normal"}
+_VERBOSITY = {"short", "normal", "detailed"}
 _SPEECH_PACE = {"slow", "normal"}
 
 
@@ -75,16 +79,25 @@ def app_turn_options_from_dict(payload: object) -> AppTurnOptions:
     return AppTurnOptions(
         synthesize=_optional_bool(options_payload, "synthesize", default=False),
         play=_optional_bool(options_payload, "play", default=False),
+        response_length=_optional_literal(
+            options_payload,
+            "response_length",
+            _VERBOSITY,
+            "response length",
+        ),
     )
 
 
 def app_turn_options_to_dict(options: AppTurnOptions) -> JsonDict:
     """Serialize per-turn pipeline flags."""
 
-    return {
+    payload: JsonDict = {
         "synthesize": options.synthesize,
         "play": options.play,
     }
+    if options.response_length is not None:
+        payload["response_length"] = options.response_length
+    return payload
 
 
 def app_pipeline_state_from_dict(payload: object) -> AppPipelineState | None:
@@ -255,6 +268,31 @@ def reasoning_result_to_dict(result: AppTurnResult) -> JsonDict | None:
     response = result.reasoning_result.response
     return {
         "confidence": response.confidence,
+        "required_information_source": response.required_information_source,
+        "information_evidence": [
+            {
+                "source": evidence.source,
+                "quote": evidence.quote,
+                **(
+                    {
+                        "memory_id": evidence.memory_id,
+                        "memory_revision": evidence.memory_revision,
+                    }
+                    if evidence.source == "memory"
+                    else {}
+                ),
+                **(
+                    {
+                        "runtime_id": evidence.runtime_id,
+                        "observed_at": evidence.observed_at,
+                    }
+                    if evidence.source == "runtime_context"
+                    else {}
+                ),
+            }
+            for evidence in response.information_evidence
+        ],
+        "freshness_requirement": response.freshness_requirement,
         "needs_confirmation": response.needs_confirmation,
         "proposed_memory_action": memory_action_to_dict(
             response.proposed_memory_action
@@ -266,9 +304,24 @@ def reasoning_result_to_dict(result: AppTurnResult) -> JsonDict | None:
 def memory_operation_to_dict(operation: MemoryOperationResult) -> JsonDict:
     """Serialize the result of a pending memory operation."""
 
+    outcome = operation.outcome
     return {
         "attempted": operation.attempted,
         "succeeded": operation.succeeded,
+        "status": outcome.status.value if outcome is not None else None,
+        "memory_id": outcome.memory_id if outcome is not None else None,
+        "detail": outcome.detail if outcome is not None else None,
+        "similarity_advisories": (
+            [
+                {
+                    "memory_id": advisory.memory_id,
+                    "distance": advisory.distance,
+                }
+                for advisory in outcome.similarity_advisories
+            ]
+            if outcome is not None
+            else []
+        ),
         "reason": operation.reason,
     }
 
@@ -280,21 +333,28 @@ def memory_action_from_dict(payload: object) -> MemoryAction | None:
         return None
 
     action_payload = _mapping(payload, "pending_memory_action")
-    return MemoryAction(
-        action=_required_literal(
-            action_payload,
-            "action",
-            _MEMORY_ACTIONS,
-            "memory action",
-        ),
-        content=_required_string(action_payload, "content"),
-        rationale=_required_string(action_payload, "rationale"),
-        requires_confirmation=_optional_bool(
-            action_payload,
-            "requires_confirmation",
-            default=True,
-        ),
-    )
+    try:
+        return MemoryAction(
+            action=_required_literal(
+                action_payload,
+                "action",
+                _MEMORY_ACTIONS,
+                "memory action",
+            ),
+            content=_optional_string(action_payload, "content"),
+            rationale=_required_string(action_payload, "rationale"),
+            target=_memory_target_from_dict(action_payload.get("target")),
+            list_operation=_structured_list_operation_from_dict(
+                action_payload.get("list_operation")
+            ),
+            requires_confirmation=_optional_bool(
+                action_payload,
+                "requires_confirmation",
+                default=True,
+            ),
+        )
+    except ValueError as exc:
+        raise PayloadValidationError(str(exc)) from exc
 
 
 def memory_action_to_dict(action: MemoryAction | None) -> JsonDict | None:
@@ -303,11 +363,85 @@ def memory_action_to_dict(action: MemoryAction | None) -> JsonDict | None:
     if action is None:
         return None
 
-    return {
+    payload = {
         "action": action.action,
         "content": action.content,
         "rationale": action.rationale,
         "requires_confirmation": action.requires_confirmation,
+    }
+    if action.target is not None:
+        payload["target"] = _memory_target_to_dict(action.target)
+    if action.list_operation is not None:
+        payload["list_operation"] = _structured_list_operation_to_dict(
+            action.list_operation
+        )
+    return payload
+
+
+def _memory_target_from_dict(payload: object) -> MemoryTarget | None:
+    if payload is None:
+        return None
+    target_payload = _mapping(payload, "memory target")
+    try:
+        return MemoryTarget(
+            memory_id=_optional_int(target_payload, "memory_id"),
+            memory_key=_optional_string(target_payload, "memory_key"),
+            expected_revision=_optional_int(
+                target_payload,
+                "expected_revision",
+            ),
+        )
+    except ValueError as exc:
+        raise PayloadValidationError(str(exc)) from exc
+
+
+def _memory_target_to_dict(target: MemoryTarget) -> JsonDict:
+    payload: JsonDict = {}
+    if target.memory_id is not None:
+        payload["memory_id"] = target.memory_id
+    if target.memory_key is not None:
+        payload["memory_key"] = target.memory_key
+    if target.expected_revision is not None:
+        payload["expected_revision"] = target.expected_revision
+    return payload
+
+
+def _structured_list_operation_from_dict(
+    payload: object,
+) -> StructuredListOperation | None:
+    if payload is None:
+        return None
+    operation_payload = _mapping(payload, "structured-list operation")
+    items = _required(operation_payload, "items")
+    if not isinstance(items, list) or not all(isinstance(item, str) for item in items):
+        raise PayloadValidationError("items must be an array of strings.")
+    try:
+        return StructuredListOperation(
+            list_name=_required_literal(
+                operation_payload,
+                "list_name",
+                {"shopping", "task"},
+                "structured list",
+            ),
+            operation=_required_literal(
+                operation_payload,
+                "operation",
+                {"add_items"},
+                "structured-list operation",
+            ),
+            items=tuple(items),
+        )
+    except ValueError as exc:
+        raise PayloadValidationError(str(exc)) from exc
+
+
+def _structured_list_operation_to_dict(
+    operation: StructuredListOperation,
+) -> JsonDict:
+    return {
+        "list_name": operation.list_name,
+        "operation": operation.operation,
+        "items": list(operation.items),
     }
 
 
@@ -349,6 +483,15 @@ def _optional_string(payload: Mapping[str, Any], field: str) -> str | None:
         return None
     if not isinstance(value, str):
         raise PayloadValidationError(f"{field} must be a string or null.")
+    return value
+
+
+def _optional_int(payload: Mapping[str, Any], field: str) -> int | None:
+    value = payload.get(field)
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise PayloadValidationError(f"{field} must be an integer or null.")
     return value
 
 

@@ -3,10 +3,32 @@
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Any, Protocol
+from threading import RLock
+from typing import TYPE_CHECKING, Protocol
 
 from voice_concierge.context.types import MemoryScope
-from voice_concierge.reasoning.types import MemoryAction
+from voice_concierge.memory.types import (
+    ApplyStructuredListCommand,
+    DeleteMemoryCommand,
+    MemoryCommand,
+    MemoryCommandTarget,
+    MemoryOperationOutcome,
+    MemoryOperationStatus,
+    MemoryRecord,
+    MemorySearchResult,
+    StoreMemoryCommand,
+    StructuredListMutation,
+    UpdateMemoryCommand,
+)
+from voice_concierge.memory_contracts import (
+    SHOPPING_LIST_MEMORY_KEY,
+    TASK_LIST_MEMORY_KEY,
+)
+from voice_concierge.reasoning.types import (
+    MemoryAction,
+    MemoryReference,
+    MemoryTarget,
+)
 
 if TYPE_CHECKING:
     from voice_concierge.memory.factory import LocalMemoryConfig
@@ -21,14 +43,34 @@ class MemoryGateway(Protocol):
         scope: MemoryScope,
         *,
         limit: int = 3,
-    ) -> tuple[str, ...]:
-        """Return relevant snippets, or the complete owned list for list scope."""
+    ) -> tuple[MemoryReference, ...]:
+        """Return identified memory evidence relevant to one user query."""
 
-    def apply(self, action: MemoryAction, scope: MemoryScope) -> tuple[bool, str]:
+    def apply(
+        self,
+        action: MemoryAction,
+        scope: MemoryScope,
+    ) -> MemoryOperationOutcome:
         """Apply a previously confirmed memory action."""
 
     def close(self) -> None:
         """Release persistent memory resources."""
+
+
+def retrieval_scope_for_turn(
+    transcript: str,
+    fallback: MemoryScope,
+) -> MemoryScope:
+    """Route explicitly named structured records independently of UI mode."""
+
+    if fallback == "none":
+        return "none"
+    normalized = " ".join(transcript.casefold().split())
+    if "shopping list" in normalized:
+        return "list_relevant"
+    if re.search(r"\b(?:task|to-do|todo)\s+list\b", normalized):
+        return "task_relevant_only"
+    return fallback
 
 
 class NullMemoryGateway:
@@ -40,11 +82,15 @@ class NullMemoryGateway:
         scope: MemoryScope,
         *,
         limit: int = 3,
-    ) -> tuple[str, ...]:
+    ) -> tuple[MemoryReference, ...]:
         return ()
 
-    def apply(self, action: MemoryAction, scope: MemoryScope) -> tuple[bool, str]:
-        return False, "memory_not_configured"
+    def apply(
+        self,
+        action: MemoryAction,
+        scope: MemoryScope,
+    ) -> MemoryOperationOutcome:
+        return MemoryOperationOutcome(MemoryOperationStatus.MEMORY_NOT_CONFIGURED)
 
     def close(self) -> None:
         """Release no resources for the no-op gateway."""
@@ -53,8 +99,9 @@ class NullMemoryGateway:
 class MemoryManagerGateway:
     """Adapter from the app pipeline boundary to the current MemoryManager."""
 
-    def __init__(self, manager: Any) -> None:
+    def __init__(self, manager: MemoryManagerPort) -> None:
         self._manager = manager
+        self._operation_lock = RLock()
 
     def retrieve(
         self,
@@ -62,92 +109,122 @@ class MemoryManagerGateway:
         scope: MemoryScope,
         *,
         limit: int = 3,
-    ) -> tuple[str, ...]:
-        if scope == "none":
+    ) -> tuple[MemoryReference, ...]:
+        with self._operation_lock:
+            return self._retrieve(query, scope, limit=limit)
+
+    def _retrieve(
+        self,
+        query: str,
+        scope: MemoryScope,
+        *,
+        limit: int,
+    ) -> tuple[MemoryReference, ...]:
+        if scope == "none" or limit <= 0:
             return ()
 
-        topic = _retrieval_topic(scope)
         if scope == "list_relevant":
-            # A shopping list is an owned collection, not a similarity-ranked
-            # context window. Returning every event prevents silent truncation.
-            memories = self._manager.retrieve_by_metadata(topic=topic)
-        else:
-            memories = self._manager.retrieve_similar(
-                query=query,
-                top_k=limit,
-                topic=topic,
+            shopping_list = _memory_reference(
+                self._manager.get_memory_by_key(SHOPPING_LIST_MEMORY_KEY)
             )
-        return tuple(
-            memory["content"]
-            for memory in memories
-            if isinstance(memory, dict) and isinstance(memory.get("content"), str)
-        )
+            return (shopping_list,) if shopping_list is not None else ()
 
-    def apply(self, action: MemoryAction, scope: MemoryScope) -> tuple[bool, str]:
+        exact_memories: tuple[MemoryReference, ...] = ()
+        if scope == "task_relevant_only":
+            task_list = _memory_reference(
+                self._manager.get_memory_by_key(TASK_LIST_MEMORY_KEY)
+            )
+            if task_list is not None:
+                exact_memories = (task_list,)
+
+        semantic_limit = limit - len(exact_memories)
+        if semantic_limit <= 0:
+            return exact_memories
+
+        layer, topic = _retrieval_metadata(scope)
+        memories = self._manager.retrieve_similar(
+            query=query,
+            top_k=semantic_limit,
+            topic=topic,
+            layer=layer,
+        )
+        semantic_memories = tuple(
+            reference
+            for memory in memories
+            if (reference := _memory_reference(memory)) is not None
+            and all(exact.memory_id != reference.memory_id for exact in exact_memories)
+        )
+        return (*exact_memories, *semantic_memories[:semantic_limit])
+
+    def apply(
+        self,
+        action: MemoryAction,
+        scope: MemoryScope,
+    ) -> MemoryOperationOutcome:
+        with self._operation_lock:
+            return self._apply(action, scope)
+
+    def _apply(
+        self,
+        action: MemoryAction,
+        scope: MemoryScope,
+    ) -> MemoryOperationOutcome:
         if scope == "none":
-            return False, "memory_scope_none"
+            return MemoryOperationOutcome(MemoryOperationStatus.MEMORY_SCOPE_NONE)
 
-        is_shopping_list_addition = scope == "list_relevant" and (
-            action.action == "update"
-            or (
-                action.action == "store"
-                and action.content.casefold().startswith("shopping_list:add:")
+        if action.list_operation is not None:
+            expected_scope: MemoryScope = (
+                "list_relevant"
+                if action.list_operation.list_name == "shopping"
+                else "task_relevant_only"
             )
-        )
-        if is_shopping_list_addition:
-            return self._append_shopping_list_items(action.content)
+            if scope != expected_scope:
+                return MemoryOperationOutcome(
+                    MemoryOperationStatus.STRUCTURED_LIST_SCOPE_MISMATCH
+                )
+        elif scope == "list_relevant" and action.action in {"store", "update"}:
+            return MemoryOperationOutcome(MemoryOperationStatus.MEMORY_SCOPE_MISMATCH)
+        target_outcome = self._authorize_target(action, scope)
+        if target_outcome is not None:
+            return target_outcome
+        command = _memory_command_from_action(action, scope)
+        return self._manager.execute_memory_command(command)
 
-        if action.action == "store":
-            layer, topic = _storage_metadata(scope)
-            success, reason, _memory_id = self._manager.store_memory(
-                content=action.content,
-                layer=layer,
-                topic=topic,
-                validate=False,
-                auto_classify=False,
-                auto_extract=False,
+    def _authorize_target(
+        self,
+        action: MemoryAction,
+        scope: MemoryScope,
+    ) -> MemoryOperationOutcome | None:
+        """Reject exact targets outside the current app-owned memory scope."""
+
+        target = action.target
+        if target is None:
+            return None
+        if target.memory_key is not None and not _scope_allows_key(
+            scope,
+            target.memory_key,
+        ):
+            return MemoryOperationOutcome(MemoryOperationStatus.MEMORY_SCOPE_MISMATCH)
+
+        memory: MemoryRecord | None
+        if target.memory_id is not None:
+            memory = self._manager.get_memory_by_id(target.memory_id)
+        elif target.memory_key is not None:
+            memory = self._manager.get_memory_by_key(target.memory_key)
+        else:
+            memory = None
+        if memory is not None and not _scope_contains_memory(scope, memory):
+            return MemoryOperationOutcome(
+                MemoryOperationStatus.MEMORY_SCOPE_MISMATCH,
+                memory_id=memory.id,
             )
-            return success, reason
-
-        return self._manager.process_memory_action(action)
-
-    def _append_shopping_list_items(self, content: str) -> tuple[bool, str]:
-        requested_items = _split_shopping_list_items(
-            _shopping_list_action_payload(content)
-        )
-        if not requested_items:
-            return False, "shopping_list_items_missing"
-        memories = self._manager.retrieve_by_metadata(topic="shopping")
-        existing_items = {
-            item.casefold()
-            for memory in memories
-            if isinstance(memory, dict) and isinstance(memory.get("content"), str)
-            for item in _stored_shopping_list_items(memory["content"])
-        }
-        missing_items = [
-            item for item in requested_items if item.casefold() not in existing_items
-        ]
-        if not missing_items:
-            return True, "shopping_list_unchanged"
-
-        for item in missing_items:
-            success, reason, _memory_id = self._manager.store_memory(
-                content=f"shopping_list:add:{item}",
-                layer="feedback",
-                topic="shopping",
-                validate=False,
-                auto_classify=False,
-                auto_extract=False,
-                check_duplicates=False,
-            )
-            if not success:
-                return False, reason
-        return True, "stored_successfully"
+        return None
 
     def close(self) -> None:
         """Close the underlying memory manager."""
 
-        self._manager.close()
+        with self._operation_lock:
+            self._manager.close()
 
 
 def build_local_memory_gateway(
@@ -160,14 +237,14 @@ def build_local_memory_gateway(
     return MemoryManagerGateway(build_memory_manager(config))
 
 
-def _retrieval_topic(scope: MemoryScope) -> str | None:
-    topics: dict[MemoryScope, str | None] = {
-        "none": None,
-        "personal_relevant": None,
-        "task_relevant_only": "task",
-        "list_relevant": "shopping",
+def _retrieval_metadata(scope: MemoryScope) -> tuple[str | None, str | None]:
+    metadata: dict[MemoryScope, tuple[str | None, str | None]] = {
+        "none": (None, None),
+        "personal_relevant": ("profile", None),
+        "task_relevant_only": ("feedback", "task"),
+        "list_relevant": ("feedback", "shopping"),
     }
-    return topics[scope]
+    return metadata[scope]
 
 
 def _storage_metadata(scope: MemoryScope) -> tuple[str, str | None]:
@@ -180,35 +257,112 @@ def _storage_metadata(scope: MemoryScope) -> tuple[str, str | None]:
     return metadata[scope]
 
 
-def _stored_shopping_list_items(content: str) -> tuple[str, ...]:
-    normalized = content.strip()
-    prefix = "shopping_list:add:"
-    if normalized.casefold().startswith(prefix):
-        normalized = normalized[len(prefix) :]
-    return _split_shopping_list_items(normalized)
+def _memory_command_from_action(
+    action: MemoryAction,
+    scope: MemoryScope,
+) -> MemoryCommand:
+    """Translate an untrusted reasoning proposal into a memory-owned command."""
+
+    if action.list_operation is not None:
+        assert action.target is not None
+        return ApplyStructuredListCommand(
+            target=_command_target(action.target),
+            mutation=StructuredListMutation(
+                list_name=action.list_operation.list_name,
+                items=action.list_operation.items,
+            ),
+        )
+
+    if action.action == "store":
+        assert action.content is not None
+        layer, topic = _storage_metadata(scope)
+        return StoreMemoryCommand(
+            content=action.content,
+            layer=layer,
+            memory_key=(
+                action.target.memory_key if action.target is not None else None
+            ),
+            topic=topic,
+        )
+
+    assert action.target is not None
+    if action.action == "update":
+        assert action.content is not None
+        return UpdateMemoryCommand(
+            target=_command_target(action.target),
+            content=action.content,
+        )
+    return DeleteMemoryCommand(target=_command_target(action.target))
 
 
-def _shopping_list_action_payload(content: str) -> str:
-    payload = content.strip()
-    prefix = "shopping_list:add:"
-    if payload.casefold().startswith(prefix):
-        return payload[len(prefix) :]
-    payload = re.sub(r"^\s*(?:please\s+)?add\s+", "", payload, flags=re.I)
-    return re.sub(
-        r"\s+to\s+(?:my|the)\s+(?:shopping\s+)?list\.?\s*$",
-        "",
-        payload,
-        flags=re.I,
+def _command_target(target: object) -> MemoryCommandTarget:
+    if not isinstance(target, MemoryTarget):
+        raise TypeError("Memory proposal target must be MemoryTarget.")
+    return MemoryCommandTarget(
+        memory_id=target.memory_id,
+        memory_key=target.memory_key,
+        expected_revision=target.expected_revision,
     )
 
 
-def _split_shopping_list_items(content: str) -> tuple[str, ...]:
-    items: list[str] = []
-    seen: set[str] = set()
-    for candidate in re.split(r"\s*(?:,|\band\b)\s*", content, flags=re.IGNORECASE):
-        item = candidate.strip(" .'\"")
-        key = item.casefold()
-        if item and key not in seen:
-            seen.add(key)
-            items.append(item)
-    return tuple(items)
+def _scope_allows_key(scope: MemoryScope, memory_key: str) -> bool:
+    if scope == "personal_relevant":
+        return memory_key.startswith("preference:")
+    if scope == "task_relevant_only":
+        return memory_key == TASK_LIST_MEMORY_KEY
+    if scope == "list_relevant":
+        return memory_key == SHOPPING_LIST_MEMORY_KEY
+    return False
+
+
+def _scope_contains_memory(scope: MemoryScope, memory: MemoryRecord) -> bool:
+    if scope == "personal_relevant":
+        return memory.layer == "profile"
+    if scope == "task_relevant_only":
+        return memory.layer == "feedback" and memory.topic == "task"
+    if scope == "list_relevant":
+        return memory.memory_key == SHOPPING_LIST_MEMORY_KEY
+    return False
+
+
+def _memory_reference(
+    value: MemoryRecord | MemorySearchResult | None,
+) -> MemoryReference | None:
+    if isinstance(value, MemorySearchResult):
+        memory = value.memory
+    elif isinstance(value, MemoryRecord):
+        memory = value
+    else:
+        return None
+    return MemoryReference(
+        memory_id=memory.id,
+        content=memory.content,
+        layer=memory.layer,
+        revision=memory.revision,
+        memory_key=memory.memory_key,
+        topic=memory.topic,
+    )
+
+
+class MemoryManagerPort(Protocol):
+    """Typed manager operations consumed by the app memory gateway."""
+
+    def get_memory_by_key(self, memory_key: str) -> MemoryRecord | None: ...
+
+    def get_memory_by_id(self, memory_id: int) -> MemoryRecord | None: ...
+
+    def retrieve_similar(
+        self,
+        *,
+        query: str,
+        top_k: int,
+        topic: str | None,
+        layer: str | None,
+    ) -> list[MemorySearchResult]: ...
+
+    def execute_memory_command(
+        self,
+        command: MemoryCommand,
+    ) -> MemoryOperationOutcome: ...
+
+    def close(self) -> None: ...

@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 # Local
+from voice_concierge.local_storage import LOCAL_STORAGE_FILES, LocalStorageFile
 from voice_concierge.privacy.centre import PrivacyCentre
 from voice_concierge.privacy.disclosure import (
     NOT_RETAINED,
@@ -30,6 +31,13 @@ def _record(identifier: int, layer: str = "semantic") -> dict:
         "layer": layer,
         "created_at": 1_700_000_000,
     }
+
+
+def _storage_files(tmp_path: Path) -> tuple[LocalStorageFile, ...]:
+    return (
+        LocalStorageFile("memory", "Memories", tmp_path / "m.db", "text"),
+        LocalStorageFile("vectors", "Search index", tmp_path / "v.db", "vectors"),
+    )
 
 
 @pytest.mark.unit
@@ -99,9 +107,7 @@ class TestReport:
     def test_report_counts_memories_and_layers(self, tmp_path: Path) -> None:
         centre = PrivacyCentre(FakeMemoryArchive([_record(1), _record(2, "episodic")]))
 
-        report = build_report(
-            centre, memory_db=tmp_path / "m.db", vector_db=tmp_path / "v.db"
-        )
+        report = build_report(centre, storage_files=_storage_files(tmp_path))
 
         assert report.memory_count == 2
         assert report.counts_by_layer == {"semantic": 1, "episodic": 1}
@@ -111,14 +117,26 @@ class TestReport:
         """The disclosure has to cover absence, not only presence."""
         centre = PrivacyCentre(FakeMemoryArchive([]))
 
-        report = build_report(
-            centre, memory_db=tmp_path / "m.db", vector_db=tmp_path / "v.db"
-        )
+        report = build_report(centre, storage_files=_storage_files(tmp_path))
 
         assert report.not_retained == NOT_RETAINED
         joined = " ".join(report.not_retained).lower()
         assert "audio" in joined
         assert "conversation history" in joined
+
+    def test_report_covers_every_registered_local_store(self) -> None:
+        report = build_report(PrivacyCentre(FakeMemoryArchive([])))
+
+        assert {location.path for location in report.locations} == {
+            str(storage_file.path) for storage_file in LOCAL_STORAGE_FILES
+        }
+        joined_names = " ".join(location.name for location in report.locations).lower()
+        assert "reminders" in joined_names
+        assert "pace" in joined_names
+        assert "reasoning model" in joined_names
+
+    def test_persisted_pace_is_not_claimed_as_transient(self) -> None:
+        assert "pace" not in " ".join(NOT_RETAINED).casefold()
 
     def test_formatted_report_mentions_counts_paths_and_exclusions(self) -> None:
         report = PrivacyReport(

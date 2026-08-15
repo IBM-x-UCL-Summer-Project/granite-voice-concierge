@@ -28,11 +28,15 @@ def test_prompt_suite_loads_all_cases() -> None:
     suite = load_prompt_suite(PROMPT_SUITE)
     cases = list(iter_benchmark_cases(suite))
 
-    assert len(cases) == 15
+    assert len(cases) == 20
     assert cases[0].case_id == "cooking_scrambled_eggs_first_step"
     assert cases[0].category == "cooking"
     assert cases[0].mode == "cooking"
     assert cases[0].checks is not None
+    runtime_case = next(
+        case for case in cases if case.case_id == "runtime_local_device_time"
+    )
+    assert runtime_case.runtime_context[0].runtime_id == "system.local_datetime"
 
 
 def test_benchmark_report_contains_core_metrics() -> None:
@@ -42,15 +46,18 @@ def test_benchmark_report_contains_core_metrics() -> None:
 
     assert report["suite"]["name"] == "reasoning_prompts_v0"
     assert report["engine"] == "DeterministicReasoningFake"
-    assert report["total_cases"] == 15
+    assert report["total_cases"] == 20
     assert report["elapsed_ms"] >= 0
-    assert len(report["results"]) == 15
+    assert len(report["results"]) == 20
 
     first_result = report["results"][0]
     assert first_result["case_id"] == "cooking_scrambled_eggs_first_step"
     assert first_result["latency_ms"] >= 0
     assert first_result["response_words"] > 0
     assert "spoken_response" in first_result
+    assert "required_information_source" in first_result
+    assert "information_evidence" in first_result
+    assert "freshness_requirement" in first_result
     assert "passed_checks" in first_result
     assert "issues" in first_result
 
@@ -80,6 +87,31 @@ def test_benchmark_report_flags_failed_checks() -> None:
     assert "memory_action_expected_store" in result["issues"]
 
 
+def test_benchmark_report_checks_information_source_and_freshness() -> None:
+    suite = {
+        "name": "test_suite",
+        "categories": {
+            "information_policy": [
+                {
+                    "transcript": "Is the pharmacy open?",
+                    "mode": "home",
+                    "expected_behavior": "Require current external information.",
+                    "checks": {
+                        "information_source": "external_live",
+                        "freshness_requirement": "current",
+                    },
+                }
+            ]
+        },
+    }
+
+    report = run_reasoning_benchmark(DeterministicReasoningFake(), suite)
+
+    issues = report["results"][0]["issues"]
+    assert "information_source_expected_external_live" in issues
+    assert "freshness_requirement_expected_current" in issues
+
+
 def test_benchmark_report_checks_all_required_terms() -> None:
     class MilkOnlyEngine:
         def generate(self, request: ReasoningRequest) -> ReasoningResponse:
@@ -93,7 +125,15 @@ def test_benchmark_report_checks_all_required_terms() -> None:
                     "id": "shopping_list_items",
                     "transcript": "What is on my shopping list?",
                     "mode": "shopping",
-                    "memories": ["Shopping list: milk, bread."],
+                    "memories": [
+                        {
+                            "memory_id": 1,
+                            "content": "Shopping list: milk, bread.",
+                            "layer": "feedback",
+                            "revision": 1,
+                            "memory_key": "list:shopping",
+                        }
+                    ],
                     "expected_behavior": "List all supplied shopping items.",
                     "checks": {
                         "must_contain_all": ["milk", "bread"],

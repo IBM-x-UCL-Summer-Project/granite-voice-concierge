@@ -4,9 +4,10 @@ Status: implemented Python app-pipeline contract for frontend/backend planning.
 The browser UI should connect through a backend wrapper rather than importing
 the Python package directly.
 
-The app pipeline is turn-based and stateful. A UI or backend wrapper should send
-one user turn at a time, along with the `state` returned from the previous turn.
-The pipeline returns the assistant response and the next state.
+The app pipeline is turn-based and stateful. Trusted in-process callers may pass
+the `state` returned from one turn into the next. A network backend must keep the
+authoritative state server-side and associate it with the local client; browser
+state is display data, not authority for confirmations or memory mutations.
 
 The frontend should not need to know about STT, TTS, Ollama, memory internals, or
 context-manager internals.
@@ -38,6 +39,10 @@ ignored by Git. Semantic retrieval uses the local Ollama
 ```bash
 ollama pull granite-embedding:278m
 ```
+
+The factory also supplies the local system date and time to reasoning through a
+trusted runtime provider. This is local-only and requires no service or
+credential. Serialized UI requests cannot inject runtime facts.
 
 Confirmed writes are stored without a second model-based classification step.
 The app context policy supplies the storage layer and topic, while the embedding
@@ -79,7 +84,6 @@ Equivalent frontend-facing request shape:
 ```ts
 type AppTurnRequest = {
   transcript: string;
-  state?: AppPipelineState | null;
   options?: {
     synthesize?: boolean; // default false
     play?: boolean; // default false, mostly for local/manual testing
@@ -89,7 +93,9 @@ type AppTurnRequest = {
 
 The included web wrapper accepts transcripts at `POST /api/turn`. It accepts a
 base64-encoded, mono 16-bit PCM WAV at `POST /api/audio` and routes it through
-the pipeline's `process_audio(...)` method.
+the pipeline's `process_audio(...)` method. It uses an HTTP-only, same-site
+session cookie to select server-owned pipeline state. A posted `state` field is
+ignored for backwards compatibility and cannot inject a pending action.
 
 ## Backend Adapter
 
@@ -104,6 +110,9 @@ audio_response_payload = handle_audio_turn(audio_request_payload, pipeline)
 calls `pipeline.process_request(...)`, then serializes the result with
 `app_turn_result_to_dict(...)`. `handle_audio_turn(...)` decodes the browser WAV
 and calls `pipeline.process_audio(...)` with the same state and options contract.
+These low-level adapters accept serialized state for trusted callers and test
+tools. An HTTP or other untrusted transport must substitute server-owned state
+before calling them, as the included web wrapper does.
 
 Malformed payloads raise `PayloadValidationError`. The included HTTP wrapper
 translates that exception into a 400 response.
@@ -127,13 +136,16 @@ the adapter output.
 
 ## State Shape
 
-The UI should store this whole object and send it back on the next turn. Treat it
-as application state owned by the pipeline, not as frontend business logic.
+The response includes this whole object so the UI can render conversation and
+confirmation state. The included browser stores it as a local display cache but
+does not send it back. The server retains the authoritative copy used for the
+next turn. A frontend must never create or edit pending actions or targets.
 
 `conversation_history` contains short-term session context only. The pipeline
 keeps at most six completed exchanges and passes prior exchanges to reasoning so
 follow-up references can be understood. It is separate from approved persistent
-memory and should not be edited by the UI.
+memory. A client may render its response copy, but the server-owned value is the
+only one used for reasoning.
 
 ```ts
 type AppPipelineState = {
@@ -156,8 +168,18 @@ type AppPipelineState = {
 
   pending_memory_action: null | {
     action: 'store' | 'delete' | 'update';
-    content: string;
+    content: string | null;
     rationale: string;
+    target?: {
+      memory_id?: number;
+      memory_key?: string;
+      expected_revision?: number;
+    };
+    list_operation?: {
+      list_name: 'shopping' | 'task';
+      operation: 'add_items';
+      items: string[];
+    };
     requires_confirmation: boolean;
   };
 
@@ -170,6 +192,26 @@ type AppPipelineState = {
 };
 ```
 
+Every pending `update` or `delete` includes an exact target. `memory_id`
+identifies a retrieved record, `memory_key` identifies an explicitly scoped
+singleton such as `list:shopping`, and `expected_revision` prevents a stale
+confirmation from overwriting a newer value. A `store` may include only a
+`memory_key` when it is creating the first value for that scoped record. These
+fields stay within server-owned state; the UI must not choose a target from
+memory content.
+
+Shopping-list and task-list writes use `list_operation`; their `content` is
+`null`. The typed item array is the only mutation payload for those actions.
+The memory domain creates canonical persisted content for a first item and
+applies later additions itself. Command strings embedded in `content` are not
+part of the contract.
+
+When a memory action is pending, the next transcript is interpreted as a
+confirmation reply. Only a complete, explicit answer such as `yes`, `confirm`,
+`no`, or `cancel` resolves it. An ambiguous reply leaves both pending fields
+unchanged and asks the user for an explicit yes or no; it must never apply or
+discard the action based on a word embedded in unrelated speech.
+
 ## Response Shape
 
 The Python `AppTurnResult.response_audio` field is a `CapturedAudio | None`.
@@ -177,6 +219,34 @@ A web backend wrapper should convert it to a browser-friendly representation
 such as the optional `audio` object shown below.
 
 ```ts
+type MemoryOperationStatus =
+  | 'stored_successfully'
+  | 'stored_pending_index'
+  | 'duplicate_key'
+  | 'duplicate_found'
+  | 'validation_failed'
+  | 'storage_error'
+  | 'updated_successfully'
+  | 'updated_pending_index'
+  | 'memory_not_found'
+  | 'memory_revision_conflict'
+  | 'no_changes'
+  | 'update_error'
+  | 'deleted_successfully'
+  | 'deleted_pending_index_cleanup'
+  | 'delete_error'
+  | 'memory_action_error'
+  | 'memory_target_not_found'
+  | 'memory_target_mismatch'
+  | 'structured_list_target_mismatch'
+  | 'invalid_structured_list_content'
+  | 'unknown_action'
+  | 'memory_not_configured'
+  | 'memory_scope_none'
+  | 'structured_list_scope_mismatch'
+  | 'memory_scope_mismatch'
+  | 'memory_gateway_error';
+
 type AppTurnResponse = {
   state: AppPipelineState;
 
@@ -198,6 +268,36 @@ type AppTurnResponse = {
 
   reasoning: {
     confidence: 'low' | 'medium' | 'high';
+    required_information_source:
+      | 'none'
+      | 'user_input'
+      | 'local_context'
+      | 'stable_knowledge'
+      | 'runtime_live'
+      | 'external_live';
+    information_evidence: Array<
+      | {
+          source: 'user_input';
+          quote: string;
+        }
+      | {
+          source: 'memory';
+          quote: string;
+          memory_id: number;
+          memory_revision: number;
+        }
+      | {
+          source: 'conversation_summary';
+          quote: string;
+        }
+      | {
+          source: 'runtime_context';
+          quote: string;
+          runtime_id: string;
+          observed_at: number;
+        }
+    >;
+    freshness_requirement: 'not_required' | 'current';
     needs_confirmation: boolean;
     proposed_memory_action: AppPipelineState['pending_memory_action'];
     mode_suggestion: string | null;
@@ -206,6 +306,13 @@ type AppTurnResponse = {
   memory_operation: {
     attempted: boolean;
     succeeded: boolean;
+    status: MemoryOperationStatus | null;
+    memory_id: number | null;
+    detail: string | null;
+    similarity_advisories: Array<{
+      memory_id: number;
+      distance: number;
+    }>;
     reason: string;
   };
 
@@ -219,6 +326,25 @@ type AppTurnResponse = {
 };
 ```
 
+When `memory_operation.attempted` is true, `status` is the stable
+machine-readable memory status and `succeeded` is derived from that status.
+`memory_id` and `detail` carry optional structured context.
+`similarity_advisories` reports semantically close existing records from the
+same metadata scope after a successful store; it is evidence only and never a
+write rejection. `reason` is retained as a display/logging string; clients
+should not parse it to make decisions.
+
+The app memory gateway translates reasoning proposals into memory-owned
+commands only after checking their typed target and the active safety policy.
+Personal retrieval is restricted to profile records, task retrieval to
+feedback/task records, and shopping retrieval to the stable shopping-list
+record. Explicit shopping-list and task-list queries route to those stable
+records even when the UI is in another non-driving mode. Structured mutations
+derive their scope from their stable list target rather than the current UI
+mode; an untyped store is personal. Driving mode still disables memory access.
+An update or delete whose exact target falls outside its resolved scope returns
+`memory_scope_mismatch` without reaching persistence.
+
 ## Error Codes
 
 Expected recoverable errors:
@@ -228,6 +354,7 @@ type AppTurnError =
   | 'empty_transcript'
   | 'stt_failed'
   | 'memory_retrieval_failed'
+  | 'runtime_context_failed'
   | 'reasoning_failed'
   | 'memory_action_failed'
   | 'tts_failed'
@@ -274,6 +401,10 @@ Response:
   "memory_operation": {
     "attempted": false,
     "succeeded": false,
+    "status": null,
+    "memory_id": null,
+    "detail": null,
+    "similarity_advisories": [],
     "reason": ""
   },
   "errors": [],
@@ -325,27 +456,28 @@ If the assistant response includes:
 }
 ```
 
-Then the frontend sends the full previous `state` back with the user's
-confirmation:
+The frontend then sends only the user's confirmation. The HTTP-only session
+cookie identifies the server-owned pending state:
 
 ```json
 {
-  "transcript": "yes",
-  "state": {
-    "...": "previous state object"
-  }
+  "transcript": "yes"
 }
 ```
 
-The backend applies the pending memory action and returns updated state with
-`pending_memory_action: null`.
+The backend makes one mutation attempt and returns updated state with
+`pending_memory_action: null`, whether that attempt succeeds or fails. This
+prevents later conversation from being trapped in a stale yes/no prompt; the
+user can restate a failed request. Confirming a record that is already stored
+is reported as an idempotent completion and does not surface
+`memory_action_failed`.
 
 ## Frontend Rule
 
 Display fields such as `spoken_response`, `context.mode`,
-`context.needs_confirmation`, and `errors`. Always send the full returned `state`
-back on the next turn. Store `conversation_history` as opaque pipeline state;
-the UI can maintain a separate display-message list if it needs richer rendering
-metadata. Treat `state.context.accessibility` as authoritative for persisted
-verbosity and speech pace; browser audio controls may apply device-local volume
-and rate multipliers without rewriting that state.
+`context.needs_confirmation`, and `errors`. Keep returned `state` only as an
+opaque display cache; do not send it as authority on the next HTTP turn. The UI
+can maintain a separate display-message list if it needs richer rendering
+metadata. Treat the returned `state.context.accessibility` as the pipeline's
+current verbosity and speech pace; browser audio controls may apply device-local
+volume and rate multipliers without rewriting it.

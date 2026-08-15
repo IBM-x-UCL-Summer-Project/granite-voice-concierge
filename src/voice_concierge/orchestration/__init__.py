@@ -1,4 +1,4 @@
-"""Turn-level orchestration for voice concierge modules."""
+"""Compatibility API over the canonical ``voice_concierge.app`` pipeline."""
 
 from voice_concierge.orchestration.adapters import (
     MemoryManagerGateway,

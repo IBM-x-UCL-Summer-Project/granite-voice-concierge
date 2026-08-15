@@ -5,9 +5,10 @@ from pathlib import Path
 
 # Local
 from voice_concierge.privacy.centre import PrivacyCentre
+from voice_concierge.privacy.interfaces import MemoryArchive
 
 
-def build_privacy_centre(memory_manager: object | None = None) -> PrivacyCentre:
+def build_privacy_centre(memory_manager: MemoryArchive | None = None) -> PrivacyCentre:
     """Build a PrivacyCentre over the local memory manager.
 
     The manager is built here when not supplied, so a caller reviewing their
@@ -17,7 +18,7 @@ def build_privacy_centre(memory_manager: object | None = None) -> PrivacyCentre:
         from voice_concierge.memory import build_memory_manager
 
         memory_manager = build_memory_manager()
-    return PrivacyCentre(memory_manager)  # type: ignore[arg-type]
+    return PrivacyCentre(memory_manager)
 
 
 def default_database_paths() -> tuple[Path, Path]:

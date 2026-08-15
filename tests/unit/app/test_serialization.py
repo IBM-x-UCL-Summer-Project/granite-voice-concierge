@@ -16,6 +16,7 @@ from voice_concierge.app.serialization import (
     app_turn_request_to_dict,
     app_turn_result_to_dict,
     captured_audio_to_dict,
+    memory_operation_to_dict,
 )
 from voice_concierge.app.types import (
     AppPipelineState,
@@ -33,7 +34,18 @@ from voice_concierge.context.types import (
     ContextDecision,
     ContextState,
 )
-from voice_concierge.reasoning.types import MemoryAction, ReasoningResponse
+from voice_concierge.memory import (
+    MemoryOperationOutcome,
+    MemoryOperationStatus,
+    MemorySimilarityAdvisory,
+)
+from voice_concierge.reasoning.types import (
+    InformationEvidence,
+    MemoryAction,
+    MemoryTarget,
+    ReasoningResponse,
+    StructuredListOperation,
+)
 
 
 def test_app_pipeline_state_round_trips_through_plain_dict() -> None:
@@ -41,6 +53,7 @@ def test_app_pipeline_state_round_trips_through_plain_dict() -> None:
         action="store",
         content="User prefers short answers.",
         rationale="User asked for this to be remembered.",
+        target=MemoryTarget(memory_key="preference:accessibility.verbosity"),
     )
     state = AppPipelineState(
         context=ContextState(
@@ -87,11 +100,62 @@ def test_app_pipeline_state_round_trips_through_plain_dict() -> None:
             "action": "store",
             "content": "User prefers short answers.",
             "rationale": "User asked for this to be remembered.",
+            "target": {
+                "memory_key": "preference:accessibility.verbosity",
+            },
             "requires_confirmation": True,
         },
         "pending_memory_scope": "list_relevant",
     }
     assert parsed == state
+
+
+def test_exact_memory_target_round_trips_with_pending_mutation() -> None:
+    state = AppPipelineState(
+        pending_memory_action=MemoryAction(
+            action="update",
+            content=None,
+            rationale="User confirmed an exact list update.",
+            target=MemoryTarget(
+                memory_id=8,
+                memory_key="list:shopping",
+                expected_revision=3,
+            ),
+            list_operation=StructuredListOperation(
+                list_name="shopping",
+                operation="add_items",
+                items=("bread",),
+            ),
+        ),
+        pending_memory_scope="list_relevant",
+    )
+
+    payload = app_pipeline_state_to_dict(state)
+
+    assert payload["pending_memory_action"]["target"] == {
+        "memory_id": 8,
+        "memory_key": "list:shopping",
+        "expected_revision": 3,
+    }
+    assert payload["pending_memory_action"]["list_operation"] == {
+        "list_name": "shopping",
+        "operation": "add_items",
+        "items": ["bread"],
+    }
+    assert app_pipeline_state_from_dict(payload) == state
+
+
+def test_pending_mutation_without_target_is_rejected() -> None:
+    payload = app_pipeline_state_to_dict(AppPipelineState())
+    payload["pending_memory_action"] = {
+        "action": "delete",
+        "content": "User prefers tea.",
+        "rationale": "Delete a memory.",
+        "requires_confirmation": True,
+    }
+
+    with pytest.raises(PayloadValidationError, match="requires an exact target"):
+        app_pipeline_state_from_dict(payload)
 
 
 def test_app_turn_request_from_dict_parses_state_and_options() -> None:
@@ -102,6 +166,7 @@ def test_app_turn_request_from_dict_parses_state_and_options() -> None:
         "options": {
             "synthesize": True,
             "play": False,
+            "response_length": "detailed",
         },
     }
 
@@ -110,7 +175,11 @@ def test_app_turn_request_from_dict_parses_state_and_options() -> None:
     assert request == AppTurnRequest(
         transcript="repeat that",
         state=state,
-        options=AppTurnOptions(synthesize=True, play=False),
+        options=AppTurnOptions(
+            synthesize=True,
+            play=False,
+            response_length="detailed",
+        ),
     )
     assert app_turn_request_to_dict(request) == payload
 
@@ -172,6 +241,9 @@ def test_app_turn_result_to_dict_matches_frontend_shape() -> None:
         },
         "reasoning": {
             "confidence": "high",
+            "required_information_source": "none",
+            "information_evidence": [],
+            "freshness_requirement": "not_required",
             "needs_confirmation": True,
             "proposed_memory_action": {
                 "action": "store",
@@ -184,11 +256,81 @@ def test_app_turn_result_to_dict_matches_frontend_shape() -> None:
         "memory_operation": {
             "attempted": False,
             "succeeded": False,
+            "status": None,
+            "memory_id": None,
+            "detail": None,
+            "similarity_advisories": [],
             "reason": "",
         },
         "errors": ["tts_failed"],
         "audio": None,
     }
+
+
+def test_memory_operation_serializes_similarity_as_advisory_evidence() -> None:
+    operation = MemoryOperationResult(
+        attempted=True,
+        outcome=MemoryOperationOutcome(
+            MemoryOperationStatus.STORED_SUCCESSFULLY,
+            memory_id=8,
+            similarity_advisories=(
+                MemorySimilarityAdvisory(memory_id=3, distance=0.04),
+            ),
+        ),
+    )
+
+    assert memory_operation_to_dict(operation) == {
+        "attempted": True,
+        "succeeded": True,
+        "status": "stored_successfully",
+        "memory_id": 8,
+        "detail": None,
+        "similarity_advisories": [
+            {
+                "memory_id": 3,
+                "distance": 0.04,
+            }
+        ],
+        "reason": "stored_successfully",
+    }
+
+
+def test_runtime_information_evidence_serializes_with_observation_identity() -> None:
+    state = AppPipelineState()
+    result = AppTurnResult(
+        state=state,
+        spoken_response="It is 15:05.",
+        context_decision=ContextDecision(
+            state=state.context,
+            policy=policy_for_mode("home", state.context.accessibility),
+        ),
+        reasoning_result=ReasoningTurnResult(
+            response=ReasoningResponse(
+                spoken_response="It is 15:05.",
+                required_information_source="runtime_live",
+                information_evidence=(
+                    InformationEvidence(
+                        source="runtime_context",
+                        quote="Local device time: 15:05.",
+                        runtime_id="device.clock",
+                        observed_at=1_700_000_000,
+                    ),
+                ),
+                freshness_requirement="current",
+            )
+        ),
+    )
+
+    payload = app_turn_result_to_dict(result)
+
+    assert payload["reasoning"]["information_evidence"] == [
+        {
+            "source": "runtime_context",
+            "quote": "Local device time: 15:05.",
+            "runtime_id": "device.clock",
+            "observed_at": 1_700_000_000,
+        }
+    ]
 
 
 def test_captured_audio_to_dict_serializes_wav_audio() -> None:
@@ -219,6 +361,18 @@ def test_invalid_option_type_raises_payload_validation_error() -> None:
     }
 
     with pytest.raises(PayloadValidationError, match="synthesize must be a boolean"):
+        app_turn_request_from_dict(payload)
+
+
+def test_invalid_response_length_raises_payload_validation_error() -> None:
+    payload = {
+        "transcript": "hello",
+        "options": {
+            "response_length": "unlimited",
+        },
+    }
+
+    with pytest.raises(PayloadValidationError, match="response_length must be a valid"):
         app_turn_request_from_dict(payload)
 
 

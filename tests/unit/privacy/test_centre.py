@@ -3,6 +3,10 @@
 import pytest
 
 # Local
+from voice_concierge.memory.types import (
+    MemoryOperationOutcome,
+    MemoryOperationStatus,
+)
 from voice_concierge.privacy.centre import PrivacyCentre
 from voice_concierge.privacy.errors import PrivacyError
 from voice_concierge.privacy.fakes import FakeMemoryArchive
@@ -60,14 +64,14 @@ class TestReview:
 
         assert len(centre.list_memories(search="")) == 2
 
-    def test_memory_without_a_timestamp_still_lists(self) -> None:
-        """A record missing fields must not break the review screen."""
+    def test_fake_normalizes_optional_record_fields(self) -> None:
+        """Test fixtures cross the same typed boundary as the real manager."""
         centre = PrivacyCentre(FakeMemoryArchive([{"id": 3, "content": "bare"}]))
 
         item = centre.list_memories()[0]
 
         assert item.layer == "unknown"
-        assert item.created_display == "unknown date"
+        assert item.revision == 1
 
     def test_gets_one_memory_by_id(self) -> None:
         centre = _centre([_record(1, "a"), _record(2, "b")])
@@ -121,8 +125,14 @@ class TestEdit:
 
     def test_backend_reason_is_surfaced(self) -> None:
         class _Refusing(FakeMemoryArchive):
-            def update_memory(self, memory_id, content=None):
-                return False, "database_locked"
+            def update_memory(
+                self, memory_id, content=None, expected_revision=None
+            ) -> MemoryOperationOutcome:
+                return MemoryOperationOutcome(
+                    MemoryOperationStatus.UPDATE_ERROR,
+                    memory_id=memory_id,
+                    detail="database_locked",
+                )
 
         centre = PrivacyCentre(_Refusing([_record(1, "a")]))
 
@@ -133,14 +143,40 @@ class TestEdit:
         """Never claim a change that cannot be read back."""
 
         class _Vanishing(FakeMemoryArchive):
-            def update_memory(self, memory_id, content=None):
+            def update_memory(
+                self, memory_id, content=None, expected_revision=None
+            ) -> MemoryOperationOutcome:
                 self.records.clear()
-                return True, "updated_successfully"
+                return MemoryOperationOutcome(
+                    MemoryOperationStatus.UPDATED_SUCCESSFULLY,
+                    memory_id=memory_id,
+                )
 
         centre = PrivacyCentre(_Vanishing([_record(1, "a")]))
 
         with pytest.raises(PrivacyError, match="cannot be read back"):
             centre.edit_memory(1, "new")
+
+    def test_concurrent_change_is_not_overwritten(self) -> None:
+        class _ConcurrentChange(FakeMemoryArchive):
+            def update_memory(
+                self, memory_id, content=None, expected_revision=None
+            ) -> MemoryOperationOutcome:
+                self.records[0]["content"] = "newer external value"
+                self.records[0]["revision"] = 2
+                return super().update_memory(
+                    memory_id,
+                    content=content,
+                    expected_revision=expected_revision,
+                )
+
+        archive = _ConcurrentChange([_record(1, "original")])
+        centre = PrivacyCentre(archive)
+
+        with pytest.raises(PrivacyError, match="changed after it was reviewed"):
+            centre.edit_memory(1, "stale correction")
+
+        assert archive.records[0]["content"] == "newer external value"
 
 
 @pytest.mark.unit
@@ -175,11 +211,20 @@ class TestDelete:
                 super().__init__(records)
                 self.calls = 0
 
-            def delete_memory(self, memory_id):
+            def delete_memory(
+                self, memory_id, expected_revision=None
+            ) -> MemoryOperationOutcome:
                 self.calls += 1
                 if self.calls > 1:
-                    return False, "database_locked"
-                return super().delete_memory(memory_id)
+                    return MemoryOperationOutcome(
+                        MemoryOperationStatus.DELETE_ERROR,
+                        memory_id=memory_id,
+                        detail="database_locked",
+                    )
+                return super().delete_memory(
+                    memory_id,
+                    expected_revision=expected_revision,
+                )
 
         centre = PrivacyCentre(_FailsOnSecond([_record(1, "a"), _record(2, "b")]))
 
@@ -211,11 +256,11 @@ class TestExportAndFailures:
             def get_all_memories(self):
                 raise RuntimeError("disk on fire")
 
-            def update_memory(self, memory_id, content=None):
-                return False, ""
+            def update_memory(self, memory_id, content=None, expected_revision=None):
+                raise RuntimeError
 
-            def delete_memory(self, memory_id):
-                return False, ""
+            def delete_memory(self, memory_id, expected_revision=None):
+                raise RuntimeError
 
         with pytest.raises(PrivacyError, match="could not be read"):
             PrivacyCentre(_Exploding()).list_memories()

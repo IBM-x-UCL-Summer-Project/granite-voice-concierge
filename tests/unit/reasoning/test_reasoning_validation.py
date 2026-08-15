@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import pytest
 
+from tests.support import memory_reference, runtime_reference
 from voice_concierge.reasoning import (
+    MemoryAction,
+    MemoryReference,
+    MemoryTarget,
     ReasoningConstraints,
     ReasoningRequest,
     ReasoningRequestError,
@@ -16,11 +20,70 @@ def test_valid_reasoning_request_passes_validation() -> None:
     request = ReasoningRequest(
         transcript="What is on my shopping list?",
         mode="shopping",
-        memories=("Shopping list: milk.",),
+        memories=(
+            memory_reference(
+                "Shopping list: milk.",
+                layer="feedback",
+                memory_key="list:shopping",
+            ),
+        ),
         conversation_summary="The user was planning groceries.",
+        runtime_context=(runtime_reference("Local device time: 15:05."),),
     )
 
     validate_reasoning_request(request)
+
+
+def test_memory_reference_produces_revision_checked_mutation_target() -> None:
+    memory = MemoryReference(
+        memory_id=12,
+        content="User prefers tea.",
+        layer="profile",
+        revision=3,
+        memory_key="preference:drink",
+    )
+
+    assert memory.mutation_target() == MemoryTarget(
+        memory_id=12,
+        memory_key="preference:drink",
+        expected_revision=3,
+    )
+
+
+@pytest.mark.parametrize("action", ("update", "delete"))
+def test_memory_mutation_action_requires_exact_target(action: str) -> None:
+    with pytest.raises(ValueError, match="requires an exact target"):
+        MemoryAction(
+            action=action,
+            content="Unsafe mutation",
+            rationale="Test invalid model output.",
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    (
+        ("action", "replace", "Unsupported memory action"),
+        ("content", " ", "content must not be blank"),
+        ("rationale", "", "rationale must not be blank"),
+        ("requires_confirmation", "yes", "flag must be boolean"),
+    ),
+)
+def test_memory_action_rejects_malformed_payload_fields(
+    field: str,
+    value: object,
+    message: str,
+) -> None:
+    values = {
+        "action": "store",
+        "content": "User prefers tea.",
+        "rationale": "User supplied a preference.",
+        "requires_confirmation": True,
+        field: value,
+    }
+
+    with pytest.raises(ValueError, match=message):
+        MemoryAction(**values)
 
 
 @pytest.mark.parametrize(
@@ -55,7 +118,24 @@ def test_request_validation_rejects_non_tuple_memories() -> None:
         validate_reasoning_request(request)
 
 
-@pytest.mark.parametrize("memory", ("", "   ", None))
+def test_request_validation_rejects_non_tuple_runtime_context() -> None:
+    request = ReasoningRequest(
+        transcript="Hello",
+        runtime_context=[runtime_reference("Local device time: 15:05.")],
+    )
+
+    with pytest.raises(ReasoningRequestError, match="runtime context must be a tuple"):
+        validate_reasoning_request(request)
+
+
+def test_request_validation_rejects_invalid_runtime_reference() -> None:
+    request = ReasoningRequest(transcript="Hello", runtime_context=(object(),))
+
+    with pytest.raises(ReasoningRequestError, match=r"runtime_context\[0\]"):
+        validate_reasoning_request(request)
+
+
+@pytest.mark.parametrize("memory", ("", "   ", None, object()))
 def test_request_validation_rejects_invalid_memory_values(memory: object) -> None:
     request = ReasoningRequest(transcript="Hello", memories=(memory,))
 

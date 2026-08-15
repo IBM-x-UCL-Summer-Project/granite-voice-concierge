@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from voice_concierge.local_storage import MEMORY_DATABASE_PATH, VECTOR_DATABASE_PATH
 from voice_concierge.memory.decay import MemoryDecayPolicy
 
 if TYPE_CHECKING:
@@ -13,8 +14,8 @@ if TYPE_CHECKING:
     from voice_concierge.memory.memory_manager import MemoryManager
     from voice_concierge.memory.memory_validator import MemoryValidator
 
-DEFAULT_MEMORY_DB_PATH = Path(".local/memory/memories.sqlite3")
-DEFAULT_VECTOR_DB_PATH = Path(".local/memory/vectors.sqlite3")
+DEFAULT_MEMORY_DB_PATH = MEMORY_DATABASE_PATH
+DEFAULT_VECTOR_DB_PATH = VECTOR_DATABASE_PATH
 DEFAULT_EMBEDDING_MODEL = "granite-embedding:278m"
 DEFAULT_EMBEDDING_DIMENSION = 768
 
@@ -62,10 +63,13 @@ def build_memory_manager(
     embeddings = embedding_service or EmbeddingService(
         model_name=runtime_config.embedding_model
     )
-    return MemoryManager(
+    manager = MemoryManager(
         memory_store=memory_store,
         vector_store=vector_store,
         embedding_service=embeddings,
         validator=validator,
         decay_policy=runtime_config.decay_policy,
     )
+    manager.migrate_legacy_structured_lists()
+    manager.reconcile_index()
+    return manager

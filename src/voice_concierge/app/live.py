@@ -19,6 +19,11 @@ from voice_concierge.app.reminders import (
 from voice_concierge.app.routines import RoutineTurnHandler
 from voice_concierge.app.types import AppPipelineState, AppTurnResult
 from voice_concierge.audio import CapturedAudio, PyAudioSource
+from voice_concierge.reasoning.errors import (
+    ReasoningBackendUnavailableError,
+    ReasoningConfigurationError,
+    ReasoningModelUnavailableError,
+)
 from voice_concierge.routines.intent import is_routine_request
 from voice_concierge.scheduling.parser import is_reminder_request
 from voice_concierge.scheduling.runner import ReminderRunner
@@ -80,7 +85,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ValueError as exc:
         parser.error(str(exc))
 
-    run_live_app(config)
+    try:
+        run_live_app(config)
+    except ReasoningConfigurationError as exc:
+        print(f"Live app reasoning configuration error: {exc}", file=sys.stderr)
+        return 2
+    except (ReasoningBackendUnavailableError, ReasoningModelUnavailableError) as exc:
+        print(f"Live app reasoning unavailable: {exc}", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -104,6 +116,7 @@ def run_live_app(
     routines = routine_handler
     resolved_routines = routines is not None
     reminders = reminder_handler
+    owns_reminders = reminder_handler is None
     resolved_reminders = reminders is not None
 
     def get_routines() -> RoutineTurnHandler | None:
@@ -171,6 +184,8 @@ def run_live_app(
     finally:
         if runner is not None:
             runner.stop()
+        if owns_reminders and reminders is not None:
+            reminders.close()
         if owns_pipeline:
             pipeline.close()
 
@@ -305,13 +320,13 @@ def _start_reminder_runner(  # pragma: no cover - starts a background thread
     Anything already overdue, including reminders missed while the assistant was
     not running, is delivered on the first check rather than skipped.
     """
-    if not config.reminders or get_handler() is None:
+    if not config.reminders:
         return None
-    from voice_concierge.scheduling.factory import build_reminder_service
-
-    try:
-        service = build_reminder_service()
-    except Exception:
+    handler = get_handler()
+    if handler is None:
+        return None
+    service = getattr(handler, "service", None)
+    if service is None:
         return None
     notifier = SpokenNotifier(
         pipeline.text_to_speech if config.play else None,
@@ -443,6 +458,12 @@ def _print_turn_result(result: AppTurnResult, *, stdout: TextIO) -> None:
     print(f"Mode: {result.state.context.mode}", file=stdout)
     if result.errors:
         print(f"Errors: {', '.join(result.errors)}", file=stdout)
+    if result.memory_operation.outcome is not None:
+        outcome = result.memory_operation.outcome
+        diagnostic = outcome.status.value
+        if outcome.detail is not None:
+            diagnostic = f"{diagnostic} ({outcome.detail})"
+        print(f"Memory operation: {diagnostic}", file=stdout)
 
 
 def _build_parser() -> argparse.ArgumentParser:

@@ -1,6 +1,11 @@
 # Generated benchmark comparison runs
 benchmarks/reasoning/results/
 
+# Local project files
+AGENTS.md
+Initial-prjoect-brief.docx
+.local/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

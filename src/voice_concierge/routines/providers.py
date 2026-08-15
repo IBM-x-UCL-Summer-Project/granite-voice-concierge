@@ -7,6 +7,7 @@ from collections.abc import Iterable
 from typing import Protocol
 
 # Local
+from voice_concierge.memory.types import MemorySearchResult
 from voice_concierge.reasoning.engine import ReasoningEngine
 from voice_concierge.reasoning.types import ReasoningConstraints, ReasoningRequest
 from voice_concierge.routines.errors import RoutineError
@@ -107,7 +108,13 @@ DEFAULT_ROUTINE_TOP_K: int = 5
 class RoutineMemory(Protocol):
     """The slice of the memory manager MemoryRoutineProvider depends on."""
 
-    def retrieve_similar(self, *, query: str, top_k: int, topic: str) -> list[dict]:
+    def retrieve_similar(
+        self,
+        *,
+        query: str,
+        top_k: int,
+        topic: str,
+    ) -> list[MemorySearchResult]:
         """Return stored memory records similar to the query, filtered by topic."""
 
 
@@ -169,11 +176,8 @@ class MemoryRoutineProvider:
         except Exception as exc:  # backend failure -> typed routine error
             raise RoutineError(f"memory backend failed: {exc}") from exc
         routines = []
-        for row in rows:
-            content = row.get("content") if isinstance(row, dict) else None
-            if not isinstance(content, str):
-                continue
-            routine = deserialize_routine(content)
+        for result in rows:
+            routine = deserialize_routine(result.memory.content)
             if routine is not None:
                 routines.append(routine)
         return tuple(routines)

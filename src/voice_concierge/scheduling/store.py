@@ -16,10 +16,11 @@ import time
 from pathlib import Path
 
 # Local
+from voice_concierge.local_storage import REMINDER_DATABASE_PATH
 from voice_concierge.scheduling.errors import SchedulingError
 from voice_concierge.scheduling.types import Kind, Recurrence, Reminder, Schedule
 
-DEFAULT_REMINDER_DB_PATH = Path(".local/reminders/reminders.sqlite3")
+DEFAULT_REMINDER_DB_PATH = REMINDER_DATABASE_PATH
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS reminders (

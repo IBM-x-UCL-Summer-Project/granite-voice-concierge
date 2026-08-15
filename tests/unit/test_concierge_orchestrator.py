@@ -4,23 +4,39 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from tests.support import memory_reference
 from voice_concierge.context import ContextState
+from voice_concierge.memory import MemoryOperationOutcome, MemoryOperationStatus
 from voice_concierge.orchestration import ConciergeOrchestrator
-from voice_concierge.reasoning.types import MemoryAction, ReasoningResponse
+from voice_concierge.reasoning.types import (
+    MemoryAction,
+    MemoryReference,
+    ReasoningResponse,
+)
 
 
 class RecordingMemoryGateway:
-    def __init__(self, memories: tuple[str, ...] = ("prefers tea",)) -> None:
+    def __init__(
+        self,
+        memories: tuple[MemoryReference, ...] = (memory_reference("prefers tea"),),
+    ) -> None:
         self.memories = memories
         self.retrieve_calls: list[tuple[str, str, int]] = []
         self.apply_calls: list[tuple[MemoryAction, str]] = []
-        self.apply_result = (True, "stored_successfully")
+        self.apply_result = MemoryOperationOutcome(
+            MemoryOperationStatus.STORED_SUCCESSFULLY
+        )
 
-    def retrieve(self, query: str, scope: str, limit: int = 3) -> tuple[str, ...]:
+    def retrieve(
+        self,
+        query: str,
+        scope: str,
+        limit: int = 3,
+    ) -> tuple[MemoryReference, ...]:
         self.retrieve_calls.append((query, scope, limit))
         return self.memories
 
-    def apply(self, action: MemoryAction, scope: str) -> tuple[bool, str]:
+    def apply(self, action: MemoryAction, scope: str) -> MemoryOperationOutcome:
         self.apply_calls.append((action, scope))
         return self.apply_result
 
@@ -54,7 +70,12 @@ class RecordingSpeechGateway:
 
 
 class FailingMemoryGateway(RecordingMemoryGateway):
-    def retrieve(self, query: str, scope: str, limit: int = 3) -> tuple[str, ...]:
+    def retrieve(
+        self,
+        query: str,
+        scope: str,
+        limit: int = 3,
+    ) -> tuple[MemoryReference, ...]:
         raise RuntimeError("memory unavailable")
 
 
@@ -96,7 +117,7 @@ class ConciergeOrchestratorTest(unittest.TestCase):
         request = reasoning.requests[0]
         self.assertEqual(request.transcript, "What did we decide yesterday?")
         self.assertEqual(request.mode, "home")
-        self.assertEqual(request.memories, ("prefers tea",))
+        self.assertEqual(request.memories, (memory_reference("prefers tea"),))
         self.assertEqual(request.constraints.max_words, 60)
         self.assertTrue(request.constraints.allow_memory_writes)
         self.assertEqual(speech.speak_calls, [("Here is a useful answer.", "normal")])
@@ -137,10 +158,13 @@ class ConciergeOrchestratorTest(unittest.TestCase):
         result = orchestrator.handle_transcript("yes")
 
         self.assertEqual(result.context_decision.policy.mode, "driving")
-        self.assertEqual(result.spoken_response, "Driving mode is on.")
+        self.assertEqual(
+            result.spoken_response,
+            "Driving mode activated. I'll keep responses very short and safety-aware.",
+        )
         self.assertEqual(memory.retrieve_calls, [])
         self.assertEqual(reasoning.requests, [])
-        self.assertEqual(speech.speak_calls[-1], ("Driving mode is on.", "normal"))
+        self.assertEqual(speech.speak_calls[-1], (result.spoken_response, "normal"))
 
     def test_repeat_reuses_previous_spoken_response_without_dependencies(self) -> None:
         memory = RecordingMemoryGateway()
@@ -172,7 +196,7 @@ class ConciergeOrchestratorTest(unittest.TestCase):
 
         result = orchestrator.handle_transcript("stop speaking")
 
-        self.assertEqual(result.spoken_response, "Okay, I'll stop speaking.")
+        self.assertEqual(result.spoken_response, "Okay, I'll stop.")
         self.assertTrue(result.speech_succeeded)
         self.assertEqual(speech.stop_calls, 1)
         self.assertEqual(memory.retrieve_calls, [])
@@ -206,12 +230,12 @@ class ConciergeOrchestratorTest(unittest.TestCase):
 
         self.assertEqual(
             result.spoken_response,
-            "Should I remember: User likes oat milk.?",
+            "I'll remember that after you confirm.",
         )
         self.assertEqual(memory.apply_calls, [])
         self.assertFalse(result.memory_operation.attempted)
 
-    def test_confirmed_memory_action_is_applied_and_cleared(self) -> None:
+    def test_confirmed_untyped_store_uses_personal_scope(self) -> None:
         action = MemoryAction(
             action="store",
             content="User likes oat milk.",
@@ -238,7 +262,7 @@ class ConciergeOrchestratorTest(unittest.TestCase):
 
         result = orchestrator.handle_transcript("yes")
 
-        self.assertEqual(memory.apply_calls, [(action, "list_relevant")])
+        self.assertEqual(memory.apply_calls, [(action, "personal_relevant")])
         self.assertTrue(result.memory_operation.attempted)
         self.assertTrue(result.memory_operation.succeeded)
         self.assertEqual(result.memory_operation.reason, "stored_successfully")
@@ -273,7 +297,7 @@ class ConciergeOrchestratorTest(unittest.TestCase):
         self.assertEqual(memory.apply_calls, [])
         self.assertEqual(result.spoken_response, "Okay, I won't save that.")
 
-    def test_unrelated_turn_implicitly_cancels_pending_memory_and_continues(
+    def test_ambiguous_reply_preserves_pending_memory_and_requests_clarification(
         self,
     ) -> None:
         action = MemoryAction(
@@ -285,9 +309,9 @@ class ConciergeOrchestratorTest(unittest.TestCase):
         memory = RecordingMemoryGateway()
         reasoning = RecordingReasoningEngine(
             ReasoningResponse(
-                spoken_response="New answer.",
-                needs_confirmation=False,
-                proposed_memory_action=None,
+                spoken_response="I'll remember that after you confirm.",
+                needs_confirmation=True,
+                proposed_memory_action=action,
                 confidence="high",
             )
         )
@@ -297,16 +321,15 @@ class ConciergeOrchestratorTest(unittest.TestCase):
             reasoning=reasoning,
             speech=speech,
         )
-        orchestrator._pending_memory_action = action
-        orchestrator._pending_memory_scope = "personal_relevant"
+        orchestrator.handle_transcript("Remember that I like oat milk")
 
-        result = orchestrator.handle_transcript("What is the weather plan?")
+        result = orchestrator.handle_transcript("yesterday")
 
         self.assertEqual(memory.apply_calls, [])
-        self.assertEqual(result.spoken_response, "New answer.")
+        self.assertEqual(result.spoken_response, "Sorry, was that a yes or a no?")
         self.assertEqual(len(reasoning.requests), 1)
 
-    def test_failed_memory_action_is_retained_for_retry(self) -> None:
+    def test_failed_memory_action_is_cleared_before_next_turn(self) -> None:
         action = MemoryAction(
             action="store",
             content="User likes oat milk.",
@@ -314,7 +337,9 @@ class ConciergeOrchestratorTest(unittest.TestCase):
             requires_confirmation=True,
         )
         memory = RecordingMemoryGateway()
-        memory.apply_result = (False, "storage_error")
+        memory.apply_result = MemoryOperationOutcome(
+            MemoryOperationStatus.STORAGE_ERROR
+        )
         reasoning = RecordingReasoningEngine(
             ReasoningResponse(
                 spoken_response="I'll remember that after you confirm.",
@@ -334,9 +359,10 @@ class ConciergeOrchestratorTest(unittest.TestCase):
         failed = orchestrator.handle_transcript("yes")
         retried = orchestrator.handle_transcript("yes")
 
-        self.assertEqual(len(memory.apply_calls), 2)
+        self.assertEqual(len(memory.apply_calls), 1)
         self.assertIn("memory_action_failed", failed.errors)
-        self.assertIn("memory_action_failed", retried.errors)
+        self.assertNotIn("memory_action_failed", retried.errors)
+        self.assertEqual(len(reasoning.requests), 2)
 
     def test_cooking_next_step_forwards_task_scope_and_word_limit(self) -> None:
         memory = RecordingMemoryGateway()
@@ -464,7 +490,7 @@ class ConciergeOrchestratorTest(unittest.TestCase):
         self.assertIn("reasoning_failed", result.errors)
         self.assertEqual(
             result.spoken_response,
-            "Sorry, I had trouble thinking that through.",
+            "Local reasoning failed unexpectedly.",
         )
         self.assertEqual(speech.speak_calls[-1], (result.spoken_response, "normal"))
 

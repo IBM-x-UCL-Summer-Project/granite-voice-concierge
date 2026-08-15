@@ -8,10 +8,21 @@ import numpy as np
 import pytest
 
 from voice_concierge.app import live
-from voice_concierge.app.types import AppPipelineState, AppTranscript, AppTurnResult
+from voice_concierge.app.types import (
+    AppPipelineState,
+    AppTranscript,
+    AppTurnResult,
+    MemoryOperationResult,
+)
 from voice_concierge.audio import CapturedAudio
 from voice_concierge.context.policies import policy_for_mode
 from voice_concierge.context.types import ContextDecision
+from voice_concierge.memory import MemoryOperationOutcome, MemoryOperationStatus
+from voice_concierge.reasoning import (
+    ReasoningBackendUnavailableError,
+    ReasoningConfigurationError,
+    ReasoningModelUnavailableError,
+)
 
 
 class FakePipeline:
@@ -78,7 +89,7 @@ def test_run_live_app_with_wake_word_processes_one_turn() -> None:
     stdout = io.StringIO()
 
     state = live.run_live_app(
-        live.LiveAppConfig(one_shot=True, play=False),
+        live.LiveAppConfig(one_shot=True, play=False, reminders=False),
         app_pipeline=pipeline,  # type: ignore[arg-type]
         wake_word_listener=listener,
         utterance_capturer=capturer,
@@ -105,6 +116,7 @@ def test_run_live_app_without_wake_word_uses_vad_only() -> None:
             one_shot=True,
             synthesize=False,
             play=False,
+            reminders=False,
         ),
         app_pipeline=pipeline,  # type: ignore[arg-type]
         utterance_capturer=capturer,
@@ -116,12 +128,48 @@ def test_run_live_app_without_wake_word_uses_vad_only() -> None:
     assert pipeline.calls[0]["play"] is False
 
 
+def test_live_result_prints_memory_failure_status_and_detail() -> None:
+    state = AppPipelineState()
+    result = AppTurnResult(
+        state=state,
+        spoken_response="I couldn't save that yet.",
+        context_decision=ContextDecision(
+            state=state.context,
+            policy=policy_for_mode(
+                state.context.mode,
+                state.context.accessibility,
+            ),
+        ),
+        transcript=AppTranscript(text="yes"),
+        memory_operation=MemoryOperationResult(
+            attempted=True,
+            outcome=MemoryOperationOutcome(
+                MemoryOperationStatus.MEMORY_GATEWAY_ERROR,
+                detail="database unavailable",
+            ),
+        ),
+        errors=("memory_action_failed",),
+    )
+    stdout = io.StringIO()
+
+    live._print_turn_result(result, stdout=stdout)
+
+    assert "Memory operation: memory_gateway_error (database unavailable)" in (
+        stdout.getvalue()
+    )
+
+
 def test_owned_pipeline_is_closed(monkeypatch) -> None:
     pipeline = FakePipeline()
     monkeypatch.setattr(live, "build_live_app_pipeline", lambda config: pipeline)
 
     live.run_live_app(
-        live.LiveAppConfig(use_wake_word=False, one_shot=True, play=False),
+        live.LiveAppConfig(
+            use_wake_word=False,
+            one_shot=True,
+            play=False,
+            reminders=False,
+        ),
         utterance_capturer=FakeUtteranceCapturer(),
         stdout=io.StringIO(),
     )
@@ -166,6 +214,44 @@ def test_config_from_args_no_tts_disables_playback() -> None:
 def test_config_rejects_play_without_synthesis() -> None:
     with pytest.raises(ValueError, match="play requires synthesize"):
         live.LiveAppConfig(synthesize=False, play=True)
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_code", "expected_message"),
+    (
+        (
+            ReasoningConfigurationError("bad selection"),
+            2,
+            "reasoning configuration error",
+        ),
+        (
+            ReasoningBackendUnavailableError("runner unavailable"),
+            1,
+            "reasoning unavailable",
+        ),
+        (
+            ReasoningModelUnavailableError("model unavailable"),
+            1,
+            "reasoning unavailable",
+        ),
+    ),
+)
+def test_main_maps_reasoning_startup_failures(
+    monkeypatch,
+    capsys,
+    error: Exception,
+    expected_code: int,
+    expected_message: str,
+) -> None:
+    def fail_startup(config) -> None:
+        raise error
+
+    monkeypatch.setattr(live, "run_live_app", fail_startup)
+
+    result = live.main(["--one-shot"])
+
+    assert result == expected_code
+    assert expected_message in capsys.readouterr().err
 
 
 def _audio() -> CapturedAudio:
@@ -215,7 +301,11 @@ class _FakeRoutines:
 def _run_one_turn(pipeline, routines, stdout):
     return live.run_live_app(
         live.LiveAppConfig(
-            use_wake_word=False, one_shot=True, synthesize=False, play=False
+            use_wake_word=False,
+            one_shot=True,
+            synthesize=False,
+            play=False,
+            reminders=False,
         ),
         app_pipeline=pipeline,
         utterance_capturer=FakeUtteranceCapturer(),
@@ -317,6 +407,7 @@ def test_disabling_guided_routines_skips_the_gate(monkeypatch) -> None:
             synthesize=False,
             play=False,
             guided_routines=False,
+            reminders=False,
         ),
         app_pipeline=pipeline,
         utterance_capturer=FakeUtteranceCapturer(),
@@ -412,6 +503,15 @@ class _FakeReminders:
         return "Timer set for 10 minutes."
 
 
+class _ClosableReminders(_FakeReminders):
+    def __init__(self) -> None:
+        super().__init__()
+        self.close_count = 0
+
+    def close(self) -> None:
+        self.close_count += 1
+
+
 def _run_reminder_turn(pipeline, reminders, stdout, *, config=None):
     return live.run_live_app(
         config
@@ -458,6 +558,48 @@ def test_an_unavailable_reminder_stack_falls_back_to_a_normal_turn(
     _run_reminder_turn(pipeline, None, io.StringIO())
 
     assert len(pipeline.calls) == 1
+
+
+def test_live_app_closes_the_reminder_handler_it_builds(monkeypatch) -> None:
+    reminders = _ClosableReminders()
+    monkeypatch.setattr(live, "build_reminder_turn_handler", lambda config: reminders)
+    monkeypatch.setattr(live, "_start_reminder_runner", lambda *a, **k: None)
+    pipeline = _RoutinePipeline(_FakeStt("remind me to stretch in 10 minutes"))
+
+    _run_reminder_turn(pipeline, None, io.StringIO())
+
+    assert reminders.close_count == 1
+
+
+def test_reminder_runner_reuses_the_turn_handler_service(monkeypatch) -> None:
+    service = object()
+    handler = live.ReminderTurnHandler(service)  # type: ignore[arg-type]
+    captured: dict[str, object] = {}
+
+    class _Runner:
+        def __init__(self, runner_service, notifier) -> None:
+            captured["service"] = runner_service
+            captured["notifier"] = notifier
+
+        def start(self) -> None:
+            captured["started"] = True
+
+    class _Pipeline:
+        text_to_speech = None
+        audio_player = None
+
+    monkeypatch.setattr(live, "ReminderRunner", _Runner)
+
+    runner = live._start_reminder_runner(
+        live.LiveAppConfig(synthesize=False, play=False),
+        _Pipeline(),  # type: ignore[arg-type]
+        lambda: handler,
+        io.StringIO(),
+    )
+
+    assert runner is not None
+    assert captured["service"] is service
+    assert captured["started"] is True
 
 
 def test_disabling_reminders_leaves_the_turn_ordinary(monkeypatch) -> None:

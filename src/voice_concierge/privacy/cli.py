@@ -27,7 +27,7 @@ from typing import TextIO
 from voice_concierge.privacy.centre import PrivacyCentre
 from voice_concierge.privacy.disclosure import build_report, format_report
 from voice_concierge.privacy.errors import PrivacyError
-from voice_concierge.privacy.factory import build_privacy_centre, default_database_paths
+from voice_concierge.privacy.factory import build_privacy_centre
 from voice_concierge.privacy.types import StoredMemory
 
 CONFIRM_WORD = "DELETE"  # typed in full before everything is erased
@@ -51,8 +51,7 @@ def format_memory(memory: StoredMemory, *, verbose: bool = False) -> str:
 
 def show_storage(centre: PrivacyCentre, *, stdout: TextIO) -> int:
     """Explain what is stored on this device, and what is not."""
-    memory_db, vector_db = default_database_paths()
-    report = build_report(centre, memory_db=memory_db, vector_db=vector_db)
+    report = build_report(centre)
     print(format_report(report), file=stdout)
     return 0
 

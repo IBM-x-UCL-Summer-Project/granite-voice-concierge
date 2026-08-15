@@ -11,9 +11,12 @@ from typing import Any, Iterable, Literal
 
 from voice_concierge.reasoning.engine import ReasoningEngine, TraceableReasoningEngine
 from voice_concierge.reasoning.types import (
+    InformationEvidence,
+    MemoryReference,
     ReasoningConstraints,
     ReasoningRequest,
     ReasoningResponse,
+    RuntimeReference,
 )
 
 EvaluationMode = Literal["raw", "guarded", "both"]
@@ -29,7 +32,8 @@ class BenchmarkCase:
     transcript: str
     mode: str
     expected_behavior: str
-    memories: tuple[str, ...] = ()
+    memories: tuple[MemoryReference, ...] = ()
+    runtime_context: tuple[RuntimeReference, ...] = ()
     conversation_summary: str | None = None
     checks: dict[str, Any] | None = None
 
@@ -43,6 +47,9 @@ class BenchmarkEvaluation:
     needs_confirmation: bool
     proposed_memory_action: str | None
     confidence: str
+    required_information_source: str
+    information_evidence: tuple[InformationEvidence, ...]
+    freshness_requirement: str
     metadata: dict[str, str]
     passed_checks: bool
     issues: tuple[str, ...]
@@ -56,7 +63,8 @@ class BenchmarkResult:
     category: str
     transcript: str
     mode: str
-    memories: tuple[str, ...]
+    memories: tuple[MemoryReference, ...]
+    runtime_context: tuple[RuntimeReference, ...]
     conversation_summary: str | None
     expected_behavior: str
     spoken_response: str
@@ -65,6 +73,9 @@ class BenchmarkResult:
     needs_confirmation: bool
     proposed_memory_action: str | None
     confidence: str
+    required_information_source: str
+    information_evidence: tuple[InformationEvidence, ...]
+    freshness_requirement: str
     metadata: dict[str, str]
     passed_checks: bool
     issues: tuple[str, ...]
@@ -101,7 +112,18 @@ def iter_benchmark_cases(suite: dict[str, Any]) -> Iterable[BenchmarkCase]:
                 transcript=case["transcript"],
                 mode=case.get("mode", "home"),
                 expected_behavior=case["expected_behavior"],
-                memories=tuple(case.get("memories", ())),
+                memories=tuple(
+                    _memory_reference_from_payload(memory, index=memory_index)
+                    for memory_index, memory in enumerate(
+                        case.get("memories", ()),
+                    )
+                ),
+                runtime_context=tuple(
+                    _runtime_reference_from_payload(reference, index=runtime_index)
+                    for runtime_index, reference in enumerate(
+                        case.get("runtime_context", ()),
+                    )
+                ),
                 conversation_summary=case.get("conversation_summary"),
                 checks=case.get("checks"),
             )
@@ -131,6 +153,7 @@ def run_reasoning_benchmark(
             transcript=case.transcript,
             mode=case.mode,
             memories=case.memories,
+            runtime_context=case.runtime_context,
             conversation_summary=case.conversation_summary,
             constraints=constraints,
         )
@@ -169,6 +192,7 @@ def run_reasoning_benchmark(
                 transcript=case.transcript,
                 mode=case.mode,
                 memories=case.memories,
+                runtime_context=case.runtime_context,
                 conversation_summary=case.conversation_summary,
                 expected_behavior=case.expected_behavior,
                 spoken_response=primary_evaluation.spoken_response,
@@ -177,6 +201,11 @@ def run_reasoning_benchmark(
                 needs_confirmation=primary_evaluation.needs_confirmation,
                 proposed_memory_action=primary_evaluation.proposed_memory_action,
                 confidence=primary_evaluation.confidence,
+                required_information_source=(
+                    primary_evaluation.required_information_source
+                ),
+                information_evidence=primary_evaluation.information_evidence,
+                freshness_requirement=primary_evaluation.freshness_requirement,
                 metadata=primary_evaluation.metadata,
                 passed_checks=primary_evaluation.passed_checks,
                 issues=primary_evaluation.issues,
@@ -209,6 +238,43 @@ def run_reasoning_benchmark(
         "elapsed_ms": round(elapsed_ms, 3),
         "results": [asdict(result) for result in results],
     }
+
+
+def _memory_reference_from_payload(
+    payload: object,
+    *,
+    index: int,
+) -> MemoryReference:
+    if not isinstance(payload, dict):
+        raise ValueError(f"memories[{index}] must be an object.")
+    try:
+        return MemoryReference(
+            memory_id=payload["memory_id"],
+            content=payload["content"],
+            layer=payload["layer"],
+            revision=payload["revision"],
+            memory_key=payload.get("memory_key"),
+            topic=payload.get("topic"),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"memories[{index}] is invalid: {exc}") from exc
+
+
+def _runtime_reference_from_payload(
+    payload: object,
+    *,
+    index: int,
+) -> RuntimeReference:
+    if not isinstance(payload, dict):
+        raise ValueError(f"runtime_context[{index}] must be an object.")
+    try:
+        return RuntimeReference(
+            runtime_id=payload["runtime_id"],
+            content=payload["content"],
+            observed_at=payload["observed_at"],
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"runtime_context[{index}] is invalid: {exc}") from exc
 
 
 def _generate_responses(
@@ -251,6 +317,8 @@ def _evaluate_response(
         max_words=max_words,
         needs_confirmation=response.needs_confirmation,
         proposed_memory_action=proposed_action,
+        required_information_source=response.required_information_source,
+        freshness_requirement=response.freshness_requirement,
     )
     return BenchmarkEvaluation(
         spoken_response=response.spoken_response,
@@ -258,6 +326,9 @@ def _evaluate_response(
         needs_confirmation=response.needs_confirmation,
         proposed_memory_action=proposed_action,
         confidence=response.confidence,
+        required_information_source=response.required_information_source,
+        information_evidence=response.information_evidence,
+        freshness_requirement=response.freshness_requirement,
         metadata=response.metadata,
         passed_checks=not issues,
         issues=tuple(issues),
@@ -296,6 +367,8 @@ def _evaluate_case(
     max_words: int,
     needs_confirmation: bool,
     proposed_memory_action: str | None,
+    required_information_source: str,
+    freshness_requirement: str,
 ) -> list[str]:
     issues: list[str] = []
     checks = case.checks or {}
@@ -317,6 +390,20 @@ def _evaluate_case(
         expected_action = checks["memory_action"]
         if proposed_memory_action != expected_action:
             issues.append(f"memory_action_expected_{expected_action}")
+
+    expected_source = checks.get("information_source")
+    if (
+        isinstance(expected_source, str)
+        and required_information_source != expected_source
+    ):
+        issues.append(f"information_source_expected_{expected_source}")
+
+    expected_freshness = checks.get("freshness_requirement")
+    if (
+        isinstance(expected_freshness, str)
+        and freshness_requirement != expected_freshness
+    ):
+        issues.append(f"freshness_requirement_expected_{expected_freshness}")
 
     required_any = checks.get("must_contain_any")
     if isinstance(required_any, list) and required_any:

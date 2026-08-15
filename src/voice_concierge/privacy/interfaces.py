@@ -3,6 +3,8 @@
 # Standard library
 from typing import Protocol, runtime_checkable
 
+from voice_concierge.memory.types import MemoryOperationOutcome, MemoryRecord
+
 
 @runtime_checkable
 class MemoryArchive(Protocol):
@@ -13,11 +15,20 @@ class MemoryArchive(Protocol):
     retrieval, so it cannot accidentally do either.
     """
 
-    def get_all_memories(self) -> list[dict]:
-        """Return every stored memory as a raw record."""
+    def get_all_memories(self) -> list[MemoryRecord]:
+        """Return every authoritative stored memory record."""
 
-    def update_memory(self, memory_id: int, content: str | None = None) -> tuple:
-        """Change a stored memory, returning (succeeded, reason)."""
+    def update_memory(
+        self,
+        memory_id: int,
+        content: str | None = None,
+        expected_revision: int | None = None,
+    ) -> MemoryOperationOutcome:
+        """Change one exact revision and return its typed outcome."""
 
-    def delete_memory(self, memory_id: int) -> tuple:
-        """Remove a stored memory and its vector, returning (succeeded, reason)."""
+    def delete_memory(
+        self,
+        memory_id: int,
+        expected_revision: int | None = None,
+    ) -> MemoryOperationOutcome:
+        """Remove one exact revision and return its typed outcome."""

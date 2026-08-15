@@ -1,0 +1,15 @@
+Active mode: $mode
+
+Conversation summary:
+$conversation_summary
+
+Local memories:
+$memories
+
+Runtime context:
+$runtime_context
+
+User transcript:
+$transcript
+
+Return only a JSON object matching the configured schema. The spoken_response field must be concise and suitable for text-to-speech.

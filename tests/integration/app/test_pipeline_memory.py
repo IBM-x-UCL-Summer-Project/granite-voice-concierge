@@ -15,9 +15,16 @@ from voice_concierge.app.reasoning import (
 from voice_concierge.memory import (
     LocalMemoryConfig,
     MemoryDecayPolicy,
+    MemoryOperationStatus,
     build_memory_manager,
 )
-from voice_concierge.reasoning.types import MemoryAction, ReasoningResponse
+from voice_concierge.reasoning.types import (
+    MemoryAction,
+    MemoryReference,
+    MemoryTarget,
+    ReasoningResponse,
+    StructuredListOperation,
+)
 
 
 class DeterministicEmbeddingService:
@@ -123,9 +130,15 @@ def test_memory_gateway_can_write_from_web_worker_thread(tmp_path) -> None:
     )
     gateway = MemoryManagerGateway(manager)
     action = MemoryAction(
-        action="update",
-        content="shopping_list:add:bananas",
+        action="store",
+        content=None,
         rationale="User asked to add an item.",
+        target=MemoryTarget(memory_key="list:shopping"),
+        list_operation=StructuredListOperation(
+            list_name="shopping",
+            operation="add_items",
+            items=("bananas",),
+        ),
     )
 
     try:
@@ -136,10 +149,10 @@ def test_memory_gateway_can_write_from_web_worker_thread(tmp_path) -> None:
                 "list_relevant",
             ).result()
 
-        assert result == (True, "stored_successfully")
-        assert manager.retrieve_by_metadata(topic="shopping")[0]["content"] == (
-            "shopping_list:add:bananas"
-        )
+        assert result.status is MemoryOperationStatus.STORED_SUCCESSFULLY
+        shopping_list = manager.get_memory_by_key("list:shopping")
+        assert shopping_list is not None
+        assert shopping_list.content == "Shopping list: bananas."
     finally:
         gateway.close()
 
@@ -193,11 +206,18 @@ def test_confirmed_memory_survives_reopen_and_reaches_reasoning(tmp_path) -> Non
     assert recall_reasoning.contexts
     context = recall_reasoning.contexts[0]
     assert context is not None
-    assert context.memories == ("User prefers tea.",)
+    assert context.memories == (
+        MemoryReference(
+            memory_id=1,
+            content="User prefers tea.",
+            layer="profile",
+            revision=1,
+        ),
+    )
 
 
 @pytest.mark.integration
-def test_failed_embedding_rolls_back_confirmed_memory_record(tmp_path) -> None:
+def test_failed_embedding_is_reconciled_after_reopen(tmp_path) -> None:
     config = LocalMemoryConfig(
         memory_db_path=tmp_path / "memories.sqlite3",
         vector_db_path=tmp_path / "vectors.sqlite3",
@@ -218,8 +238,152 @@ def test_failed_embedding_rolls_back_confirmed_memory_record(tmp_path) -> None:
         confirmation = pipeline.process_transcript("yes", proposal.state)
 
         assert confirmation.memory_operation.attempted is True
-        assert confirmation.memory_operation.succeeded is False
-        assert confirmation.errors == ("memory_action_failed",)
-        assert manager.get_all_memories() == []
+        assert confirmation.memory_operation.succeeded is True
+        assert confirmation.memory_operation.reason == "stored_pending_index"
+        assert confirmation.errors == ()
+        memories = manager.get_all_memories()
+        assert len(memories) == 1
+        assert memories[0].indexed_revision == 0
     finally:
         pipeline.close()
+
+    reopened_manager = build_memory_manager(
+        config,
+        embedding_service=DeterministicEmbeddingService(),
+        validator=FailingValidator(),
+    )
+    try:
+        memories = reopened_manager.get_all_memories()
+        assert len(memories) == 1
+        assert memories[0].content == "User prefers tea."
+        assert memories[0].indexed_revision == memories[0].revision == 1
+        assert reopened_manager.vector_store.has_vector(memories[0].id)
+    finally:
+        reopened_manager.close()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    (
+        "scope",
+        "list_name",
+        "memory_key",
+        "initial_item",
+        "additional_item",
+        "expected",
+    ),
+    (
+        (
+            "list_relevant",
+            "shopping",
+            "list:shopping",
+            "milk",
+            "bread",
+            "Shopping list: milk, bread.",
+        ),
+        (
+            "task_relevant_only",
+            "task",
+            "list:tasks",
+            "call the dentist",
+            "buy stamps",
+            "Task list: call the dentist, buy stamps.",
+        ),
+    ),
+)
+def test_first_structured_list_item_is_stored_then_later_items_are_updated(
+    tmp_path,
+    scope,
+    list_name,
+    memory_key,
+    initial_item,
+    additional_item,
+    expected,
+) -> None:
+    config = LocalMemoryConfig(
+        memory_db_path=tmp_path / "memories.sqlite3",
+        vector_db_path=tmp_path / "vectors.sqlite3",
+        embedding_dimension=4,
+    )
+    manager = build_memory_manager(
+        config,
+        embedding_service=DeterministicEmbeddingService(),
+        validator=FailingValidator(),
+    )
+    gateway = MemoryManagerGateway(manager)
+
+    first_action = MemoryAction(
+        action="store",
+        content=None,
+        rationale="User added the first structured-list item.",
+        target=MemoryTarget(memory_key=memory_key),
+        list_operation=StructuredListOperation(
+            list_name=list_name,
+            operation="add_items",
+            items=(initial_item,),
+        ),
+    )
+    later_action = MemoryAction(
+        action="update",
+        content=None,
+        rationale="User added another structured-list item.",
+        target=MemoryTarget(memory_key=memory_key, expected_revision=1),
+        list_operation=StructuredListOperation(
+            list_name=list_name,
+            operation="add_items",
+            items=(additional_item,),
+        ),
+    )
+
+    try:
+        assert gateway.apply(first_action, scope).status is (
+            MemoryOperationStatus.STORED_SUCCESSFULLY
+        )
+        assert gateway.apply(later_action, scope).status is (
+            MemoryOperationStatus.UPDATED_SUCCESSFULLY
+        )
+        structured_list = manager.memory_store.get_memory_by_key(memory_key)
+    finally:
+        gateway.close()
+
+    assert structured_list is not None
+    assert structured_list.content == expected
+
+
+@pytest.mark.integration
+def test_gateway_blocks_exact_mutation_outside_active_scope(tmp_path) -> None:
+    config = LocalMemoryConfig(
+        memory_db_path=tmp_path / "memories.sqlite3",
+        vector_db_path=tmp_path / "vectors.sqlite3",
+        embedding_dimension=4,
+    )
+    manager = build_memory_manager(
+        config,
+        embedding_service=DeterministicEmbeddingService(),
+        validator=FailingValidator(),
+    )
+    gateway = MemoryManagerGateway(manager)
+    stored = manager.store_memory(
+        content="User prefers tea.",
+        layer="profile",
+        validate=False,
+        auto_classify=False,
+        auto_extract=False,
+    )
+    assert stored.memory_id is not None
+    action = MemoryAction(
+        action="delete",
+        content="User prefers tea.",
+        rationale="Attempted cross-scope deletion.",
+        target=MemoryTarget(memory_id=stored.memory_id, expected_revision=1),
+    )
+
+    try:
+        outcome = gateway.apply(action, "list_relevant")
+        memory = manager.memory_store.get_memory_by_id(stored.memory_id)
+    finally:
+        gateway.close()
+
+    assert outcome.status is MemoryOperationStatus.MEMORY_SCOPE_MISMATCH
+    assert memory is not None
+    assert memory.content == "User prefers tea."

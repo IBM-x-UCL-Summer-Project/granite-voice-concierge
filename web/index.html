@@ -145,7 +145,7 @@
               <span>02</span><div><strong>Voice output</strong><small>Pace and volume</small></div>
             </li>
             <li data-progress-step="2">
-              <span>03</span><div><strong>Interaction</strong><small>Wake word and control</small></div>
+              <span>03</span><div><strong>Interaction</strong><small>Input and playback</small></div>
             </li>
             <li data-progress-step="3">
               <span>04</span><div><strong>Responses</strong><small>Length and review</small></div>
@@ -184,7 +184,7 @@
                   <select id="microphone-select" name="microphone_id">
                     <option value="default">System default microphone</option>
                   </select>
-                  <small>Used for wake word and speech capture.</small>
+                  <small>Used for push-to-talk speech capture in this web UI.</small>
                 </label>
                 <label class="setup-field" for="speaker-select">
                   <span>Speaker</span>
@@ -209,14 +209,14 @@
               </div>
               <button class="preview-button" id="preview-voice" type="button">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5Z" /><path d="M15 9.5c.7.7 1 1.5 1 2.5s-.3 1.8-1 2.5M18 7c1.4 1.4 2 3 2 5s-.6 3.6-2 5" /></svg>
-                Preview voice
+                Preview browser voice
               </button>
             </section>
 
             <section class="setup-step" data-setup-step="2" hidden>
               <div class="range-setting">
-                <div class="range-heading"><div><strong>Wake-word sensitivity</strong><span>Balance missed activations and false triggers</span></div><output id="sensitivity-output" for="wake-sensitivity">Balanced · 60%</output></div>
-                <input id="wake-sensitivity" name="wake_word_sensitivity" type="range" min="20" max="100" value="60" step="10" aria-label="Wake-word sensitivity" />
+                <div class="range-heading"><div><strong>Wake-word sensitivity</strong><span>The web UI does not stream microphone audio continuously; wake word remains available in the live runner.</span></div><output id="sensitivity-output" for="wake-sensitivity">Live runner only</output></div>
+                <input id="wake-sensitivity" name="wake_word_sensitivity" type="range" min="20" max="100" value="60" step="10" aria-label="Wake-word sensitivity" disabled />
                 <div class="range-scale"><span>Fewer false triggers</span><span>Easier to activate</span></div>
               </div>
               <fieldset class="preference-group">
@@ -224,17 +224,17 @@
                 <label class="choice-card">
                   <input type="radio" name="interaction_mode" value="voice_first" checked />
                   <span class="choice-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" /><path d="M5 10v2a7 7 0 0 0 14 0v-2" /></svg></span>
-                  <span><strong>Voice first</strong><small>Wake word starts each turn</small></span>
+                  <span><strong>Voice first</strong><small>Play every Piper response automatically</small></span>
                 </label>
                 <label class="choice-card">
                   <input type="radio" name="interaction_mode" value="push_to_talk" />
                   <span class="choice-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 11V7a2 2 0 0 1 4 0v4M12 10V6a2 2 0 0 1 4 0v5M16 10V8a2 2 0 0 1 4 0v6c0 5-3 8-8 8h-1c-3 0-5-1-7-4l-2-3a2 2 0 0 1 3-2l3 2" /></svg></span>
-                  <span><strong>Push to talk</strong><small>Listen only while a control is held</small></span>
+                  <span><strong>Push to talk</strong><small>Auto-play only after microphone turns</small></span>
                 </label>
                 <label class="choice-card">
                   <input type="radio" name="interaction_mode" value="text_first" />
                   <span class="choice-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v12H8l-4 4V5Z" /><path d="M8 9h8M8 13h5" /></svg></span>
-                  <span><strong>Text first</strong><small>Keep the transcript box ready</small></span>
+                  <span><strong>Text first</strong><small>Keep response playback manual</small></span>
                 </label>
               </fieldset>
             </section>
@@ -273,6 +273,7 @@
     </dialog>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script src="./app.js?v=20260812"></script>
+    <script src="./playback-policy.js?v=20260815"></script>
+    <script src="./app.js?v=20260815-2"></script>
   </body>
 </html>

@@ -1,5 +1,7 @@
 const STORAGE_KEY = "granite-pipeline-state-v1";
 const SETTINGS_STORAGE_KEY = "granite-personal-settings-v1";
+const SILENT_WAV_URL = "data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQIAAAAAAA==";
+const { shouldAutoPlayResponse: playbackPolicyAllows } = window.GranitePlaybackPolicy;
 
 const defaultSettings = {
   version: 1,
@@ -36,9 +38,15 @@ const state = {
   settingsDraft: null,
   setupStep: 0,
   running: false,
-  capabilities: { text_input: false, voice_input: false, voice_output: false },
+  capabilities: {
+    text_input: false,
+    voice_input: false,
+    voice_output: false,
+    wake_word: false,
+  },
   recorder: null,
   playback: null,
+  responseAudioElement: null,
 };
 
 const elements = {
@@ -131,7 +139,7 @@ const setupSteps = [
   },
   {
     title: "Choose how you interact",
-    description: "Tune wake-word sensitivity and decide how each conversation starts.",
+    description: "Choose when local Piper responses play automatically in this browser.",
   },
   {
     title: "Shape every response",
@@ -243,9 +251,9 @@ function savePersonalSettings() {
 function applyPersonalSettings() {
   const { response_length: responseLength } = state.settings;
   const interactionLabels = {
-    voice_first: "Wake word + transcript",
-    push_to_talk: "Push to talk",
-    text_first: "Transcript input",
+    voice_first: "Automatic voice playback",
+    push_to_talk: "Voice after microphone turns",
+    text_first: "Manual playback",
   };
   elements.interactionLabel.textContent = interactionLabels[state.settings.interaction_mode];
   elements.settingsButton.classList.toggle("is-configured", state.settings.setup_complete);
@@ -263,13 +271,7 @@ function updateRangeOutputs() {
   const speechLabel = speechRate < 0.9 ? "Slow" : speechRate > 1.1 ? "Fast" : "Normal";
   elements.speechRateOutput.textContent = `${speechLabel} · ${speechRate.toFixed(1)}×`;
   elements.volumeOutput.textContent = `${elements.voiceVolume.value}%`;
-  const sensitivity = Number(elements.wakeSensitivity.value);
-  const sensitivityLabel = sensitivity < 50
-    ? "Conservative"
-    : sensitivity > 70
-      ? "Sensitive"
-      : "Balanced";
-  elements.sensitivityOutput.textContent = `${sensitivityLabel} · ${sensitivity}%`;
+  elements.sensitivityOutput.textContent = "Live runner only";
 }
 
 function updateSetupReview() {
@@ -317,7 +319,10 @@ async function findAudioDevices() {
     );
     const microphones = devices.filter((device) => device.kind === "audioinput").length;
     const speakers = devices.filter((device) => device.kind === "audiooutput").length;
-    elements.deviceStatus.textContent = `Found ${microphones} microphone${microphones === 1 ? "" : "s"} and ${speakers} speaker${speakers === 1 ? "" : "s"}.`;
+    const pipelineStatus = state.capabilities.voice_input
+      ? " Local Whisper and Piper are enabled."
+      : " Restart the server with --voice-io to use local Whisper and Piper.";
+    elements.deviceStatus.textContent = `Found ${microphones} microphone${microphones === 1 ? "" : "s"} and ${speakers} speaker${speakers === 1 ? "" : "s"}.${pipelineStatus}`;
   } catch (error) {
     elements.deviceStatus.textContent = error.name === "NotAllowedError"
       ? "Microphone access was not allowed. You can keep the system defaults."
@@ -394,7 +399,7 @@ function appendMessage(role, text, options = {}) {
       ${isAssistant ? `
         <button class="speak-button" type="button" aria-label="Play assistant response">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5Z" /><path d="M15 9.5c.7.7 1 1.5 1 2.5s-.3 1.8-1 2.5M18 7c1.4 1.4 2 3 2 5s-.6 3.6-2 5" /></svg>
-          Play response
+          ${state.capabilities.voice_output ? "Play response" : "Play browser voice"}
         </button>` : ""}
     </div>`;
   elements.conversation.appendChild(article);
@@ -414,6 +419,7 @@ function appendMessage(role, text, options = {}) {
     elements.conversation.appendChild(error);
   }
   article.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  return speakButton;
 }
 
 function appendPipelineError(message) {
@@ -462,13 +468,13 @@ function turnOptions() {
   return {
     synthesize: Boolean(state.capabilities.voice_output),
     play: false,
+    response_length: state.settings.response_length,
   };
 }
 
 function requestTextTurn(transcript) {
   return requestJson("/api/turn", {
     transcript,
-    state: state.pipeline,
     options: turnOptions(),
   });
 }
@@ -476,7 +482,6 @@ function requestTextTurn(transcript) {
 function requestAudioTurn(wavBase64) {
   return requestJson("/api/audio", {
     wav_base64: wavBase64,
-    state: state.pipeline,
     options: turnOptions(),
   });
 }
@@ -490,12 +495,36 @@ function confirmationKind(response) {
 function stopPlayback() {
   window.speechSynthesis?.cancel();
   if (!state.playback) return;
-  state.playback.audio.pause();
-  state.playback.audio.currentTime = 0;
-  state.playback.button?.classList.remove("is-playing");
-  if (state.playback.button) state.playback.button.lastChild.textContent = " Play response";
-  URL.revokeObjectURL(state.playback.url);
+  const playback = state.playback;
   state.playback = null;
+  playback.audio.onended = null;
+  playback.audio.pause();
+  playback.audio.currentTime = 0;
+  playback.button?.classList.remove("is-playing");
+  if (playback.button) playback.button.lastChild.textContent = " Play response";
+  URL.revokeObjectURL(playback.url);
+}
+
+function unlockResponsePlayback() {
+  if (!state.capabilities.voice_output || state.responseAudioElement) return;
+
+  const audio = new Audio(SILENT_WAV_URL);
+  audio.muted = true;
+  state.responseAudioElement = audio;
+  const unlock = audio.play();
+  if (!unlock?.then) {
+    audio.muted = false;
+    return;
+  }
+  unlock.then(() => {
+    if (state.playback?.audio === audio) return;
+    audio.pause();
+    audio.currentTime = 0;
+    audio.muted = false;
+  }).catch(() => {
+    if (state.playback?.audio === audio) return;
+    if (state.responseAudioElement === audio) state.responseAudioElement = null;
+  });
 }
 
 async function playResponse(button) {
@@ -506,6 +535,9 @@ async function playResponse(button) {
   stopPlayback();
   const audioPayload = button.responseAudio;
   if (!audioPayload?.wav_base64) {
+    showToast(state.capabilities.voice_output
+      ? "Piper audio is unavailable for this response; using the browser voice"
+      : "Using the browser voice; start the server with --voice-io for Piper");
     speakText(button.fallbackText || "");
     return;
   }
@@ -513,7 +545,10 @@ async function playResponse(button) {
   const binary = window.atob(audioPayload.wav_base64);
   const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
   const url = URL.createObjectURL(new Blob([bytes], { type: "audio/wav" }));
-  const audio = new Audio(url);
+  const audio = state.responseAudioElement || new Audio();
+  state.responseAudioElement = audio;
+  audio.muted = false;
+  audio.src = url;
   audio.volume = Number(state.settings.volume) / 100;
   audio.playbackRate = effectiveSpeechRate(state.settings);
   if (state.settings.speaker_id !== "default" && typeof audio.setSinkId === "function") {
@@ -526,13 +561,24 @@ async function playResponse(button) {
   state.playback = { audio, button, url };
   button.classList.add("is-playing");
   button.lastChild.textContent = " Stop response";
-  audio.addEventListener("ended", stopPlayback, { once: true });
+  audio.onended = stopPlayback;
   try {
     await audio.play();
   } catch {
     stopPlayback();
-    speakText(button.fallbackText || "");
+    showToast("Automatic playback was blocked; choose Play response to retry");
   }
+}
+
+function shouldAutoPlayResponse(response, isAudioTurn) {
+  return playbackPolicyAllows({
+    voiceOutput: state.capabilities.voice_output,
+    audioAvailable: Boolean(response?.audio?.wav_base64),
+    confirmationRequired: Boolean(confirmationKind(response)),
+    speakConfirmations: state.settings.speak_confirmations,
+    interactionMode: state.settings.interaction_mode,
+    isAudioTurn,
+  });
 }
 
 async function startVoiceRecording() {
@@ -657,6 +703,7 @@ async function runTurn(input) {
   const transcript = isAudio ? "" : String(input || "").trim();
   if (!isAudio && !transcript) return;
 
+  unlockResponsePlayback();
   state.running = true;
   if (!isAudio) {
     elements.input.value = "";
@@ -678,7 +725,10 @@ async function runTurn(input) {
     state.pipeline = response.state;
     saveState();
 
-    renderConversationHistory(response);
+    const currentSpeakButton = renderConversationHistory(response);
+    if (currentSpeakButton && shouldAutoPlayResponse(response, isAudio)) {
+      await playResponse(currentSpeakButton);
+    }
   } catch (error) {
     appendPipelineError(error.message);
   } finally {
@@ -704,6 +754,7 @@ function updateSendState() {
 }
 
 function renderConversationHistory(response = null) {
+  let currentSpeakButton = null;
   elements.conversation
     .querySelectorAll(":scope > :not(.date-rule):not([data-welcome])")
     .forEach((node) => node.remove());
@@ -712,17 +763,18 @@ function renderConversationHistory(response = null) {
     const isCurrent = response
       && turn === state.pipeline.conversation_history.at(-1)
       && turn.assistant_response === response.spoken_response;
-    appendMessage("assistant", turn.assistant_response, isCurrent ? {
+    const speakButton = appendMessage("assistant", turn.assistant_response, isCurrent ? {
       confirmation: confirmationKind(response),
       errors: response.errors,
       audio: response.audio,
     } : {});
+    if (isCurrent) currentSpeakButton = speakButton;
   });
   const responseWasRecorded = response
     && state.pipeline.conversation_history.at(-1)?.assistant_response
       === response.spoken_response;
   if (response?.spoken_response && !responseWasRecorded) {
-    appendMessage("assistant", response.spoken_response, {
+    currentSpeakButton = appendMessage("assistant", response.spoken_response, {
       confirmation: confirmationKind(response),
       errors: response.errors,
       audio: response.audio,
@@ -734,6 +786,7 @@ function renderConversationHistory(response = null) {
     if (state.pipeline.context.pending_mode) appendConfirmation("mode");
     else if (state.pipeline.pending_memory_action) appendConfirmation("memory");
   }
+  return currentSpeakButton;
 }
 
 function restoreConversationHistory() {
@@ -752,11 +805,22 @@ async function connectPipeline() {
     elements.interactionLabel.textContent = state.capabilities.voice_input
       ? "Transcript or voice input"
       : "Transcript input · voice I/O disabled";
+    if (!state.capabilities.voice_input) {
+      elements.deviceStatus.textContent = (
+        "Browser devices can be selected, but local STT/TTS is disabled. "
+        + "Restart the server with --voice-io."
+      );
+    }
     elements.microphoneButton.title = state.capabilities.voice_input
       ? "Start voice input"
       : "Run the server with --voice-io to enable voice input";
   } catch {
-    state.capabilities = { text_input: false, voice_input: false, voice_output: false };
+    state.capabilities = {
+      text_input: false,
+      voice_input: false,
+      voice_output: false,
+      wake_word: false,
+    };
     elements.runtimeLabel.textContent = "Pipeline offline";
     elements.runtimeModel.textContent = "unavailable";
     elements.runtimeDot.classList.add("is-offline");
@@ -817,6 +881,7 @@ elements.modeSelect.addEventListener("change", () => {
 });
 
 elements.microphoneButton.addEventListener("click", async () => {
+  unlockResponsePlayback();
   if (state.recorder) {
     await stopVoiceRecording();
   } else {

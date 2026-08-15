@@ -5,8 +5,21 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from voice_concierge.memory import (
+    MemoryCommandTarget,
+    MemoryOperationOutcome,
+    MemoryOperationStatus,
+    MemoryRecord,
+    MemorySearchResult,
+    StoreMemoryCommand,
+    UpdateMemoryCommand,
+)
 from voice_concierge.orchestration import MemoryManagerGateway, OfflineTTSSpeechGateway
-from voice_concierge.reasoning.types import MemoryAction
+from voice_concierge.reasoning.types import (
+    MemoryAction,
+    MemoryReference,
+    MemoryTarget,
+)
 
 try:
     from voice_concierge.voice_output.tts_pipeline import OfflineTTS
@@ -17,8 +30,13 @@ except ImportError:
 class FakeMemoryManager:
     def __init__(self) -> None:
         self.retrieve_calls = []
-        self.store_calls = []
         self.process_calls = []
+
+    def get_memory_by_key(self, memory_key):
+        return None
+
+    def get_memory_by_id(self, memory_id):
+        return None
 
     def retrieve_similar(self, query, top_k=5, person=None, topic=None, layer=None):
         self.retrieve_calls.append(
@@ -30,15 +48,36 @@ class FakeMemoryManager:
                 "layer": layer,
             }
         )
-        return [{"content": "remembered item"}, {"missing": "content"}]
+        return [
+            MemorySearchResult(
+                memory=MemoryRecord(
+                    id=1,
+                    content="remembered item",
+                    layer=layer or "profile",
+                    memory_key=None,
+                    revision=1,
+                    indexed_revision=1,
+                    deleted_at=None,
+                    created_at=1,
+                    event_time=None,
+                    last_accessed=None,
+                    strength=1,
+                    person=None,
+                    source_type=None,
+                    topic=None,
+                ),
+                distance=0.1,
+            ),
+        ]
 
-    def store_memory(self, **kwargs):
-        self.store_calls.append(kwargs)
-        return True, "stored_successfully", 123
-
-    def process_memory_action(self, action):
-        self.process_calls.append(action)
-        return True, "processed"
+    def execute_memory_command(self, command):
+        self.process_calls.append(command)
+        if isinstance(command, StoreMemoryCommand):
+            return MemoryOperationOutcome(
+                MemoryOperationStatus.STORED_SUCCESSFULLY,
+                memory_id=123,
+            )
+        return MemoryOperationOutcome(MemoryOperationStatus.UPDATED_SUCCESSFULLY)
 
 
 class FakeTTS:
@@ -63,23 +102,39 @@ class OrchestrationAdaptersTest(unittest.TestCase):
         self.assertEqual(gateway.retrieve("tea", "none"), ())
         self.assertEqual(
             gateway.retrieve("tea", "personal_relevant", limit=2),
-            ("remembered item",),
+            (
+                MemoryReference(
+                    memory_id=1,
+                    content="remembered item",
+                    layer="profile",
+                    revision=1,
+                ),
+            ),
         )
         self.assertEqual(
             gateway.retrieve("recipe", "task_relevant_only"),
-            ("remembered item",),
+            (
+                MemoryReference(
+                    memory_id=1,
+                    content="remembered item",
+                    layer="feedback",
+                    revision=1,
+                ),
+            ),
         )
         self.assertEqual(
             gateway.retrieve("milk", "list_relevant"),
-            ("remembered item",),
+            (),
         )
 
         self.assertEqual(manager.retrieve_calls[0]["topic"], None)
+        self.assertEqual(manager.retrieve_calls[0]["layer"], "profile")
         self.assertEqual(manager.retrieve_calls[0]["top_k"], 2)
-        self.assertEqual(manager.retrieve_calls[1]["topic"], "procedural")
-        self.assertEqual(manager.retrieve_calls[2]["topic"], "shopping")
+        self.assertEqual(manager.retrieve_calls[1]["topic"], "task")
+        self.assertEqual(manager.retrieve_calls[1]["layer"], "feedback")
+        self.assertEqual(len(manager.retrieve_calls), 2)
 
-    def test_shopping_store_action_uses_shopping_topic(self) -> None:
+    def test_shopping_scope_rejects_untyped_store(self) -> None:
         manager = FakeMemoryManager()
         gateway = MemoryManagerGateway(manager)
         action = MemoryAction(
@@ -91,34 +146,32 @@ class OrchestrationAdaptersTest(unittest.TestCase):
 
         result = gateway.apply(action, "list_relevant")
 
-        self.assertEqual(result, (True, "stored_successfully"))
-        self.assertEqual(
-            manager.store_calls,
-            [
-                {
-                    "content": "Buy oat milk.",
-                    "layer": "feedback",
-                    "topic": "shopping",
-                    "validate": False,
-                }
-            ],
-        )
+        self.assertEqual(result.status, MemoryOperationStatus.MEMORY_SCOPE_MISMATCH)
         self.assertEqual(manager.process_calls, [])
 
-    def test_non_shopping_memory_action_delegates_to_manager(self) -> None:
+    def test_non_store_memory_action_delegates_to_manager(self) -> None:
         manager = FakeMemoryManager()
         gateway = MemoryManagerGateway(manager)
         action = MemoryAction(
-            action="store",
+            action="update",
             content="User likes tea.",
             rationale="Preference.",
+            target=MemoryTarget(memory_key="preference:drink"),
             requires_confirmation=True,
         )
 
         result = gateway.apply(action, "personal_relevant")
 
-        self.assertEqual(result, (True, "processed"))
-        self.assertEqual(manager.process_calls, [action])
+        self.assertEqual(result.status, MemoryOperationStatus.UPDATED_SUCCESSFULLY)
+        self.assertEqual(
+            manager.process_calls,
+            [
+                UpdateMemoryCommand(
+                    target=MemoryCommandTarget(memory_key="preference:drink"),
+                    content="User likes tea.",
+                )
+            ],
+        )
 
     def test_speech_gateway_maps_pace_to_length_scale_and_stop(self) -> None:
         tts = FakeTTS()

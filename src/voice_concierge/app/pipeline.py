@@ -5,7 +5,11 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Protocol
 
-from voice_concierge.app.memory import MemoryGateway, NullMemoryGateway
+from voice_concierge.app.memory import (
+    MemoryGateway,
+    NullMemoryGateway,
+    retrieval_scope_for_turn,
+)
 from voice_concierge.app.reasoning import (
     ReasoningFailure,
     ReasoningTurnContext,
@@ -22,20 +26,46 @@ from voice_concierge.app.types import (
     AudioPlayerAdapter,
     ConversationTurn,
     MemoryOperationResult,
+    RuntimeContextProvider,
     SpeechToTextAdapter,
     TextToSpeechAdapter,
     TranscriptResult,
 )
 from voice_concierge.audio.types import CapturedAudio
-from voice_concierge.context.manager import ContextManager
+from voice_concierge.context.manager import (
+    CONFIRMATION_CLARIFICATION_PROMPT,
+    ContextManager,
+    detect_confirmation_intent,
+)
 from voice_concierge.context.policies import policy_for_mode
-from voice_concierge.context.types import ContextDecision, ContextMode, ContextState
-from voice_concierge.reasoning.types import ReasoningResponse
+from voice_concierge.context.types import (
+    ConfirmationIntent,
+    ContextDecision,
+    ContextMode,
+    ContextState,
+    MemoryScope,
+    Verbosity,
+)
+from voice_concierge.memory.types import (
+    MemoryOperationOutcome,
+    MemoryOperationStatus,
+)
+from voice_concierge.memory_contracts import (
+    SHOPPING_LIST_MEMORY_KEY,
+    TASK_LIST_MEMORY_KEY,
+)
+from voice_concierge.reasoning.types import (
+    MemoryAction,
+    MemoryReference,
+    ReasoningResponse,
+    RuntimeReference,
+)
 
 _EMPTY_TRANSCRIPT_RESPONSE = "I didn't catch that. Could you say it again?"
 _STT_FAILED_RESPONSE = "I couldn't transcribe that. Please try again."
 _MEMORY_CANCELLED_RESPONSE = "Okay, I won't save that."
 _MEMORY_SAVED_RESPONSE = "I've saved that."
+_MEMORY_ALREADY_SAVED_RESPONSE = "I already had that saved."
 _MEMORY_FAILED_RESPONSE = "I couldn't save that yet."
 _NOTHING_TO_REPEAT_RESPONSE = "I don't have anything to repeat yet."
 _STOP_RESPONSE = "Okay, I'll stop."
@@ -50,8 +80,6 @@ _MODE_CHANGED_RESPONSES: dict[ContextMode, str] = {
     ),
 }
 
-_CONFIRM_WORDS = ("yes", "confirm", "okay", "ok", "go ahead")
-_CANCEL_WORDS = ("cancel", "stop", "never mind", "nevermind", "no")
 DEFAULT_CONVERSATION_HISTORY_LIMIT = 6
 
 
@@ -78,6 +106,7 @@ class VoiceConciergePipeline:
         speech_to_text: SpeechToTextAdapter | None = None,
         text_to_speech: TextToSpeechAdapter | None = None,
         audio_player: AudioPlayerAdapter | None = None,
+        runtime_context: RuntimeContextProvider | None = None,
         memory_context_limit: int = 3,
         conversation_history_limit: int = DEFAULT_CONVERSATION_HISTORY_LIMIT,
     ) -> None:
@@ -90,6 +119,7 @@ class VoiceConciergePipeline:
         self._speech_to_text = speech_to_text
         self._text_to_speech = text_to_speech
         self._audio_player = audio_player
+        self._runtime_context = runtime_context
         self._memory_context_limit = memory_context_limit
         self._conversation_history_limit = conversation_history_limit
 
@@ -126,6 +156,7 @@ class VoiceConciergePipeline:
             request.state,
             synthesize=request.options.synthesize,
             play=request.options.play,
+            response_length=request.options.response_length,
         )
 
     def close(self) -> None:
@@ -142,15 +173,23 @@ class VoiceConciergePipeline:
         *,
         synthesize: bool = False,
         play: bool = False,
+        response_length: Verbosity | None = None,
     ) -> AppTurnResult:
         """Process one transcript turn and return response plus next state."""
 
-        current_state = self._bounded_state(state or AppPipelineState())
+        current_state = self._with_response_length(
+            self._bounded_state(state or AppPipelineState()),
+            response_length,
+        )
         app_transcript = AppTranscript(text=transcript.strip())
         return self._process_app_transcript(
             app_transcript,
             current_state,
-            options=AppTurnOptions(synthesize=synthesize, play=play),
+            options=AppTurnOptions(
+                synthesize=synthesize,
+                play=play,
+                response_length=response_length,
+            ),
         )
 
     def process_audio(
@@ -160,11 +199,19 @@ class VoiceConciergePipeline:
         *,
         synthesize: bool = False,
         play: bool = False,
+        response_length: Verbosity | None = None,
     ) -> AppTurnResult:
         """Transcribe captured audio, then process it through the same turn path."""
 
-        current_state = self._bounded_state(state or AppPipelineState())
-        options = AppTurnOptions(synthesize=synthesize, play=play)
+        current_state = self._with_response_length(
+            self._bounded_state(state or AppPipelineState()),
+            response_length,
+        )
+        options = AppTurnOptions(
+            synthesize=synthesize,
+            play=play,
+            response_length=response_length,
+        )
         if self._speech_to_text is None:
             return self._finalize_result(
                 state=current_state,
@@ -216,19 +263,11 @@ class VoiceConciergePipeline:
             )
 
         if current_state.pending_memory_action is not None:
-            intent = _confirmation_intent(normalized_text)
-            if intent is not None:
-                return self._handle_pending_memory_action(
-                    transcript,
-                    current_state,
-                    intent=intent,
-                    options=options,
-                )
-
-            current_state = replace(
+            return self._handle_pending_memory_action(
+                transcript,
                 current_state,
-                pending_memory_action=None,
-                pending_memory_scope=None,
+                intent=detect_confirmation_intent(normalized_text),
+                options=options,
             )
 
         context_decision = self._context_manager.handle(
@@ -263,21 +302,41 @@ class VoiceConciergePipeline:
         if command_result is not None:
             return command_result
 
-        memories: tuple[str, ...] = ()
+        memories: tuple[MemoryReference, ...] = ()
+        runtime_context: tuple[RuntimeReference, ...] = ()
         errors: list[AppTurnError] = []
-        if context_decision.policy.memory_scope != "none":
+        retrieval_scope = retrieval_scope_for_turn(
+            normalized_text,
+            context_decision.policy.memory_scope,
+        )
+        if retrieval_scope != "none":
             try:
                 memories = self._memory.retrieve(
                     normalized_text,
-                    context_decision.policy.memory_scope,
+                    retrieval_scope,
                     limit=self._memory_context_limit,
                 )
             except Exception:
                 errors.append("memory_retrieval_failed")
 
+        if self._runtime_context is not None:
+            try:
+                candidate_runtime_context = self._runtime_context.snapshot()
+                if not isinstance(candidate_runtime_context, tuple) or not all(
+                    isinstance(reference, RuntimeReference)
+                    for reference in candidate_runtime_context
+                ):
+                    raise TypeError(
+                        "Runtime context must be a tuple of RuntimeReference values."
+                    )
+                runtime_context = candidate_runtime_context
+            except Exception:
+                errors.append("runtime_context_failed")
+
         reasoning_context = ReasoningTurnContext(
             mode=context_decision.policy.mode,
             memories=memories,
+            runtime_context=runtime_context,
             conversation_summary=_conversation_summary(
                 current_state.conversation_history
             ),
@@ -302,7 +361,10 @@ class VoiceConciergePipeline:
             proposed_memory_action is not None
             and context_decision.policy.memory_scope != "none"
         ):
-            pending_memory_scope = context_decision.policy.memory_scope
+            pending_memory_scope = _memory_action_scope(
+                proposed_memory_action,
+                fallback=context_decision.policy.memory_scope,
+            )
 
         next_state = AppPipelineState(
             context=context_decision.state,
@@ -332,15 +394,31 @@ class VoiceConciergePipeline:
         transcript: AppTranscript,
         current_state: AppPipelineState,
         *,
-        intent: str,
+        intent: ConfirmationIntent,
         options: AppTurnOptions,
     ) -> AppTurnResult:
-        context_decision = self._context_manager.handle(
-            transcript.text,
-            current_state.context,
-        )
+        context_decision = _decision_for_state(current_state.context)
         pending_action = current_state.pending_memory_action
         pending_scope = current_state.pending_memory_scope
+
+        if intent == "ambiguous":
+            next_state = replace(
+                current_state,
+                context=context_decision.state,
+                last_spoken_response=CONFIRMATION_CLARIFICATION_PROMPT,
+                conversation_history=self._record_conversation(
+                    current_state,
+                    transcript,
+                    CONFIRMATION_CLARIFICATION_PROMPT,
+                ),
+            )
+            return self._finalize_result(
+                state=next_state,
+                spoken_response=CONFIRMATION_CLARIFICATION_PROMPT,
+                context_decision=context_decision,
+                transcript=transcript,
+                options=options,
+            )
 
         if intent == "cancel" or pending_action is None or pending_scope is None:
             next_state = AppPipelineState(
@@ -361,21 +439,26 @@ class VoiceConciergePipeline:
             )
 
         try:
-            succeeded, reason = self._memory.apply(pending_action, pending_scope)
+            outcome = self._memory.apply(pending_action, pending_scope)
         except Exception as exc:
-            succeeded = False
-            reason = exc.__class__.__name__
+            outcome = MemoryOperationOutcome(
+                MemoryOperationStatus.MEMORY_GATEWAY_ERROR,
+                detail=exc.__class__.__name__,
+            )
 
         memory_operation = MemoryOperationResult(
             attempted=True,
-            succeeded=succeeded,
-            reason=reason,
+            outcome=outcome,
         )
-        spoken_response = (
-            _MEMORY_SAVED_RESPONSE if succeeded else _MEMORY_FAILED_RESPONSE
-        )
+        already_stored = outcome.status is MemoryOperationStatus.DUPLICATE_FOUND
+        if outcome.succeeded:
+            spoken_response = _MEMORY_SAVED_RESPONSE
+        elif already_stored:
+            spoken_response = _MEMORY_ALREADY_SAVED_RESPONSE
+        else:
+            spoken_response = _MEMORY_FAILED_RESPONSE
         errors: tuple[AppTurnError, ...] = (
-            () if succeeded else ("memory_action_failed",)
+            () if outcome.succeeded or already_stored else ("memory_action_failed",)
         )
         next_state = AppPipelineState(
             context=context_decision.state,
@@ -385,8 +468,13 @@ class VoiceConciergePipeline:
                 transcript,
                 spoken_response,
             ),
-            pending_memory_action=None if succeeded else pending_action,
-            pending_memory_scope=None if succeeded else pending_scope,
+            # A confirmation is one transaction attempt. Retaining a failed
+            # action traps every later utterance in the yes/no branch even
+            # though repeating "yes" cannot repair a stale target, invalid
+            # scope, or unavailable store. The user can restate the mutation
+            # after the failure has been reported.
+            pending_memory_action=None,
+            pending_memory_scope=None,
         )
         return self._finalize_result(
             state=next_state,
@@ -469,6 +557,24 @@ class VoiceConciergePipeline:
             conversation_history=self._bounded_history(state.conversation_history),
         )
 
+    def _with_response_length(
+        self,
+        state: AppPipelineState,
+        response_length: Verbosity | None,
+    ) -> AppPipelineState:
+        """Apply an explicit caller preference without trusting posted state."""
+
+        if response_length is None:
+            return state
+        accessibility = replace(
+            state.context.accessibility,
+            verbosity=response_length,
+        )
+        return replace(
+            state,
+            context=replace(state.context, accessibility=accessibility),
+        )
+
     def _record_conversation(
         self,
         state: AppPipelineState,
@@ -549,6 +655,36 @@ def _normalize(text: str) -> str:
     return " ".join(text.strip().split())
 
 
+def _memory_action_scope(
+    action: MemoryAction,
+    *,
+    fallback: MemoryScope,
+) -> MemoryScope:
+    """Resolve mutation authority from the typed target, not the UI mode.
+
+    Mode policy controls what is retrieved for a turn. An explicit shopping or
+    task-list mutation remains that mutation when spoken from home or cooking
+    mode; treating the current mode as its write scope makes valid operations
+    fail after confirmation. Driving mode is filtered before this helper.
+    """
+
+    if action.list_operation is not None:
+        return (
+            "list_relevant"
+            if action.list_operation.list_name == "shopping"
+            else "task_relevant_only"
+        )
+
+    target_key = action.target.memory_key if action.target is not None else None
+    if target_key == SHOPPING_LIST_MEMORY_KEY:
+        return "list_relevant"
+    if target_key == TASK_LIST_MEMORY_KEY:
+        return "task_relevant_only"
+    if action.action == "store":
+        return "personal_relevant"
+    return fallback
+
+
 def _conversation_summary(history: tuple[ConversationTurn, ...]) -> str | None:
     if not history:
         return None
@@ -561,19 +697,6 @@ def _conversation_summary(history: tuple[ConversationTurn, ...]) -> str | None:
         )
         for index, turn in enumerate(history, start=1)
     )
-
-
-def _contains_any(text: str, phrases: tuple[str, ...]) -> bool:
-    return any(phrase in text for phrase in phrases)
-
-
-def _confirmation_intent(normalized_text: str) -> str | None:
-    text = normalized_text.lower()
-    if _contains_any(text, _CANCEL_WORDS):
-        return "cancel"
-    if _contains_any(text, _CONFIRM_WORDS):
-        return "confirm"
-    return None
 
 
 def _decision_for_state(state: ContextState) -> ContextDecision:

@@ -9,7 +9,9 @@ import pytest
 from httpx import ReadTimeout
 from ollama import ChatResponse, ResponseError
 
+from tests.support import memory_reference, runtime_reference
 from voice_concierge.reasoning import (
+    MemoryTarget,
     OllamaBackendUnavailableError,
     OllamaConfig,
     OllamaGenerationError,
@@ -21,6 +23,7 @@ from voice_concierge.reasoning import (
     ReasoningConstraints,
     ReasoningRequest,
     ReasoningRequestError,
+    StructuredListOperation,
 )
 
 
@@ -38,6 +41,9 @@ def _structured_content(
     proposed_memory_action: dict[str, object] | None = None,
     mode_suggestion: str | None = None,
     confidence: str = "medium",
+    required_information_source: str = "none",
+    information_evidence: list[dict[str, object]] | None = None,
+    freshness_requirement: str = "not_required",
 ) -> str:
     return json.dumps(
         {
@@ -46,6 +52,9 @@ def _structured_content(
             "proposed_memory_action": proposed_memory_action,
             "mode_suggestion": mode_suggestion,
             "confidence": confidence,
+            "required_information_source": required_information_source,
+            "information_evidence": information_evidence or [],
+            "freshness_requirement": freshness_requirement,
         }
     )
 
@@ -86,6 +95,7 @@ def _engine_with_response(
         ("keep_alive", "", "keep_alive"),
         ("keep_alive", 0, "keep_alive"),
         ("keep_alive", True, "keep_alive"),
+        ("model_role", "emergency", "model_role"),
     ),
 )
 def test_ollama_config_rejects_invalid_values(
@@ -144,7 +154,7 @@ def test_ollama_engine_sends_chat_messages_and_generated_schema() -> None:
     response = engine.generate(
         ReasoningRequest(
             transcript="How do I like you to answer?",
-            memories=("User prefers short answers.",),
+            memories=(memory_reference("User prefers short answers."),),
         )
     )
 
@@ -153,6 +163,9 @@ def test_ollama_engine_sends_chat_messages_and_generated_schema() -> None:
     assert call["stream"] is False
     assert call["format"]["type"] == "object"
     assert call["format"]["additionalProperties"] is False
+    assert "required_information_source" in call["format"]["required"]
+    assert "information_evidence" in call["format"]["required"]
+    assert "freshness_requirement" in call["format"]["required"]
     assert call["keep_alive"] == "5m"
     assert call["options"] == {
         "temperature": 0.2,
@@ -168,9 +181,10 @@ def test_ollama_engine_sends_chat_messages_and_generated_schema() -> None:
     assert response.proposed_memory_action is None
     assert response.metadata["backend"] == "ollama"
     assert response.metadata["model"] == "granite-local-test"
+    assert response.metadata["model_role"] == "primary"
     assert response.metadata["output_format"] == "structured_json"
     assert response.metadata["prompt_id"] == "local-reasoning"
-    assert response.metadata["prompt_version"] == "v2"
+    assert response.metadata["prompt_version"] == "v3"
     assert response.metadata["temperature"] == "0.2"
     assert response.metadata["top_p"] == "0.9"
     assert response.metadata["num_ctx"] == "4096"
@@ -229,28 +243,127 @@ def test_ollama_engine_validates_request_before_client_call() -> None:
 def test_ollama_engine_parses_memory_action() -> None:
     engine, _ = _engine_with_response(
         _structured_content(
-            "I can remember that.",
+            "I can remember that. Please confirm before I save it.",
             proposed_memory_action={
                 "action": "store",
                 "content": "User prefers short answers.",
                 "rationale": "User explicitly asked to remember it.",
+                "target": {"memory_key": "preference:answer_length"},
                 "requires_confirmation": True,
             },
             confidence="high",
+            required_information_source="user_input",
+            information_evidence=[{"source": "user_input", "quote": "Please help."}],
         )
     )
 
-    response = engine.generate(
-        ReasoningRequest(transcript="Remember that I prefer short answers.")
-    )
+    response = engine.generate(ReasoningRequest(transcript="Please help."))
 
     assert response.needs_confirmation is True
     assert response.proposed_memory_action is not None
     assert response.proposed_memory_action.action == "store"
-    assert response.proposed_memory_action.content == "I prefer short answers"
+    assert response.proposed_memory_action.content == "User prefers short answers."
+    assert response.proposed_memory_action.target == MemoryTarget(
+        memory_key="preference:answer_length"
+    )
+    assert response.required_information_source == "user_input"
+    assert response.freshness_requirement == "not_required"
     assert "confirm" in response.spoken_response.lower()
     assert response.confidence == "high"
-    assert response.metadata["policy_guard"] == "memory_store_confirmation"
+
+
+def test_ollama_engine_rejects_mutation_without_exact_target() -> None:
+    engine, _ = _engine_with_response(
+        _structured_content(
+            "I updated that.",
+            proposed_memory_action={
+                "action": "update",
+                "content": "User prefers tea.",
+                "rationale": "Model selected a memory without identity.",
+                "requires_confirmation": True,
+            },
+        )
+    )
+
+    response = engine.generate(ReasoningRequest(transcript="Please help."))
+
+    assert response.proposed_memory_action is None
+    assert response.metadata["structured_parse_error"] == ("schema_validation_failed")
+
+
+def test_ollama_engine_parses_typed_structured_list_operation() -> None:
+    engine, _ = _engine_with_response(
+        _structured_content(
+            "I can add milk and bread. Please confirm before I save it.",
+            needs_confirmation=True,
+            proposed_memory_action={
+                "action": "store",
+                "content": None,
+                "rationale": "User asked to add shopping items.",
+                "target": {"memory_key": "list:shopping"},
+                "list_operation": {
+                    "list_name": "shopping",
+                    "operation": "add_items",
+                    "items": ["milk", "bread"],
+                },
+                "requires_confirmation": True,
+            },
+            required_information_source="user_input",
+            information_evidence=[
+                {
+                    "source": "user_input",
+                    "quote": "Add milk and bread to my shopping list.",
+                }
+            ],
+        )
+    )
+
+    response = engine.generate(
+        ReasoningRequest(
+            transcript="Add milk and bread to my shopping list.",
+            mode="shopping",
+        )
+    )
+
+    assert response.proposed_memory_action is not None
+    assert response.proposed_memory_action.content is None
+    assert response.proposed_memory_action.list_operation == (
+        StructuredListOperation(
+            list_name="shopping",
+            operation="add_items",
+            items=("milk", "bread"),
+        )
+    )
+
+
+def test_ollama_engine_parses_and_verifies_runtime_evidence() -> None:
+    clock = runtime_reference("Local device time: 15:05.")
+    engine, _ = _engine_with_response(
+        _structured_content(
+            "It is 15:05.",
+            confidence="high",
+            required_information_source="runtime_live",
+            information_evidence=[
+                {
+                    "source": "runtime_context",
+                    "quote": clock.content,
+                    "runtime_id": clock.runtime_id,
+                    "observed_at": clock.observed_at,
+                }
+            ],
+            freshness_requirement="current",
+        )
+    )
+
+    response = engine.generate(
+        ReasoningRequest(
+            transcript="What time is it?",
+            runtime_context=(clock,),
+        )
+    )
+
+    assert response.spoken_response == "It is 15:05."
+    assert response.information_evidence == (clock.information_evidence(),)
 
 
 def test_ollama_engine_maps_connection_errors() -> None:
@@ -320,7 +433,9 @@ def test_ollama_engine_falls_back_on_invalid_json() -> None:
 
     response = engine.generate(ReasoningRequest(transcript="Hello"))
 
-    assert response.spoken_response == "Plain text response."
+    assert (
+        response.spoken_response == "I could not produce a valid structured response."
+    )
     assert response.confidence == "low"
     assert response.metadata["structured_parse_error"] == "invalid_json"
 
@@ -367,6 +482,46 @@ def test_ollama_engine_applies_policy_guards() -> None:
     assert response.proposed_memory_action.action == "update"
     assert response.proposed_memory_action.content == "accessibility.verbosity=short"
     assert response.metadata["policy_guard"] == "accessibility_preference_confirmation"
+
+
+def test_ollama_engine_blocks_declared_live_source_without_phrase_matching() -> None:
+    engine, _ = _engine_with_response(
+        _structured_content(
+            "The pharmacy is open.",
+            required_information_source="external_live",
+            freshness_requirement="current",
+        )
+    )
+
+    response = engine.generate(
+        ReasoningRequest(transcript="Is the pharmacy open at the moment?")
+    )
+
+    assert response.spoken_response == "I cannot verify up-to-date information offline."
+    assert response.metadata["policy_guard"] == ("external_source_unavailable_offline")
+
+
+def test_ollama_engine_stores_declared_user_fact_with_temporal_language() -> None:
+    engine, _ = _engine_with_response(
+        _structured_content(
+            "I can remember that. Please confirm before I save it.",
+            required_information_source="user_input",
+            information_evidence=[
+                {
+                    "source": "user_input",
+                    "quote": "Remember my appointment this afternoon.",
+                }
+            ],
+        )
+    )
+
+    response = engine.generate(
+        ReasoningRequest(transcript="Remember my appointment this afternoon.")
+    )
+
+    assert response.proposed_memory_action is not None
+    assert response.proposed_memory_action.action == "store"
+    assert response.proposed_memory_action.content == "my appointment this afternoon"
 
 
 def test_ollama_engine_trace_preserves_raw_and_guarded_response() -> None:

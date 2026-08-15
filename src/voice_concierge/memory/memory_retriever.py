@@ -11,6 +11,7 @@ from voice_concierge.memory.decay import (
 )
 from voice_concierge.memory.embedding_service import EmbeddingService
 from voice_concierge.memory.memory_store import MemoryStore
+from voice_concierge.memory.types import MemoryRecord, MemorySearchResult
 from voice_concierge.memory.vector_store import VectorStore
 
 
@@ -24,7 +25,7 @@ class MemoryRetriever:
         embedding_service: EmbeddingService,
         decay_policy: MemoryDecayPolicy | None = None,
         clock: Callable[[], int] | None = None,
-    ):
+    ) -> None:
         """
         Initialize retriever with required components.
 
@@ -48,7 +49,7 @@ class MemoryRetriever:
         layer: Optional[str] = None,
         apply_decay: bool = True,
         track_access: bool = True,
-    ) -> list[dict]:
+    ) -> list[MemorySearchResult]:
         """
         Retrieve similar memories using semantic search with optional filters.
 
@@ -60,64 +61,81 @@ class MemoryRetriever:
             layer: Filter by layer (optional)
 
         Returns:
-            List of memory dicts with distance scores, sorted by similarity
+            Typed memory search results sorted by similarity
         """
         try:
             # Generate embedding for query
             query_embedding = self.embedding_service.get_embedding(query)
 
-            # Search for similar vectors
-            candidate_multiplier = 4 if apply_decay else 2
+            indexed_memories = {
+                memory.id: memory
+                for memory in self.memory_store.get_memories()
+                if memory.indexed_revision == memory.revision
+            }
+            # sqlite-vec only knows semantic distance. Decay and metadata can
+            # reorder any active record, so a fixed candidate multiplier can
+            # silently exclude the actual highest-ranked result.
+            search_limit = max(top_k, len(indexed_memories))
             vector_results = self.vector_store.search_similar(
-                query_embedding, top_k=top_k * candidate_multiplier
+                query_embedding,
+                top_k=search_limit,
             )
 
-            # Get full memory details and apply filters
-            memories = []
-            all_memories = self.memory_store.get_memories()
-            memories_by_id = {memory["id"]: memory for memory in all_memories}
+            memories: list[MemorySearchResult] = []
             now = self._clock()
             for result in vector_results:
-                memory_id = result["memory_id"]
-                memory = memories_by_id.get(memory_id)
+                memory_id = result.memory_id
+                memory = indexed_memories.get(memory_id)
                 if not memory:
                     continue
 
                 # Apply filters
-                if person and memory.get("person") != person:
+                if person and memory.person != person:
                     continue
-                if topic and memory.get("topic") != topic:
+                if topic and memory.topic != topic:
                     continue
-                if layer and memory.get("layer") != layer:
+                if layer and memory.layer != layer:
                     continue
 
-                memory_with_score = {**memory, "distance": result["distance"]}
+                retention = None
+                combined_score = None
                 if apply_decay:
                     retention = retention_score(
                         memory,
                         now=now,
                         policy=self.decay_policy,
                     )
-                    memory_with_score.update(
-                        retention_score=retention,
-                        retrieval_score=retrieval_score(
-                            result["distance"],
-                            retention,
-                            policy=self.decay_policy,
-                        ),
+                    combined_score = retrieval_score(
+                        result.distance,
+                        retention,
+                        policy=self.decay_policy,
                     )
-                memories.append(memory_with_score)
+                memories.append(
+                    MemorySearchResult(
+                        memory=memory,
+                        distance=result.distance,
+                        retention_score=retention,
+                        retrieval_score=combined_score,
+                    )
+                )
 
                 if not apply_decay and len(memories) >= top_k:
                     break
 
             if apply_decay:
-                memories.sort(key=lambda item: item["retrieval_score"], reverse=True)
+                memories.sort(
+                    key=lambda item: (
+                        item.retrieval_score
+                        if item.retrieval_score is not None
+                        else 0.0
+                    ),
+                    reverse=True,
+                )
 
             selected = memories[:top_k]
             if track_access and selected:
                 self.memory_store.touch_memories(
-                    [memory["id"] for memory in selected],
+                    [result.memory.id for result in selected],
                     accessed_at=now,
                 )
             return selected
@@ -130,7 +148,7 @@ class MemoryRetriever:
         person: Optional[str] = None,
         topic: Optional[str] = None,
         layer: Optional[str] = None,
-    ) -> list[dict]:
+    ) -> list[MemoryRecord]:
         """
         Retrieve memories by metadata filters only (no semantic search).
 
@@ -140,25 +158,37 @@ class MemoryRetriever:
             layer: Filter by layer
 
         Returns:
-            List of matching memory dicts
+            Validated matching memory records
         """
         return self.memory_store.get_memories(person=person, topic=topic, layer=layer)
 
-    def retrieve_by_person(self, person: str, top_k: int = 10) -> list[dict]:
+    def retrieve_by_person(
+        self,
+        person: str,
+        top_k: int = 10,
+    ) -> list[MemoryRecord]:
         """Get all memories for a specific person."""
         memories = self.memory_store.get_memories(person=person)
         return memories[:top_k]
 
-    def retrieve_by_topic(self, topic: str, top_k: int = 10) -> list[dict]:
+    def retrieve_by_topic(
+        self,
+        topic: str,
+        top_k: int = 10,
+    ) -> list[MemoryRecord]:
         """Get all memories for a specific topic."""
         memories = self.memory_store.get_memories(topic=topic)
         return memories[:top_k]
 
-    def retrieve_by_layer(self, layer: str, top_k: int = 10) -> list[dict]:
+    def retrieve_by_layer(
+        self,
+        layer: str,
+        top_k: int = 10,
+    ) -> list[MemoryRecord]:
         """Get all memories from a specific layer."""
         memories = self.memory_store.get_memories(layer=layer)
         return memories[:top_k]
 
-    def retrieve_all(self) -> list[dict]:
+    def retrieve_all(self) -> list[MemoryRecord]:
         """Retrieve all memories."""
         return self.memory_store.get_memories()

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from voice_concierge.memory.decay import (
@@ -70,8 +72,30 @@ def test_retrieval_score_balances_similarity_and_retention() -> None:
         {"minimum_retention": 1.1},
         {"retrieval_weight": -0.1},
         {"retrieval_weight": 1.1},
+        {"base_half_life_days": math.nan},
+        {"minimum_retention": math.inf},
+        {"retrieval_weight": True},
+        {"base_half_life_days": "30"},
     ),
 )
-def test_policy_rejects_invalid_configuration(kwargs: dict[str, float]) -> None:
+def test_policy_rejects_invalid_configuration(kwargs: dict[str, object]) -> None:
     with pytest.raises(ValueError):
         MemoryDecayPolicy(**kwargs)
+
+
+@pytest.mark.parametrize(
+    ("distance", "retention"),
+    (
+        (-0.1, 1.0),
+        (math.nan, 1.0),
+        (0.1, -0.1),
+        (0.1, math.inf),
+        (0.1, True),
+    ),
+)
+def test_retrieval_score_rejects_invalid_inputs(
+    distance: object,
+    retention: object,
+) -> None:
+    with pytest.raises(ValueError):
+        retrieval_score(distance, retention)

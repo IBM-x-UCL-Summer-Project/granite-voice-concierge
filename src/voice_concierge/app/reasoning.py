@@ -19,9 +19,11 @@ from voice_concierge.reasoning.errors import (
 from voice_concierge.reasoning.models import DEFAULT_MODEL_SELECTION_PATH
 from voice_concierge.reasoning.prompting import DEFAULT_PROMPT_VERSION
 from voice_concierge.reasoning.types import (
+    MemoryReference,
     ReasoningConstraints,
     ReasoningRequest,
     ReasoningResponse,
+    RuntimeReference,
 )
 
 ReasoningFailureCategory = Literal[
@@ -62,7 +64,8 @@ class ReasoningTurnContext:
     """Prepared app context for one transcript-in, response-out reasoning turn."""
 
     mode: str = "home"
-    memories: tuple[str, ...] = ()
+    memories: tuple[MemoryReference, ...] = ()
+    runtime_context: tuple[RuntimeReference, ...] = ()
     conversation_summary: str | None = None
     max_words: int = 60
     allow_memory_writes: bool = True
@@ -76,6 +79,7 @@ class ReasoningTurnContext:
             transcript=transcript,
             mode=self.mode,
             memories=self.memories,
+            runtime_context=self.runtime_context,
             conversation_summary=self.conversation_summary,
             constraints=ReasoningConstraints(
                 offline=self.offline,

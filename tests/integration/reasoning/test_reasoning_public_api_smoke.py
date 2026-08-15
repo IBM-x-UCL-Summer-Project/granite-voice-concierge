@@ -10,6 +10,7 @@ import pytest
 from httpx import ReadTimeout
 from ollama import ChatResponse, ResponseError
 
+from tests.support import memory_reference
 from voice_concierge.reasoning import (
     LocalModelDetails,
     LocalModelInfo,
@@ -92,6 +93,9 @@ def _structured_content(
     proposed_memory_action: dict[str, object] | None = None,
     mode_suggestion: str | None = None,
     confidence: str = "medium",
+    required_information_source: str = "none",
+    information_evidence: list[dict[str, object]] | None = None,
+    freshness_requirement: str = "not_required",
 ) -> str:
     return json.dumps(
         {
@@ -100,6 +104,9 @@ def _structured_content(
             "proposed_memory_action": proposed_memory_action,
             "mode_suggestion": mode_suggestion,
             "confidence": confidence,
+            "required_information_source": required_information_source,
+            "information_evidence": information_evidence or [],
+            "freshness_requirement": freshness_requirement,
         }
     )
 
@@ -143,7 +150,19 @@ def test_selected_runtime_bounds_generation_and_exposes_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = RecordingChatClient(
-        _structured_content("Your appointment is at noon.", confidence="high")
+        _structured_content(
+            "Your appointment is at noon.",
+            confidence="high",
+            required_information_source="local_context",
+            information_evidence=[
+                {
+                    "source": "memory",
+                    "quote": "Appointment is at noon.",
+                    "memory_id": 1,
+                    "memory_revision": 1,
+                }
+            ],
+        )
     )
     engine, manager, client_constructions = _build_selected_runtime(
         tmp_path,
@@ -155,7 +174,7 @@ def test_selected_runtime_bounds_generation_and_exposes_metadata(
         ReasoningRequest(
             transcript="When is my appointment?",
             mode="home",
-            memories=("Appointment is at noon.",),
+            memories=(memory_reference("Appointment is at noon."),),
             conversation_summary="The user asked about lunch earlier.",
             constraints=ReasoningConstraints(
                 max_words=25,
@@ -168,6 +187,7 @@ def test_selected_runtime_bounds_generation_and_exposes_metadata(
     assert manager.pull_calls == []
     assert client_constructions == [{"host": "http://localhost:11434", "timeout": 9.0}]
     assert len(client.chat_calls) == 1
+    assert response.metadata["model_role"] == "primary"
 
     call = client.chat_calls[0]
     assert call["model"] == "granite-smoke:latest"
@@ -187,6 +207,11 @@ def test_selected_runtime_bounds_generation_and_exposes_metadata(
 
     assert response.spoken_response == "Your appointment is at noon."
     assert response.confidence == "high"
+    assert response.required_information_source == "local_context"
+    assert response.information_evidence == (
+        memory_reference("Appointment is at noon.").information_evidence(),
+    )
+    assert response.freshness_requirement == "not_required"
     assert response.metadata["num_ctx"] == "4096"
     assert response.metadata["num_predict"] == "164"
     assert response.metadata["max_predict_tokens"] == "512"
@@ -234,7 +259,7 @@ def test_selected_runtime_maps_generation_failures_to_project_errors(
     (
         (
             "Plain text instead of JSON.",
-            "Plain text instead of JSON.",
+            "I could not produce a valid structured response.",
             "invalid_json",
         ),
         (
@@ -280,5 +305,8 @@ def test_selected_runtime_maps_missing_model_at_startup(
             model_manager=manager,
         )
 
-    assert manager.show_calls == ["granite-smoke:latest"]
+    assert manager.show_calls == [
+        "granite-smoke:latest",
+        "granite-fallback:latest",
+    ]
     assert client.chat_calls == []

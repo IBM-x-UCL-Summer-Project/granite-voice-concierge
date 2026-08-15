@@ -30,6 +30,7 @@ class StoredMemory:
     identifier: int
     content: str
     layer: str
+    revision: int = 1
     created_at: int | None = None
     topic: str | None = None
     person: str | None = None

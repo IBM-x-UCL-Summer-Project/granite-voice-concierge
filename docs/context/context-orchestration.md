@@ -1,5 +1,10 @@
 # Context Orchestration Implementation Plan
 
+> **Status:** Historical implementation plan. The original
+> `ConciergeOrchestrator` API now delegates to `VoiceConciergePipeline`, which is
+> the sole turn-processing implementation. New code should use the app pipeline
+> directly.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a testable `ConciergeOrchestrator` that links context decisions to memory retrieval, local reasoning, and speech output through injected dependencies.
@@ -1342,8 +1347,8 @@ class FakeMemoryManager:
         self.store_calls.append(kwargs)
         return True, "stored_successfully", 123
 
-    def process_memory_action(self, action):
-        self.process_calls.append(action)
+    def execute_memory_command(self, command):
+        self.process_calls.append(command)
         return True, "processed"
 
 
@@ -1503,7 +1508,8 @@ class MemoryManagerGateway:
             )
             return success, reason
 
-        return self._manager.process_memory_action(action)
+        command = translate_to_memory_command(action, scope)
+        return self._manager.execute_memory_command(command)
 
 
 class OfflineTTSSpeechGateway:

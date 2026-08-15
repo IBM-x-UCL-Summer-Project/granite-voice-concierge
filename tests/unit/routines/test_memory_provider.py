@@ -5,6 +5,7 @@ import json
 import pytest
 
 # Local
+from voice_concierge.memory import MemoryRecord, MemorySearchResult
 from voice_concierge.routines.errors import RoutineError
 from voice_concierge.routines.providers import (
     MemoryRoutineProvider,
@@ -17,18 +18,46 @@ from voice_concierge.routines.types import Routine, RoutineStep
 class _FakeMemory:
     """Stands in for MemoryManager.retrieve_similar."""
 
-    def __init__(self, rows: list[dict]) -> None:
+    def __init__(self, rows: list[MemorySearchResult]) -> None:
         self._rows = rows
         self.calls: list[dict] = []
 
-    def retrieve_similar(self, *, query: str, top_k: int, topic: str) -> list[dict]:
+    def retrieve_similar(
+        self,
+        *,
+        query: str,
+        top_k: int,
+        topic: str,
+    ) -> list[MemorySearchResult]:
         self.calls.append({"query": query, "top_k": top_k, "topic": topic})
         return self._rows
 
 
-def _record(name: str) -> dict:
+def _record(name: str) -> MemorySearchResult:
     routine = Routine(name=name, steps=(RoutineStep("a"), RoutineStep("b")))
-    return {"content": serialize_routine(routine)}
+    return _search_result(serialize_routine(routine))
+
+
+def _search_result(content: str) -> MemorySearchResult:
+    return MemorySearchResult(
+        memory=MemoryRecord(
+            id=1,
+            content=content,
+            layer="profile",
+            memory_key=None,
+            revision=1,
+            indexed_revision=1,
+            deleted_at=None,
+            created_at=1,
+            event_time=None,
+            last_accessed=None,
+            strength=1,
+            person=None,
+            source_type=None,
+            topic="routine",
+        ),
+        distance=0.1,
+    )
 
 
 @pytest.mark.unit
@@ -83,16 +112,16 @@ def test_get_routine_returns_none_when_no_rows() -> None:
 @pytest.mark.unit
 def test_find_candidates_parses_all_valid_rows() -> None:
     memory = _FakeMemory(
-        [_record("pasta bake"), {"content": "corrupt"}, _record("pasta salad")]
+        [_record("pasta bake"), _search_result("corrupt"), _record("pasta salad")]
     )
     names = [r.name for r in MemoryRoutineProvider(memory).find_candidates("pasta")]
     assert names == ["pasta bake", "pasta salad"]  # corrupt row skipped
 
 
 @pytest.mark.unit
-def test_find_candidates_skips_non_string_content() -> None:
-    memory = _FakeMemory([{"content": None}, {"other": "x"}])
-    assert MemoryRoutineProvider(memory).find_candidates("pasta") == ()
+def test_memory_record_rejects_non_string_content_before_provider_boundary() -> None:
+    with pytest.raises(ValueError, match="content"):
+        _search_result(None)
 
 
 @pytest.mark.unit

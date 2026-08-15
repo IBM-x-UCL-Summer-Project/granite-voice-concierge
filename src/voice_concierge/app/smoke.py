@@ -12,7 +12,20 @@ from voice_concierge.app.pipeline import VoiceConciergePipeline
 from voice_concierge.app.reasoning import ReasoningTurnContext, ReasoningTurnResult
 from voice_concierge.app.serialization import JsonDict
 from voice_concierge.context.types import MemoryScope
-from voice_concierge.reasoning.types import MemoryAction, ReasoningResponse
+from voice_concierge.memory.structured_lists import (
+    apply_structured_list_operation,
+    create_structured_list,
+)
+from voice_concierge.memory.types import (
+    MemoryOperationOutcome,
+    MemoryOperationStatus,
+)
+from voice_concierge.reasoning.types import (
+    InformationEvidence,
+    MemoryAction,
+    MemoryReference,
+    ReasoningResponse,
+)
 
 
 class SmokeReasoningService:
@@ -46,6 +59,10 @@ class SmokeReasoningService:
                         rationale="Smoke runner detected a remember request.",
                     ),
                     confidence="high",
+                    required_information_source="user_input",
+                    information_evidence=(
+                        InformationEvidence(source="user_input", quote=transcript),
+                    ),
                 )
             )
 
@@ -53,9 +70,14 @@ class SmokeReasoningService:
             return ReasoningTurnResult(
                 response=ReasoningResponse(
                     spoken_response=(
-                        "I found this in local memory: " f"{turn_context.memories[0]}"
+                        "I found this in local memory: "
+                        f"{turn_context.memories[0].content}"
                     ),
                     confidence="high",
+                    required_information_source="local_context",
+                    information_evidence=(
+                        turn_context.memories[0].information_evidence(),
+                    ),
                 )
             )
 
@@ -71,7 +93,8 @@ class SmokeMemoryGateway:
     """In-memory gateway used only by the fake smoke runner."""
 
     def __init__(self) -> None:
-        self.memories: list[str] = []
+        self.memories: list[MemoryReference] = []
+        self._next_memory_id = 1
 
     def retrieve(
         self,
@@ -79,19 +102,109 @@ class SmokeMemoryGateway:
         scope: MemoryScope,
         *,
         limit: int = 3,
-    ) -> tuple[str, ...]:
+    ) -> tuple[MemoryReference, ...]:
         if scope == "none":
             return ()
         return tuple(reversed(self.memories[-limit:]))
 
-    def apply(self, action: MemoryAction, scope: MemoryScope) -> tuple[bool, str]:
+    def apply(
+        self,
+        action: MemoryAction,
+        scope: MemoryScope,
+    ) -> MemoryOperationOutcome:
         if scope == "none":
-            return False, "memory_scope_none"
-        if action.action != "store":
-            return False, f"unsupported_smoke_memory_action: {action.action}"
+            return MemoryOperationOutcome(MemoryOperationStatus.MEMORY_SCOPE_NONE)
+        if action.list_operation is not None:
+            expected_scope: MemoryScope = (
+                "list_relevant"
+                if action.list_operation.list_name == "shopping"
+                else "task_relevant_only"
+            )
+            if scope != expected_scope:
+                return MemoryOperationOutcome(
+                    MemoryOperationStatus.STRUCTURED_LIST_SCOPE_MISMATCH
+                )
+        if action.action == "store":
+            content = action.content
+            if action.list_operation is not None:
+                content = create_structured_list(action.list_operation)
+            assert content is not None
+            self.memories.append(
+                MemoryReference(
+                    memory_id=self._next_memory_id,
+                    content=content,
+                    layer="feedback",
+                    revision=1,
+                    memory_key=(
+                        action.target.memory_key if action.target is not None else None
+                    ),
+                )
+            )
+            self._next_memory_id += 1
+            return MemoryOperationOutcome(
+                MemoryOperationStatus.STORED_SUCCESSFULLY,
+                memory_id=self._next_memory_id - 1,
+            )
 
-        self.memories.append(action.content)
-        return True, "stored_in_smoke_memory"
+        assert action.target is not None
+        index = self._target_index(action)
+        if index is None:
+            return MemoryOperationOutcome(MemoryOperationStatus.MEMORY_TARGET_NOT_FOUND)
+        existing = self.memories[index]
+        if (
+            action.target.expected_revision is not None
+            and existing.revision != action.target.expected_revision
+        ):
+            return MemoryOperationOutcome(
+                MemoryOperationStatus.MEMORY_REVISION_CONFLICT,
+                memory_id=existing.memory_id,
+            )
+        if action.action == "delete":
+            del self.memories[index]
+            return MemoryOperationOutcome(
+                MemoryOperationStatus.DELETED_SUCCESSFULLY,
+                memory_id=existing.memory_id,
+            )
+
+        content = action.content
+        if action.list_operation is not None:
+            if existing.memory_key != action.list_operation.memory_key:
+                return MemoryOperationOutcome(
+                    MemoryOperationStatus.STRUCTURED_LIST_TARGET_MISMATCH,
+                    memory_id=existing.memory_id,
+                )
+            content = apply_structured_list_operation(
+                existing.content,
+                action.list_operation,
+            )
+            if content is None:
+                return MemoryOperationOutcome(
+                    MemoryOperationStatus.INVALID_STRUCTURED_LIST_CONTENT,
+                    memory_id=existing.memory_id,
+                )
+        assert content is not None
+        self.memories[index] = MemoryReference(
+            memory_id=existing.memory_id,
+            content=content,
+            layer=existing.layer,
+            revision=existing.revision + 1,
+            memory_key=existing.memory_key,
+            topic=existing.topic,
+        )
+        return MemoryOperationOutcome(
+            MemoryOperationStatus.UPDATED_SUCCESSFULLY,
+            memory_id=existing.memory_id,
+        )
+
+    def _target_index(self, action: MemoryAction) -> int | None:
+        assert action.target is not None
+        for index, memory in enumerate(self.memories):
+            if action.target.memory_id == memory.memory_id or (
+                action.target.memory_id is None
+                and action.target.memory_key == memory.memory_key
+            ):
+                return index
+        return None
 
 
 def build_smoke_pipeline() -> VoiceConciergePipeline:

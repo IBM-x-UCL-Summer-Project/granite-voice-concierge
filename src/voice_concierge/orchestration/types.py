@@ -5,8 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
-from voice_concierge.context import ContextDecision, MemoryScope, SpeechPace
-from voice_concierge.reasoning.types import MemoryAction, ReasoningResponse
+from voice_concierge.app.memory import MemoryGateway as MemoryGateway
+from voice_concierge.app.types import MemoryOperationResult
+from voice_concierge.context import ContextDecision, SpeechPace
+from voice_concierge.reasoning.types import ReasoningResponse
 
 TurnError = Literal[
     "empty_transcript",
@@ -17,21 +19,6 @@ TurnError = Literal[
 ]
 
 
-class MemoryGateway(Protocol):
-    """Memory operations required by a single assistant turn."""
-
-    def retrieve(
-        self,
-        query: str,
-        scope: MemoryScope,
-        limit: int = 3,
-    ) -> tuple[str, ...]:
-        """Return memory snippets relevant to the query and context scope."""
-
-    def apply(self, action: MemoryAction, scope: MemoryScope) -> tuple[bool, str]:
-        """Apply a confirmed memory action under the active context scope."""
-
-
 class SpeechGateway(Protocol):
     """Speech output operations required by the orchestrator."""
 
@@ -40,15 +27,6 @@ class SpeechGateway(Protocol):
 
     def stop(self) -> bool:
         """Stop current speech output if supported."""
-
-
-@dataclass(frozen=True)
-class MemoryOperationResult:
-    """Observable result for a memory action attempted by the orchestrator."""
-
-    attempted: bool = False
-    succeeded: bool = False
-    reason: str = ""
 
 
 @dataclass(frozen=True)

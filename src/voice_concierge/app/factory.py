@@ -11,8 +11,10 @@ from voice_concierge.app.reasoning import (
     ReasoningTurnService,
     build_reasoning_turn_service,
 )
+from voice_concierge.app.runtime_context import LocalRuntimeContextProvider
 from voice_concierge.app.types import (
     AudioPlayerAdapter,
+    RuntimeContextProvider,
     SpeechToTextAdapter,
     TextToSpeechAdapter,
 )
@@ -30,10 +32,12 @@ def build_voice_concierge_pipeline(
     speech_to_text: SpeechToTextAdapter | None = None,
     text_to_speech: TextToSpeechAdapter | None = None,
     audio_player: AudioPlayerAdapter | None = None,
+    runtime_context: RuntimeContextProvider | None = None,
     load_memory: bool = False,
     load_voice_io: bool = False,
+    load_runtime_context: bool = True,
 ) -> VoiceConciergePipeline:
-    """Build the app pipeline with local backends loaded only when requested."""
+    """Build the app pipeline with configured local-only component backends."""
 
     service = reasoning_service or build_reasoning_turn_service(config)
 
@@ -55,10 +59,14 @@ def build_voice_concierge_pipeline(
     if load_memory and memory is None:
         memory = build_local_memory_gateway(memory_config)
 
+    if load_runtime_context and runtime_context is None:
+        runtime_context = LocalRuntimeContextProvider()
+
     return VoiceConciergePipeline(
         service,
         memory=memory,
         speech_to_text=speech_to_text,
         text_to_speech=text_to_speech,
         audio_player=audio_player,
+        runtime_context=runtime_context,
     )

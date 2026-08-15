@@ -13,12 +13,16 @@ from string import Template
 from types import MappingProxyType
 from typing import Literal
 
-from voice_concierge.reasoning.types import ReasoningRequest
+from voice_concierge.reasoning.types import (
+    MemoryReference,
+    ReasoningRequest,
+    RuntimeReference,
+)
 
 Role = Literal["system", "user", "assistant"]
 
-DEFAULT_PROMPT_VERSION = "v2"
-PROMPT_TEMPLATE_SCHEMA_VERSION = 1
+DEFAULT_PROMPT_VERSION = "v3"
+PROMPT_TEMPLATE_SCHEMA_VERSIONS = frozenset({1, 2})
 _RESOURCE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _SYSTEM_FIELDS = frozenset(
     {
@@ -28,7 +32,7 @@ _SYSTEM_FIELDS = frozenset(
         "voice_first",
     }
 )
-_USER_FIELDS = frozenset(
+_LEGACY_USER_FIELDS = frozenset(
     {
         "conversation_summary",
         "memories",
@@ -36,6 +40,10 @@ _USER_FIELDS = frozenset(
         "transcript",
     }
 )
+_USER_FIELDS_BY_SCHEMA = {
+    1: _LEGACY_USER_FIELDS,
+    2: _LEGACY_USER_FIELDS | {"runtime_context"},
+}
 _MAX_TRANSCRIPT_CHARS = 1000
 _MAX_SUMMARY_CHARS = 4000
 
@@ -50,6 +58,7 @@ class PromptTemplate:
 
     prompt_id: str
     version: str
+    schema_version: int
     default_mode: str
     mode_policies: Mapping[str, str]
     system_template: str
@@ -84,7 +93,7 @@ def load_prompt_template(version: str = DEFAULT_PROMPT_VERSION) -> PromptTemplat
     if (
         not isinstance(schema_version, int)
         or isinstance(schema_version, bool)
-        or schema_version != PROMPT_TEMPLATE_SCHEMA_VERSION
+        or schema_version not in PROMPT_TEMPLATE_SCHEMA_VERSIONS
     ):
         raise PromptTemplateError(
             f"Unsupported prompt template schema version: {schema_version!r}"
@@ -110,11 +119,16 @@ def load_prompt_template(version: str = DEFAULT_PROMPT_VERSION) -> PromptTemplat
     system_template = _load_template_file(directory, system_filename)
     user_template = _load_template_file(directory, user_filename)
     _validate_template_fields(system_template, _SYSTEM_FIELDS, label="System")
-    _validate_template_fields(user_template, _USER_FIELDS, label="User")
+    _validate_template_fields(
+        user_template,
+        _USER_FIELDS_BY_SCHEMA[schema_version],
+        label="User",
+    )
 
     return PromptTemplate(
         prompt_id=prompt_id,
         version=manifest_version,
+        schema_version=schema_version,
         default_mode=default_mode,
         mode_policies=MappingProxyType(mode_policies),
         system_template=system_template,
@@ -145,7 +159,7 @@ def build_granite_messages(
         conversation_summary=_format_conversation_summary(request),
         memories=_format_memories(request.memories),
         mode=request.mode,
-        #  transcript  _format_transcript
+        runtime_context=_format_runtime_context(request.runtime_context),
         transcript=_format_transcript(request.transcript),
     )
     return (
@@ -242,22 +256,43 @@ def _validate_resource_name(value: str, *, label: str) -> None:
 
 def _format_transcript(transcript: str) -> str:
     if len(transcript) > _MAX_TRANSCRIPT_CHARS:
-
         return transcript[:_MAX_TRANSCRIPT_CHARS] + "... [truncated]"
     return transcript
+
+
+def _format_runtime_context(
+    runtime_context: tuple[RuntimeReference, ...],
+) -> str:
+    if not runtime_context:
+        return "No runtime context supplied."
+    return "\n".join(
+        (
+            f"- id={reference.runtime_id}; observed_at={reference.observed_at}; "
+            f"content={reference.content}"
+        )
+        for reference in runtime_context
+    )
 
 
 def _format_conversation_summary(request: ReasoningRequest) -> str:
     if request.conversation_summary:
         summary = request.conversation_summary
         if len(summary) > _MAX_SUMMARY_CHARS:
-
             return "... [truncated]\n" + summary[-_MAX_SUMMARY_CHARS:]
         return summary
     return "No summary supplied."
 
 
-def _format_memories(memories: tuple[str, ...]) -> str:
+def _format_memories(memories: tuple[MemoryReference, ...]) -> str:
     if not memories:
         return "No local memories supplied."
-    return "\n".join(f"- {memory}" for memory in memories)
+    return "\n".join(_format_memory_reference(memory) for memory in memories)
+
+
+def _format_memory_reference(memory: MemoryReference) -> str:
+    key = memory.memory_key if memory.memory_key is not None else "none"
+    topic = memory.topic if memory.topic is not None else "none"
+    return (
+        f"- id={memory.memory_id}; revision={memory.revision}; key={key}; "
+        f"layer={memory.layer}; topic={topic}; content={memory.content}"
+    )

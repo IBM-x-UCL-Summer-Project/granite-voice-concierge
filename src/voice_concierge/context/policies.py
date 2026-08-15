@@ -48,6 +48,8 @@ def policy_for_mode(
     policy = _DEFAULT_POLICIES[mode]
     if accessibility.verbosity == "short":
         max_words = min(policy.max_words, 45)
+    elif accessibility.verbosity == "detailed" and mode != "driving":
+        max_words = round(policy.max_words * 1.5)
     else:
         max_words = policy.max_words
 

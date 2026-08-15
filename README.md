@@ -75,6 +75,17 @@ models. If the virtual environment has not been installed yet, run
 `python -m pip install -e .` after activating it. See
 [the web UI guide](web/README.md) for details.
 
+For the complete local browser path with diagnostic logs:
+
+```bash
+python -m voice_concierge.app.web --voice-io --memory \
+  --log-file .local/logs/web.log
+```
+
+The browser supports push-to-talk capture and automatic Piper response
+playback. Continuous wake-word listening remains available through the live
+runner.
+
 ## Reminders and timers
 
 Set one-off or repeating reminders by voice ("set a timer for ten minutes",

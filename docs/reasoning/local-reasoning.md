@@ -10,7 +10,10 @@ It contains:
 
 - `transcript`: the text from STT;
 - `mode`: current behavior mode, such as `home`, `cooking`, `shopping`, or `driving`;
-- `memories`: local memories supplied by the memory component;
+- `memories`: typed `MemoryReference` values supplied by the memory component,
+  including stable ID, optional scoped key, and revision as well as content;
+- `runtime_context`: typed `RuntimeReference` values supplied by trusted local
+  application or device providers, including an ID and observation timestamp;
 - `conversation_summary`: optional recent context;
 - `constraints`: runtime limits such as max spoken words and whether memory writes are allowed.
 
@@ -23,15 +26,78 @@ It contains:
 - `proposed_memory_action`: optional proposed store/update/delete operation;
 - `mode_suggestion`: optional future mode switch hint;
 - `confidence`: coarse confidence label;
+- `required_information_source`: typed provenance required to fulfil the turn;
+- `information_evidence`: exact transcript, memory, conversation-summary, or
+  runtime citations supporting the declared information source;
+- `freshness_requirement`: whether correctness depends on current information;
 - `metadata`: backend-specific details.
 
 The reasoning layer should propose memory actions. It should not directly write to memory.
 
+Memory evidence is never reduced to bare strings at the reasoning boundary.
+When reasoning proposes an `update` or `delete`, its `MemoryAction.target` must
+contain the exact retrieved memory ID or an explicit scoped key. Targets derived
+from a retrieved `MemoryReference` also carry `expected_revision`, so a delayed
+confirmation fails on a concurrent change instead of overwriting it. Semantic
+retrieval may select evidence for a response, but it is never used by the memory
+component to select a mutation target.
+
+Structured shopping and task lists use a typed `StructuredListOperation` on the
+memory action. An `add_items` operation carries the list kind and item tuple; it
+is used for both first-item creation and later updates. `MemoryAction.content`
+is `None` for these operations, so commands are never encoded into a content
+field and reparsed by persistence code.
+
+### Information provenance policy
+
+Freshness policy is based on the source required to fulfil the user's intent,
+not on individual words such as relative dates or adverbs. The structured
+reasoning boundary declares one of these sources:
+
+- `none`: no factual information is required;
+- `user_input`: the user supplied the fact or command in this turn;
+- `local_context`: supplied memory or conversation summary contains the answer;
+- `stable_knowledge`: non-current general knowledge is sufficient;
+- `runtime_live`: current device or application state is required;
+- `external_live`: current real-world information is required.
+
+`freshness_requirement` is `current` only when live accuracy is necessary to
+fulfil the request. The deterministic information policy validates that the
+declared source is available. A `user_input` answer must quote the current
+transcript. A `local_context` answer must quote supplied context; memory evidence
+must also match the supplied memory ID and revision. A `runtime_live` answer
+must match a supplied runtime ID, observation timestamp, and verbatim content
+fragment. Missing, invented, stale, or misquoted evidence fails closed. Evidence
+is rejected for sources that should not use supplied context rather than being
+silently ignored. External live data is rejected under offline constraints,
+missing local or runtime context fails closed, live sources must declare current
+freshness, and current claims based only on stable knowledge are rejected.
+Current information supplied by the user or local context is attributed with a
+freshness caveat.
+
+This evidence check binds a response to context that was actually supplied; it
+does not by itself prove that every generated claim logically follows from the
+cited text. The citations make that grounding inspectable in app output and
+benchmark reports instead of leaving provenance as an unverifiable model label.
+
+Memory commands have an additional invariant: a direct store is created only
+for content classified as supplied by the user. A lookup phrased as a memory
+command must first obtain the information from an allowed source; the unresolved
+lookup text itself is never stored as a fact.
+
 `validate_reasoning_request()` owns public request validation. Engines call it
 before prompt construction or backend calls. It rejects empty transcripts or
-modes, non-tuple memories, invalid memory snippets, empty supplied conversation
+modes, non-tuple memory or runtime collections, values that are not
+`MemoryReference` or `RuntimeReference` instances, empty supplied conversation
 summaries, missing or malformed constraints, non-positive `max_words`, and
 non-boolean constraint flags.
+
+The normal app factory installs `LocalRuntimeContextProvider`, which supplies a
+timezone-aware local system date and time without network access. Other device
+facts must enter through the app-owned `RuntimeContextProvider` boundary; they
+are not accepted from the serialized UI request payload. Set
+`load_runtime_context=False` only when a caller intentionally wants no default
+runtime facts.
 
 `output.py` owns backend-neutral spoken-response shaping. The Ollama adapter calls
 its shared word-limit function after deterministic policy guards, while the
@@ -55,9 +121,17 @@ backend is currently `ollama`.
 
 Startup validation is deliberate. The factory validates the prompt version,
 checks the selected primary model with Ollama model metadata, and returns an
-`OllamaReasoningEngine` only when the local runtime setup is usable. It does not
-pull or download models, activate `fallback_model`, benchmark candidates, contact
-cloud services, or import unfinished voice, context, memory, STT, or TTS modules.
+`OllamaReasoningEngine` only when the local runtime setup is usable. Model
+selection schema version 2 makes fallback behavior explicit. The
+`startup_missing_primary` policy selects an already-installed fallback only when
+the primary is absent during startup; `disabled` fails immediately. Legacy
+schema-version-1 selections load with fallback disabled, preserving their prior
+behavior. Backend failures never trigger fallback because both models use the
+same backend. The factory does not pull or download models, retry another model
+during a turn, benchmark candidates, or contact cloud services.
+
+The active engine records `model_role` as `primary` or `fallback` in reasoning
+response metadata, so fallback selection is observable rather than inferred.
 
 Project-owned factory errors are:
 
@@ -65,8 +139,8 @@ Project-owned factory errors are:
   invalid prompt version, or invalid Ollama config;
 - `ReasoningBackendUnavailableError`: the selected local backend cannot be
   reached or verified;
-- `ReasoningModelUnavailableError`: the selected primary model is not available
-  locally.
+- `ReasoningModelUnavailableError`: no model allowed by the configured startup
+  fallback policy is available locally.
 
 Lower-level `OllamaReasoningError` and `OllamaModelManagementError` remain
 available for adapter-specific callers and compatibility.
@@ -140,11 +214,11 @@ through `build_reasoning_engine(...)`:
   --output benchmarks/reasoning/results/selected-runtime-smoke.json
 ```
 
-This mode loads the selected primary model and host from
-`.local/reasoning-model-selection.json`, validates the configured local runtime,
-and then runs the prompt suite. It intentionally rejects direct `--model` and
-`--host` overrides. Use this mode when checking whether the application-facing
-runtime wiring works.
+This mode loads the model selection and host from
+`.local/reasoning-model-selection.json`, applies its startup fallback policy,
+validates the configured local runtime, and then runs the prompt suite. It
+intentionally rejects direct `--model` and `--host` overrides. Use this mode when
+checking whether the application-facing runtime wiring works.
 
 ## Run With Ollama
 
@@ -181,7 +255,7 @@ Use direct `--engine ollama` runs for model experiments and explicit local-model
 checks. Use `--engine selected` for the configured application runtime smoke
 path.
 
-Ollama runs use the bundled `v2` runtime prompt by default. Select another
+Ollama runs use the bundled `v3` runtime prompt by default. Select another
 bundled version explicitly when testing a prompt revision:
 
 ```bash
@@ -195,9 +269,11 @@ The selected prompt ID and version are recorded in each Ollama response's
 benchmark metadata.
 
 The benchmark report includes per-prompt latency, response word count,
-confirmation flags, proposed memory action type, confidence, and backend
-metadata. Ollama reports can also retain raw and guarded evaluations from the
-same model generation:
+confirmation flags, proposed memory action type, confidence, declared
+information source, freshness requirement, and backend metadata. Prompt checks
+can assert the expected source and freshness so model regressions are visible.
+Ollama reports can also retain raw and guarded evaluations from the same model
+generation:
 
 ```bash
 .venv/bin/python -m benchmarks.reasoning.benchmark \
@@ -222,9 +298,10 @@ The Ollama backend requests schema constrained JSON from the local model. A
 single Pydantic boundary model generates the JSON schema sent to Ollama and
 validates the returned content. The validated result is mapped into `ReasoningResponse`,
 including `needs_confirmation`, `proposed_memory_action`, `mode_suggestion`, and
-`confidence`. If the model returns invalid JSON or misses required fields, the
-backend returns a low confidence fallback and records the parse problem in
-response metadata.
+`confidence`, as well as the required information source and freshness. If the
+model returns invalid JSON or misses required fields, the backend fails closed
+with a generic low-confidence response and records the parse problem in response
+metadata.
 
 The Ollama backend also applies deterministic policy guards after parsing model output. These guards do not store, retrieve, edit, or delete memory. They only correct the reasoning response when a simple local policy should not depend on model compliance, such as confirming accessibility preference changes or refusing to invent a shopping list when no list memory was supplied.
 
@@ -249,14 +326,16 @@ Persist the active benchmark model selection locally:
 
 ```bash
 .venv/bin/python -m benchmarks.reasoning.manage_models select granite4.1:8b \
-  --fallback-model granite3.3:2b
+  --fallback-model granite3.3:2b \
+  --fallback-policy startup_missing_primary
 ```
 
-his writes `.local/reasoning-model-selection.json`. A subsequent
+This writes `.local/reasoning-model-selection.json`. A subsequent
 `python -m benchmarks.reasoning.benchmark run --engine ollama` uses its primary
-model and host unless
-`--model` or `--host` overrides them. The fallback is recorded for later runtime
-use but is not silently benchmarked or activated.
+model and host unless `--model` or `--host` overrides them. The app-facing
+selected runtime applies the persisted fallback policy during startup. Direct
+benchmark runs do not activate fallback because their purpose is to measure the
+specific requested model.
 
 If a model is missing, pull it through Ollama:
 
@@ -329,10 +408,16 @@ then renders the selected templates with `string.Template`. Once a prompt
 version has produced benchmark evidence, leave it unchanged and create a new
 version directory so old results remain reproducible.
 
+Prompt template schema 1 covers the immutable `v1` and `v2` transcript, memory,
+and summary layout. Schema 2 adds identified runtime context and is used by
+`v3`. Schema-aware placeholder validation keeps legacy prompt text loadable
+without pretending it had the newer input contract.
+
 The prompt builder instructs the model to follow these local reasoning rules:
 
 - operate as if no internet or cloud service is available;
-- use only the transcript, supplied local memories, and supplied summary;
+- use only the transcript, supplied local memories, supplied summary, and
+  identified runtime context;
 - keep responses short and suitable for speech;
 - do not invent remembered facts;
 - ask for confirmation before saving, changing, or deleting personal data;
@@ -344,6 +429,6 @@ The prompt builder instructs the model to follow these local reasoning rules:
 `granite4.1:8b` is the recommended quality oriented default, with
 `granite3.3:2b` retained as the lower resource fallback. See the
 [Recommended Default Model](recommended-default-model.md) for the evidence and
-limits of that decision. Benchmarking now consumes the configurable selection;
-the future application entry point should do the same rather than hard-coding a
+limits of that decision. Both the selected benchmark runtime and application
+factory consume the same configurable selection rather than hard-coding a
 model.

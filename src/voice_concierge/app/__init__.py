@@ -18,6 +18,10 @@ from voice_concierge.app.reasoning import (
     ReasoningTurnService,
     build_reasoning_turn_service,
 )
+from voice_concierge.app.runtime_context import (
+    LOCAL_DATETIME_RUNTIME_ID,
+    LocalRuntimeContextProvider,
+)
 from voice_concierge.app.serialization import (
     JsonDict,
     PayloadValidationError,
@@ -47,6 +51,7 @@ from voice_concierge.app.types import (
     AudioPlayerAdapter,
     ConversationTurn,
     MemoryOperationResult,
+    RuntimeContextProvider,
     SpeechToTextAdapter,
     TextToSpeechAdapter,
 )
@@ -62,6 +67,8 @@ __all__ = [
     "AudioPlayerAdapter",
     "ConversationTurn",
     "JsonDict",
+    "LOCAL_DATETIME_RUNTIME_ID",
+    "LocalRuntimeContextProvider",
     "MemoryGateway",
     "MemoryManagerGateway",
     "MemoryOperationResult",
@@ -73,6 +80,7 @@ __all__ = [
     "ReasoningTurnContext",
     "ReasoningTurnResult",
     "ReasoningTurnService",
+    "RuntimeContextProvider",
     "SpeechToTextAdapter",
     "TextToSpeechAdapter",
     "VoiceConciergePipeline",

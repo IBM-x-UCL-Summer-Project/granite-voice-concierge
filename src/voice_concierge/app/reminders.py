@@ -92,6 +92,17 @@ class ReminderTurnHandler:
     def __init__(self, service: ReminderService) -> None:
         self._service = service
 
+    @property
+    def service(self) -> ReminderService:
+        """The shared service used by voice turns and background delivery."""
+
+        return self._service
+
+    def close(self) -> None:
+        """Release the local reminder store owned by this handler."""
+
+        self._service.close()
+
     def handles(self, transcript: str) -> bool:
         """True when the transcript is about reminders or timers."""
         lowered = transcript.casefold()

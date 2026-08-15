@@ -40,6 +40,9 @@ def test_build_voice_concierge_pipeline_uses_injected_reasoning_service() -> Non
     assert isinstance(result.state, AppPipelineState)
     assert result.spoken_response == "Factory response."
     assert reasoning.calls[0]["transcript"] == "hello"
+    context = reasoning.calls[0]["context"]
+    assert isinstance(context, ReasoningTurnContext)
+    assert len(context.runtime_context) == 1
 
 
 def test_build_voice_concierge_pipeline_builds_reasoning_when_not_injected(
@@ -117,3 +120,17 @@ def test_build_voice_concierge_pipeline_keeps_memory_unloaded_by_default(
     pipeline = build_voice_concierge_pipeline(reasoning_service=FakeReasoning())
 
     assert isinstance(pipeline, VoiceConciergePipeline)
+
+
+def test_build_voice_concierge_pipeline_can_disable_default_runtime_context() -> None:
+    reasoning = FakeReasoning()
+    pipeline = build_voice_concierge_pipeline(
+        reasoning_service=reasoning,
+        load_runtime_context=False,
+    )
+
+    pipeline.process_transcript("hello")
+
+    context = reasoning.calls[0]["context"]
+    assert isinstance(context, ReasoningTurnContext)
+    assert context.runtime_context == ()

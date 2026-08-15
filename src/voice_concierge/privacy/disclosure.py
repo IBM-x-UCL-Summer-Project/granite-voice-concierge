@@ -6,15 +6,16 @@ cannot see, so the disclosure is built from the real files on disk (their paths,
 whether they exist, how large they are) rather than from prose that could drift
 away from what the code actually does.
 
-It is equally explicit about what is *not* kept. Conversation history and
-spoken-preference state live in process memory only and are gone when the
-assistant exits, and saying so plainly is part of an honest answer.
+It is equally explicit about what is *not* kept. The list of files comes from
+the same central catalogue that supplies each component's default path, so a
+new project-owned store cannot silently diverge from this report.
 """
 
 # Standard library
 from pathlib import Path
 
 # Local
+from voice_concierge.local_storage import LOCAL_STORAGE_FILES, LocalStorageFile
 from voice_concierge.privacy.centre import PrivacyCentre
 from voice_concierge.privacy.types import PrivacyReport, StorageLocation
 
@@ -24,8 +25,8 @@ NOT_RETAINED: tuple[str, ...] = (
     "recording is written to disk.",
     "Conversation history. Recent turns are held in memory to keep a "
     "conversation coherent and are lost when the assistant exits.",
-    "Spoken preferences such as pace and accessibility settings, which apply to "
-    "the running session only.",
+    "Transient context and accessibility modes. They apply to the running "
+    "session unless the user explicitly asks the assistant to remember them.",
     "Anything sent off this device. All processing, including the language "
     "model, runs locally.",
 )
@@ -47,26 +48,28 @@ def describe_location(name: str, path: Path, description: str) -> StorageLocatio
     )
 
 
+def describe_storage_file(storage_file: LocalStorageFile) -> StorageLocation:
+    """Describe one entry from the authoritative local-storage catalogue."""
+
+    return describe_location(
+        storage_file.name,
+        storage_file.path,
+        storage_file.description,
+    )
+
+
 def build_report(
-    centre: PrivacyCentre, *, memory_db: Path, vector_db: Path
+    centre: PrivacyCentre,
+    *,
+    storage_files: tuple[LocalStorageFile, ...] = LOCAL_STORAGE_FILES,
 ) -> PrivacyReport:
     """Assemble a full account of what is stored, from the live files."""
     memories = centre.list_memories()
     return PrivacyReport(
         memory_count=len(memories),
         counts_by_layer=centre.counts_by_layer(),
-        locations=(
-            describe_location(
-                "Memories",
-                memory_db,
-                "The things the assistant has remembered, as readable text.",
-            ),
-            describe_location(
-                "Search index",
-                vector_db,
-                "Numerical representations of those memories, used to find a "
-                "relevant one. Removed with the memory it belongs to.",
-            ),
+        locations=tuple(
+            describe_storage_file(storage_file) for storage_file in storage_files
         ),
         not_retained=NOT_RETAINED,
     )

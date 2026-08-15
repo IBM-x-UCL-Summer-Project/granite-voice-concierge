@@ -12,9 +12,10 @@ import json
 from pathlib import Path
 
 # Local
+from voice_concierge.local_storage import SPEECH_PACE_PATH
 from voice_concierge.voice_output.pacing import PACE_LADDER, SpeechRate
 
-DEFAULT_PACE_PATH = Path(".local/preferences/speech-pace.json")
+DEFAULT_PACE_PATH = SPEECH_PACE_PATH
 
 
 def load_rate(path: Path | str = DEFAULT_PACE_PATH) -> SpeechRate:

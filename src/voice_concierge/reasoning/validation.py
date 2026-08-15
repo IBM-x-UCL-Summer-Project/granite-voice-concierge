@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 from voice_concierge.reasoning.errors import ReasoningRequestError
-from voice_concierge.reasoning.types import ReasoningConstraints, ReasoningRequest
+from voice_concierge.reasoning.types import (
+    MemoryReference,
+    ReasoningConstraints,
+    ReasoningRequest,
+    RuntimeReference,
+)
 
 
 def validate_reasoning_request(request: ReasoningRequest) -> None:
@@ -15,6 +20,7 @@ def validate_reasoning_request(request: ReasoningRequest) -> None:
     _require_non_empty_string(request.transcript, "transcript")
     _require_non_empty_string(request.mode, "mode")
     _validate_memories(request.memories)
+    _validate_runtime_context(request.runtime_context)
 
     if request.conversation_summary is not None:
         _require_non_empty_string(
@@ -30,10 +36,19 @@ def _validate_memories(memories: object) -> None:
         raise ReasoningRequestError("Reasoning request memories must be a tuple.")
 
     for index, memory in enumerate(memories):
-        try:
-            _require_non_empty_string(memory, f"memories[{index}]")
-        except ReasoningRequestError as exc:
-            raise ReasoningRequestError(str(exc)) from exc
+        if not isinstance(memory, MemoryReference):
+            raise ReasoningRequestError(f"memories[{index}] must be a MemoryReference.")
+
+
+def _validate_runtime_context(runtime_context: object) -> None:
+    if not isinstance(runtime_context, tuple):
+        raise ReasoningRequestError("Reasoning runtime context must be a tuple.")
+
+    for index, reference in enumerate(runtime_context):
+        if not isinstance(reference, RuntimeReference):
+            raise ReasoningRequestError(
+                f"runtime_context[{index}] must be a RuntimeReference."
+            )
 
 
 def _validate_constraints(constraints: object) -> None:

@@ -1,7 +1,7 @@
 """PrivacyCentre - review, correct and remove what is stored about you.
 
 The pure core of the privacy package: no printing, no prompting, no database
-access of its own. It turns raw stored records into views a person can read,
+access of its own. It turns typed stored records into views a person can read,
 and turns a person's decision into a single call on the archive.
 
 Two rules shape it. Nothing here reports success it did not achieve, because a
@@ -14,11 +14,14 @@ confirmed rather than assumed.
 from collections import Counter
 
 # Local
+from voice_concierge.memory.types import (
+    MemoryOperationOutcome,
+    MemoryOperationStatus,
+    MemoryRecord,
+)
 from voice_concierge.privacy.errors import PrivacyError
 from voice_concierge.privacy.interfaces import MemoryArchive
 from voice_concierge.privacy.types import StoredMemory
-
-_NOT_FOUND = "memory_not_found"
 
 
 class PrivacyCentre:
@@ -51,7 +54,7 @@ class PrivacyCentre:
     def get_memory(self, identifier: int) -> StoredMemory | None:
         """Return one stored memory, or None when nothing has that id."""
         for record in self._read_all():
-            if record.get("id") == identifier:
+            if record.id == identifier:
                 return _to_view(record)
         return None
 
@@ -69,9 +72,26 @@ class PrivacyCentre:
         text = content.strip()
         if not text:
             raise PrivacyError("A memory cannot be replaced with empty text.")
-        succeeded, reason = self._archive.update_memory(identifier, content=text)
-        if not succeeded:
-            raise PrivacyError(_explain(reason, identifier))
+        current = self.get_memory(identifier)
+        if current is None:
+            raise PrivacyError(_not_found(identifier))
+        try:
+            outcome = self._archive.update_memory(
+                identifier,
+                content=text,
+                expected_revision=current.revision,
+            )
+        except Exception as exc:
+            raise PrivacyError(
+                f"Memory {identifier} could not be changed: {exc}"
+            ) from exc
+        if not outcome.succeeded:
+            raise PrivacyError(_explain(outcome, identifier))
+        if outcome.status is MemoryOperationStatus.UPDATED_PENDING_INDEX:
+            raise PrivacyError(
+                f"Memory {identifier} was changed, but its local search index "
+                "still needs repair."
+            )
         updated = self.get_memory(identifier)
         if updated is None:  # archive reported success but the row is gone
             raise PrivacyError(
@@ -81,9 +101,17 @@ class PrivacyCentre:
 
     def delete_memory(self, identifier: int) -> None:
         """Remove one memory and its embedding. Raises if it was not removed."""
-        succeeded, reason = self._archive.delete_memory(identifier)
-        if not succeeded:
-            raise PrivacyError(_explain(reason, identifier))
+        memory = self.get_memory(identifier)
+        if memory is None:
+            raise PrivacyError(_not_found(identifier))
+        outcome = self._delete_record(memory)
+        if not outcome.succeeded:
+            raise PrivacyError(_explain(outcome, identifier))
+        if outcome.status is MemoryOperationStatus.DELETED_PENDING_INDEX_CLEANUP:
+            raise PrivacyError(
+                f"Memory {identifier} was removed, but its local search-index "
+                "cleanup is still pending."
+            )
 
     def delete_all(self) -> int:
         """Remove every stored memory, returning how many were removed.
@@ -96,11 +124,22 @@ class PrivacyCentre:
         removed = 0
         for memory in self.list_memories():
             try:
-                self.delete_memory(memory.identifier)
+                outcome = self._delete_record(memory)
             except PrivacyError as exc:
                 raise PrivacyError(
                     f"Removed {removed} memories, then stopped: {exc}"
                 ) from exc
+            if outcome.status is MemoryOperationStatus.DELETED_PENDING_INDEX_CLEANUP:
+                removed += 1
+                raise PrivacyError(
+                    f"Removed {removed} memories, then stopped: local search-index "
+                    "cleanup is still pending."
+                )
+            if not outcome.succeeded:
+                raise PrivacyError(
+                    f"Removed {removed} memories, then stopped: "
+                    f"{_explain(outcome, memory.identifier)}"
+                )
             removed += 1
         return removed
 
@@ -124,31 +163,59 @@ class PrivacyCentre:
             for item in self.list_memories()
         ]
 
-    def _read_all(self) -> list[dict]:
+    def _read_all(self) -> list[MemoryRecord]:
         """Read the archive, turning any backend failure into a PrivacyError."""
         try:
-            return self._archive.get_all_memories()
+            records = self._archive.get_all_memories()
+            if not isinstance(records, list) or any(
+                not isinstance(record, MemoryRecord) for record in records
+            ):
+                raise TypeError("Memory archive returned untyped records.")
+            return records
         except PrivacyError:
             raise
         except Exception as exc:  # unknown backend failure; do not leak internals
             raise PrivacyError(f"Stored memories could not be read: {exc}") from exc
 
+    def _delete_record(self, memory: StoredMemory) -> MemoryOperationOutcome:
+        """Delete the exact revision the privacy centre reviewed."""
 
-def _to_view(record: dict) -> StoredMemory:
+        try:
+            return self._archive.delete_memory(
+                memory.identifier,
+                expected_revision=memory.revision,
+            )
+        except Exception as exc:
+            raise PrivacyError(
+                f"Memory {memory.identifier} could not be removed: {exc}"
+            ) from exc
+
+
+def _to_view(record: MemoryRecord) -> StoredMemory:
     """Convert a stored record into the read-only view shown to the user."""
     return StoredMemory(
-        identifier=record.get("id", 0),
-        content=record.get("content", ""),
-        layer=record.get("layer", "unknown"),
-        created_at=record.get("created_at"),
-        topic=record.get("topic"),
-        person=record.get("person"),
-        source_type=record.get("source_type"),
+        identifier=record.id,
+        content=record.content,
+        layer=record.layer,
+        revision=record.revision,
+        created_at=record.created_at,
+        topic=record.topic,
+        person=record.person,
+        source_type=record.source_type,
     )
 
 
-def _explain(reason: str, identifier: int) -> str:
+def _explain(outcome: MemoryOperationOutcome, identifier: int) -> str:
     """Turn an archive reason code into something worth reading."""
-    if reason == _NOT_FOUND:
-        return f"No memory with id {identifier} is stored."
-    return f"Memory {identifier} could not be changed: {reason}"
+    if outcome.status is MemoryOperationStatus.MEMORY_NOT_FOUND:
+        return _not_found(identifier)
+    if outcome.status is MemoryOperationStatus.MEMORY_REVISION_CONFLICT:
+        return (
+            f"Memory {identifier} changed after it was reviewed; "
+            "review it again before retrying."
+        )
+    return f"Memory {identifier} could not be changed: {outcome.reason}"
+
+
+def _not_found(identifier: int) -> str:
+    return f"No memory with id {identifier} is stored."

@@ -16,10 +16,10 @@ The same split used elsewhere in the codebase: a pure core plus a thin surface.
   deletes and exports. Does no printing and opens no database. It reads through
   the narrow `MemoryArchive` protocol, which exposes only read, update and
   delete, so this package cannot write new memories or run retrieval.
-- `disclosure.py` - explains what is stored. The report is built from the real
-  files on disk (path, existence, size) rather than from prose, so it cannot
-  drift away from what the code does. It also states what is deliberately *not*
-  kept.
+- `disclosure.py` - explains what is stored. The report is built from the
+  authoritative local-storage catalogue and the real files on disk (path,
+  existence, size), rather than from a second list that can drift away from the
+  code. It also states what is deliberately *not* kept.
 - `cli.py` - renders, prompts and confirms. No policy lives here, so a voice or
   web front end can reuse the core unchanged.
 
@@ -66,17 +66,19 @@ Stored on disk:
 | --- | --- |
 | Memories, as readable text | `.local/memory/memories.sqlite3` |
 | Their search index (embeddings) | `.local/memory/vectors.sqlite3` |
+| Reminders and timers | `.local/reminders/reminders.sqlite3` |
+| Speaking pace preference | `.local/preferences/speech-pace.json` |
+| Selected local reasoning model | `.local/reasoning-model-selection.json` |
 
 Not stored: recorded audio (transcribed then discarded), conversation history
-(held in process memory only, lost on exit), spoken preferences such as pace and
-accessibility (session only), and anything off-device, since all processing
-including the language model runs locally.
+(held in process memory only, lost on exit), transient context and accessibility
+modes, and anything off-device, since all processing including the language
+model runs locally.
 
 That last group matters as much as the first. The issue behind this package
-asked for control over "memories, conversation history and preferences", but
-only memories are actually persisted, so the honest answer is to say plainly
-that the other two are never written down rather than offer controls for data
-that does not exist.
+asked for control over "memories, conversation history and preferences". The
+report therefore distinguishes persisted memories and preferences from settings
+that only exist for the current session.
 
 ## Memory layers
 

@@ -126,13 +126,17 @@ class ContextManagerTest(unittest.TestCase):
         self.assertEqual(decision.command_action, "cancel")
         self.assertFalse(decision.mode_changed)
 
-    def test_detect_confirmation_intent_returns_confirm_cancel_or_none(self) -> None:
-        examples: dict[str, ConfirmationIntent | None] = {
+    def test_detect_confirmation_intent_classifies_complete_reply(self) -> None:
+        examples: dict[str, ConfirmationIntent] = {
             "Yes, go ahead": "confirm",
             "ok please": "confirm",
             "Never mind": "cancel",
             "cancel that": "cancel",
-            "what is next": None,
+            "what is next": "ambiguous",
+            "I know": "ambiguous",
+            "not yet": "ambiguous",
+            "yesterday": "ambiguous",
+            "yes, no": "ambiguous",
         }
 
         for transcript, expected in examples.items():
