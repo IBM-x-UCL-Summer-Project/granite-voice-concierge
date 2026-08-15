@@ -53,7 +53,12 @@ class MemoryManager:
             Most similar memory dict if found above threshold, else None
         """
         try:
-            results = self.retrieve_similar(content, top_k=top_k)
+            results = self.retrieve_similar(
+                content,
+                top_k=top_k,
+                apply_decay=False,
+                track_access=False,
+            )
             if results and results[0].get("distance", 1.0) < (1.0 - threshold):
                 return results[0]
             return None
@@ -162,6 +167,8 @@ class MemoryManager:
         person: Optional[str] = None,
         topic: Optional[str] = None,
         layer: Optional[str] = None,
+        apply_decay: bool = True,
+        track_access: bool = True,
     ) -> list[dict]:
         """
         Retrieve semantically similar memories.
@@ -182,6 +189,8 @@ class MemoryManager:
             person=person,
             topic=topic,
             layer=layer,
+            apply_decay=apply_decay,
+            track_access=track_access,
         )
 
     def retrieve_by_metadata(
