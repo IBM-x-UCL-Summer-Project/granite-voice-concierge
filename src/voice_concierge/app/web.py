@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import secrets
+import time
 from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
 from http import HTTPStatus
@@ -36,6 +38,7 @@ MAX_WEB_SESSIONS = 32
 SESSION_COOKIE_NAME = "granite_session"
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_WEB_DIRECTORY = REPOSITORY_ROOT / "web"
+LOGGER = logging.getLogger("voice_concierge.web")
 
 SessionTurn = Callable[
     [AppPipelineState | None],
@@ -98,6 +101,7 @@ class PipelineWebServer(ThreadingHTTPServer):
             "text_input": True,
             "voice_input": voice_input_enabled,
             "voice_output": voice_output_enabled,
+            "wake_word": False,
         }
         self.runtime = {"model": model_name}
         self.sessions = PipelineSessionStore()
@@ -137,12 +141,19 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
         super().end_headers()
 
     def do_POST(self) -> None:  # noqa: N802
+        request_id = secrets.token_hex(4)
+        started_at = time.monotonic()
         handlers = {
             "/api/turn": handle_turn,
             "/api/audio": handle_audio_turn,
         }
         handler = handlers.get(self.path)
         if handler is None:
+            LOGGER.warning(
+                "web_request_rejected request_id=%s endpoint=%s reason=not_found",
+                request_id,
+                self.path,
+            )
             self._write_json(
                 HTTPStatus.NOT_FOUND,
                 {"error": {"code": "not_found", "message": "Unknown endpoint."}},
@@ -156,13 +167,24 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
                 lambda state: self._run_turn(handler, payload, state),
             )
         except PayloadValidationError as exc:
+            LOGGER.warning(
+                "web_request_rejected request_id=%s endpoint=%s "
+                "reason=invalid_request detail=%s",
+                request_id,
+                self.path,
+                exc,
+            )
             self._write_json(
                 HTTPStatus.BAD_REQUEST,
                 {"error": {"code": "invalid_request", "message": str(exc)}},
             )
             return
         except Exception:
-            self.log_exception("Pipeline request failed")
+            LOGGER.exception(
+                "web_request_failed request_id=%s endpoint=%s",
+                request_id,
+                self.path,
+            )
             self._write_json(
                 HTTPStatus.INTERNAL_SERVER_ERROR,
                 {
@@ -174,6 +196,28 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
             )
             return
 
+        memory_operation = response.get("memory_operation")
+        memory_status = (
+            memory_operation.get("status")
+            if isinstance(memory_operation, Mapping)
+            else None
+        )
+        memory_detail = (
+            memory_operation.get("detail")
+            if isinstance(memory_operation, Mapping)
+            else None
+        )
+        errors = response.get("errors")
+        LOGGER.info(
+            "web_turn_completed request_id=%s endpoint=%s duration_ms=%d "
+            "errors=%s memory_status=%s memory_detail=%s",
+            request_id,
+            self.path,
+            round((time.monotonic() - started_at) * 1000),
+            errors if errors else "none",
+            memory_status or "none",
+            memory_detail or "none",
+        )
         self._write_json(HTTPStatus.OK, response, session_id=session_id)
 
     def _run_turn(
@@ -245,11 +289,6 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def log_exception(self, message: str) -> None:
-        """Log server failures without exposing exception details to the browser."""
-
-        self.log_error(message)
-
 
 def build_web_pipeline(
     *,
@@ -296,7 +335,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="Load local STT and TTS for browser audio turns.",
     )
+    parser.add_argument(
+        "--log-level",
+        choices=("DEBUG", "INFO", "WARNING", "ERROR"),
+        default="INFO",
+        help="Diagnostic detail written to the terminal and optional log file.",
+    )
+    parser.add_argument(
+        "--log-file",
+        type=Path,
+        default=None,
+        help="Optional local diagnostic log file; transcript text is not logged.",
+    )
     args = parser.parse_args(argv)
+    _configure_logging(args.log_level, args.log_file)
 
     voice_io_enabled = args.voice_io and not args.demo
     model_name = (
@@ -326,6 +378,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         model_name=model_name,
     )
     print(f"Granite web UI: http://{args.host}:{args.port}")
+    LOGGER.info(
+        "web_server_started host=%s port=%s memory=%s voice_io=%s "
+        "model=%s wake_word=false",
+        args.host,
+        args.port,
+        args.memory,
+        voice_io_enabled,
+        model_name,
+    )
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -334,6 +395,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         server.server_close()
         pipeline.close()
     return 0
+
+
+def _configure_logging(level: str, log_file: Path | None) -> None:
+    """Configure privacy-conscious local diagnostics for the web process."""
+
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    if log_file is not None:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        handlers.append(logging.FileHandler(log_file, encoding="utf-8"))
+    logging.basicConfig(
+        level=getattr(logging, level),
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        handlers=handlers,
+        force=True,
+    )
+    # Keep application diagnostics focused on the local pipeline. Dependency
+    # clients otherwise emit one INFO line per model-management request.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 if __name__ == "__main__":  # pragma: no cover

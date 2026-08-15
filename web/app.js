@@ -36,7 +36,12 @@ const state = {
   settingsDraft: null,
   setupStep: 0,
   running: false,
-  capabilities: { text_input: false, voice_input: false, voice_output: false },
+  capabilities: {
+    text_input: false,
+    voice_input: false,
+    voice_output: false,
+    wake_word: false,
+  },
   recorder: null,
   playback: null,
 };
@@ -131,7 +136,7 @@ const setupSteps = [
   },
   {
     title: "Choose how you interact",
-    description: "Tune wake-word sensitivity and decide how each conversation starts.",
+    description: "Choose when local Piper responses play automatically in this browser.",
   },
   {
     title: "Shape every response",
@@ -243,9 +248,9 @@ function savePersonalSettings() {
 function applyPersonalSettings() {
   const { response_length: responseLength } = state.settings;
   const interactionLabels = {
-    voice_first: "Wake word + transcript",
-    push_to_talk: "Push to talk",
-    text_first: "Transcript input",
+    voice_first: "Automatic voice playback",
+    push_to_talk: "Voice after microphone turns",
+    text_first: "Manual playback",
   };
   elements.interactionLabel.textContent = interactionLabels[state.settings.interaction_mode];
   elements.settingsButton.classList.toggle("is-configured", state.settings.setup_complete);
@@ -263,13 +268,7 @@ function updateRangeOutputs() {
   const speechLabel = speechRate < 0.9 ? "Slow" : speechRate > 1.1 ? "Fast" : "Normal";
   elements.speechRateOutput.textContent = `${speechLabel} · ${speechRate.toFixed(1)}×`;
   elements.volumeOutput.textContent = `${elements.voiceVolume.value}%`;
-  const sensitivity = Number(elements.wakeSensitivity.value);
-  const sensitivityLabel = sensitivity < 50
-    ? "Conservative"
-    : sensitivity > 70
-      ? "Sensitive"
-      : "Balanced";
-  elements.sensitivityOutput.textContent = `${sensitivityLabel} · ${sensitivity}%`;
+  elements.sensitivityOutput.textContent = "Live runner only";
 }
 
 function updateSetupReview() {
@@ -317,7 +316,10 @@ async function findAudioDevices() {
     );
     const microphones = devices.filter((device) => device.kind === "audioinput").length;
     const speakers = devices.filter((device) => device.kind === "audiooutput").length;
-    elements.deviceStatus.textContent = `Found ${microphones} microphone${microphones === 1 ? "" : "s"} and ${speakers} speaker${speakers === 1 ? "" : "s"}.`;
+    const pipelineStatus = state.capabilities.voice_input
+      ? " Local Whisper and Piper are enabled."
+      : " Restart the server with --voice-io to use local Whisper and Piper.";
+    elements.deviceStatus.textContent = `Found ${microphones} microphone${microphones === 1 ? "" : "s"} and ${speakers} speaker${speakers === 1 ? "" : "s"}.${pipelineStatus}`;
   } catch (error) {
     elements.deviceStatus.textContent = error.name === "NotAllowedError"
       ? "Microphone access was not allowed. You can keep the system defaults."
@@ -394,7 +396,7 @@ function appendMessage(role, text, options = {}) {
       ${isAssistant ? `
         <button class="speak-button" type="button" aria-label="Play assistant response">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5Z" /><path d="M15 9.5c.7.7 1 1.5 1 2.5s-.3 1.8-1 2.5M18 7c1.4 1.4 2 3 2 5s-.6 3.6-2 5" /></svg>
-          Play response
+          ${state.capabilities.voice_output ? "Play response" : "Play browser voice"}
         </button>` : ""}
     </div>`;
   elements.conversation.appendChild(article);
@@ -414,6 +416,7 @@ function appendMessage(role, text, options = {}) {
     elements.conversation.appendChild(error);
   }
   article.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  return speakButton;
 }
 
 function appendPipelineError(message) {
@@ -504,6 +507,9 @@ async function playResponse(button) {
   stopPlayback();
   const audioPayload = button.responseAudio;
   if (!audioPayload?.wav_base64) {
+    showToast(state.capabilities.voice_output
+      ? "Piper audio is unavailable for this response; using the browser voice"
+      : "Using the browser voice; start the server with --voice-io for Piper");
     speakText(button.fallbackText || "");
     return;
   }
@@ -529,8 +535,16 @@ async function playResponse(button) {
     await audio.play();
   } catch {
     stopPlayback();
-    speakText(button.fallbackText || "");
+    showToast("Automatic playback was blocked; choose Play response to retry");
   }
+}
+
+function shouldAutoPlayResponse(response, isAudioTurn) {
+  if (!state.capabilities.voice_output || !response?.audio?.wav_base64) return false;
+  if (confirmationKind(response) && !state.settings.speak_confirmations) return false;
+  if (state.settings.interaction_mode === "text_first") return false;
+  if (state.settings.interaction_mode === "push_to_talk") return isAudioTurn;
+  return true;
 }
 
 async function startVoiceRecording() {
@@ -676,7 +690,10 @@ async function runTurn(input) {
     state.pipeline = response.state;
     saveState();
 
-    renderConversationHistory(response);
+    const currentSpeakButton = renderConversationHistory(response);
+    if (currentSpeakButton && shouldAutoPlayResponse(response, isAudio)) {
+      await playResponse(currentSpeakButton);
+    }
   } catch (error) {
     appendPipelineError(error.message);
   } finally {
@@ -702,6 +719,7 @@ function updateSendState() {
 }
 
 function renderConversationHistory(response = null) {
+  let currentSpeakButton = null;
   elements.conversation
     .querySelectorAll(":scope > :not(.date-rule):not([data-welcome])")
     .forEach((node) => node.remove());
@@ -710,17 +728,18 @@ function renderConversationHistory(response = null) {
     const isCurrent = response
       && turn === state.pipeline.conversation_history.at(-1)
       && turn.assistant_response === response.spoken_response;
-    appendMessage("assistant", turn.assistant_response, isCurrent ? {
+    const speakButton = appendMessage("assistant", turn.assistant_response, isCurrent ? {
       confirmation: confirmationKind(response),
       errors: response.errors,
       audio: response.audio,
     } : {});
+    if (isCurrent) currentSpeakButton = speakButton;
   });
   const responseWasRecorded = response
     && state.pipeline.conversation_history.at(-1)?.assistant_response
       === response.spoken_response;
   if (response?.spoken_response && !responseWasRecorded) {
-    appendMessage("assistant", response.spoken_response, {
+    currentSpeakButton = appendMessage("assistant", response.spoken_response, {
       confirmation: confirmationKind(response),
       errors: response.errors,
       audio: response.audio,
@@ -732,6 +751,7 @@ function renderConversationHistory(response = null) {
     if (state.pipeline.context.pending_mode) appendConfirmation("mode");
     else if (state.pipeline.pending_memory_action) appendConfirmation("memory");
   }
+  return currentSpeakButton;
 }
 
 function restoreConversationHistory() {
@@ -750,11 +770,22 @@ async function connectPipeline() {
     elements.interactionLabel.textContent = state.capabilities.voice_input
       ? "Transcript or voice input"
       : "Transcript input · voice I/O disabled";
+    if (!state.capabilities.voice_input) {
+      elements.deviceStatus.textContent = (
+        "Browser devices can be selected, but local STT/TTS is disabled. "
+        + "Restart the server with --voice-io."
+      );
+    }
     elements.microphoneButton.title = state.capabilities.voice_input
       ? "Start voice input"
       : "Run the server with --voice-io to enable voice input";
   } catch {
-    state.capabilities = { text_input: false, voice_input: false, voice_output: false };
+    state.capabilities = {
+      text_input: false,
+      voice_input: false,
+      voice_output: false,
+      wake_word: false,
+    };
     elements.runtimeLabel.textContent = "Pipeline offline";
     elements.runtimeModel.textContent = "unavailable";
     elements.runtimeDot.classList.add("is-offline");

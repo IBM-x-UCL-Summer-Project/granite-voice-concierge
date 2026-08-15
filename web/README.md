@@ -25,11 +25,33 @@ Enable browser microphone transcription and pipeline-generated response audio:
 python -m voice_concierge.app.web --voice-io
 ```
 
+Without `--voice-io`, the microphone control is disabled and the response play
+button deliberately falls back to the browser's installed system voice. Device
+selection alone does not load Whisper or Piper. With `--voice-io`, click the
+microphone once to start recording and again to transcribe and send it. The
+**Voice first** setting automatically plays every Piper response; **Push to
+talk** automatically plays only responses to microphone turns; **Text first**
+keeps playback manual.
+
+The web transport does not continuously stream microphone audio, so wake-word
+detection remains a live-runner capability rather than a browser capability.
+
 Persistent local memory remains opt-in:
 
 ```bash
 python -m voice_concierge.app.web --voice-io --memory
 ```
+
+For privacy-conscious diagnostic logs in both the terminal and an ignored local
+file:
+
+```bash
+python -m voice_concierge.app.web --voice-io --memory \
+  --log-level INFO --log-file .local/logs/web.log
+```
+
+Turn logs include the endpoint, duration, recoverable error codes, and typed
+memory-operation status/detail. They do not include transcript or memory text.
 
 For UI review without Ollama or audio models, use the deterministic pipeline
 adapters while keeping the same HTTP, serialization, state, and component flow:
