@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections import OrderedDict, deque
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -22,6 +23,11 @@ from voice_concierge.scheduling.types import Reminder
 
 MAX_ROUTINE_SESSIONS = 32
 MAX_DUE_NOTIFICATIONS = 64
+_SAFETY_INTERRUPT = re.compile(
+    r"\b(?:emergency|gas\s+leak|smell\s+gas|fire|smoke|can't\s+breathe|"
+    r"cannot\s+breathe|chest\s+pain|severe\s+bleeding|in\s+danger)\b",
+    flags=re.IGNORECASE,
+)
 
 
 class WebReminderNotifier:
@@ -78,6 +84,8 @@ class WebRoutineSessions:
         adapter = self._adapters.get(session_id)
         if adapter is not None:
             self._adapters.move_to_end(session_id)
+            if _SAFETY_INTERRUPT.search(transcript):
+                return None
             if adapter.awaiting_choice:
                 return self._keep_or_finish(
                     session_id, adapter.resolve_choice(transcript)
@@ -85,10 +93,7 @@ class WebRoutineSessions:
             if adapter.status in {"running", "paused"}:
                 event = self._parser.parse(transcript)
                 if event is None or event.command in {"yes", "no", "slower", "faster"}:
-                    return (
-                        "A guided routine is active. Say next, back, repeat, pause, "
-                        "continue, or stop."
-                    )
+                    return None
                 return self._keep_or_finish(session_id, adapter.handle_command(event))
             self._adapters.pop(session_id, None)
 

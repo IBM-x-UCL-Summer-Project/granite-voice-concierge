@@ -77,6 +77,9 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 [hidden] { display: none !important; }
 
 .topbar {
+  z-index: 40;
+  position: sticky;
+  top: 0;
   height: 76px;
   padding: 0 clamp(20px, 4vw, 64px);
   display: grid;
@@ -222,7 +225,7 @@ h3 { font-size: 17px; }
 .date-rule { display: flex; align-items: center; gap: 14px; color: var(--quiet); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; }
 .date-rule::before, .date-rule::after { content: ""; height: 1px; flex: 1; background: var(--line); }
 
-.message { display: flex; gap: 13px; margin-top: 30px; max-width: 720px; animation: rise 260ms ease-out; }
+.message { display: flex; gap: 13px; margin-top: 30px; max-width: 720px; scroll-margin-top: 96px; animation: rise 260ms ease-out; }
 .message-user { margin-left: auto; flex-direction: row-reverse; }
 .avatar { flex: 0 0 auto; width: 32px; height: 32px; display: grid; place-items: center; border-radius: 10px; background: var(--ink); color: var(--lime); font-weight: 700; font-size: 13px; }
 .message-user .avatar { background: var(--line-strong); color: var(--ink); }
@@ -293,6 +296,15 @@ h3 { font-size: 17px; }
 .wake-word-close { z-index: 3; position: absolute; top: 28px; left: 30px; min-height: 38px; padding: 0 13px; display: inline-flex; align-items: center; gap: 7px; border: 1px solid rgba(255,255,255,0.18); border-radius: 999px; background: rgba(255,255,255,0.06); color: inherit; font-size: 10px; cursor: pointer; }
 .wake-word-close:hover { background: rgba(255,255,255,0.12); }
 .wake-word-close svg { width: 15px; height: 15px; }
+.wake-settings { z-index: 4; position: absolute; top: 28px; right: 30px; color: inherit; font-size: 10px; }
+.wake-settings summary { min-height: 38px; padding: 0 13px; display: flex; align-items: center; border: 1px solid rgba(255,255,255,0.18); border-radius: 999px; background: rgba(255,255,255,0.06); cursor: pointer; list-style: none; }
+.wake-settings summary::-webkit-details-marker { display: none; }
+.wake-settings[open] summary { margin-left: auto; width: max-content; background: rgba(255,255,255,0.12); }
+.wake-settings-panel { width: min(290px, calc(100vw - 36px)); margin-top: 9px; padding: 16px; border: 1px solid rgba(255,255,255,0.15); border-radius: 16px; background: rgba(17,22,18,0.94); box-shadow: 0 18px 50px rgba(0,0,0,0.3); backdrop-filter: blur(18px); }
+.wake-settings-panel label { display: flex; justify-content: space-between; gap: 16px; margin-top: 12px; color: rgba(255,255,255,0.68); }
+.wake-settings-panel label:first-child { margin-top: 0; }
+.wake-settings-panel output { color: #f7f7ef; font-weight: 700; }
+.wake-settings-panel input { width: 100%; margin: 8px 0 2px; accent-color: #c3ff68; }
 .wake-word-stage { z-index: 1; position: relative; min-height: calc(100vh - 76px); padding: 86px 24px 60px; display: flex; align-items: center; flex-direction: column; justify-content: center; text-align: center; }
 .wake-word-stage .eyebrow { color: rgba(255,255,255,0.48); }
 .wake-word-stage h1 { max-width: 760px; font-size: clamp(38px, 7vw, 76px); }
@@ -305,6 +317,13 @@ h3 { font-size: 17px; }
 .wake-word-screen[data-state="thinking"] .wake-orb span { animation-duration: 0.8s; }
 .wake-word-status { margin: 0; font-size: 15px; font-weight: 700; }
 .wake-word-detail { max-width: 520px; margin: 9px 0 0; color: rgba(255,255,255,0.5); font-size: 10px; line-height: 1.6; }
+.wake-word-actions { min-height: 38px; margin-top: 22px; display: flex; align-items: center; justify-content: center; gap: 9px; }
+.wake-push-button, .wake-cancel-button { min-height: 38px; padding: 0 14px; border: 1px solid rgba(255,255,255,0.2); border-radius: 999px; background: rgba(255,255,255,0.08); color: inherit; font-size: 10px; font-weight: 700; cursor: pointer; }
+.wake-push-button { display: inline-flex; align-items: center; gap: 7px; border-color: rgba(195,255,104,0.55); background: rgba(195,255,104,0.14); }
+.wake-push-button:hover:not(:disabled) { background: rgba(195,255,104,0.23); }
+.wake-push-button:disabled { opacity: 0.4; cursor: default; }
+.wake-push-button svg { width: 15px; height: 15px; }
+.wake-cancel-button:hover { background: rgba(255,255,255,0.14); }
 
 .toast { z-index: 30; position: fixed; left: 50%; bottom: 20px; transform: translate(-50%, 16px); padding: 9px 12px; border-radius: 9px; background: var(--ink); color: var(--paper); font-size: 10px; opacity: 0; pointer-events: none; transition: opacity 180ms ease, transform 180ms ease; }
 .toast.is-visible { opacity: 1; transform: translate(-50%, 0); }
@@ -383,6 +402,13 @@ h3 { font-size: 17px; }
 .range-heading div span { margin-top: 4px; color: var(--muted); font-size: 10px; }
 .range-heading output { color: var(--ink); font-family: "SFMono-Regular", Consolas, monospace; font-size: 9px; }
 .range-setting input[type="range"] { width: 100%; margin: 21px 0 7px; accent-color: var(--ink); }
+.wake-timing-grid { margin: 20px 0 26px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.compact-range { min-width: 0; padding: 13px; display: grid; grid-template-columns: 1fr auto; gap: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper-strong); }
+.compact-range strong, .compact-range small { display: block; }
+.compact-range strong { font-size: 10px; }
+.compact-range small { margin-top: 4px; color: var(--muted); font-size: 8px; line-height: 1.4; }
+.compact-range output { color: var(--muted); font-size: 9px; font-weight: 700; }
+.compact-range input { grid-column: 1 / -1; width: 100%; accent-color: var(--ink); }
 .range-scale { display: flex; justify-content: space-between; color: var(--quiet); font-size: 8px; }
 .preview-button { display: inline-flex; align-items: center; gap: 7px; margin-top: 24px; border: 1px solid var(--line-strong); background: var(--paper-strong); }
 .preview-button:hover { background: var(--canvas); }
@@ -533,6 +559,7 @@ h3 { font-size: 17px; }
   .device-permission { grid-template-columns: auto 1fr; }
   .device-permission .secondary-button { grid-column: 1 / -1; width: 100%; }
   .preference-group { grid-template-columns: 1fr; }
+  .wake-timing-grid { grid-template-columns: 1fr; }
   .choice-card { min-height: 78px; }
   .setup-footer { min-height: 66px; padding: 13px 20px; }
   .topbar-actions .settings-button span { display: none; }
@@ -543,4 +570,8 @@ h3 { font-size: 17px; }
   .data-section-heading, .data-item-main { flex-direction: column; }
   .data-item-actions { justify-content: flex-start; }
   .action-dialog { width: calc(100% - 24px); }
+  .wake-word-close { top: 18px; left: 18px; }
+  .wake-settings { top: 18px; right: 18px; }
+  .wake-word-stage { padding: 96px 18px 38px; }
+  .wake-orb { margin: 24px 0 22px; }
 }

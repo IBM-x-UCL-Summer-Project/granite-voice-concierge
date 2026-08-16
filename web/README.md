@@ -35,9 +35,12 @@ resampled in the browser and sent only to the same-origin local server, where
 the existing openWakeWord model listens for **Hey Jarvis**. After detection,
 the browser records until a local silence threshold is reached, sends the
 utterance through Whisper and the normal application pipeline, plays the Piper
-response, then resumes wake-word listening. Only one browser tab owns the
-stateful detector at a time. Use `--no-wake-word` to keep push-to-talk voice I/O
-while disabling continuous wake-word mode.
+response, then opens a short follow-up listening window before resuming
+wake-word listening. The dedicated wake screen also provides push-to-talk and
+cancel controls. Wake sensitivity, allowed mid-request pauses, the follow-up
+window, and maximum request length can be changed in that screen or Personalise.
+Only one browser tab owns the stateful detector at a time. Use `--no-wake-word`
+to keep push-to-talk voice I/O while disabling continuous wake-word mode.
 
 The **Voice first** setting automatically plays every Piper response; **Push to
 talk** automatically plays only responses to microphone turns; **Text first**
@@ -68,6 +71,13 @@ dialog, and bulk actions also require a separate API confirmation token.
 the same-origin local connection. It includes text messages, mode, export time,
 and explicit privacy metadata; it never includes recorded audio or saved
 memories. Exporting does not turn on conversation persistence.
+
+The server keeps an extended temporary display/export history of up to 200
+completed exchanges separately from the six-turn reasoning context window.
+Long conversations therefore remain visible and survive a page reload while
+that local server session is alive, without sending every old turn back through
+the model. The header stays pinned
+while the transcript scrolls.
 
 For privacy-conscious diagnostic logs in both the terminal and an ignored local
 file:
@@ -121,6 +131,13 @@ in-process and is cleared when the local server restarts. **New conversation**
 calls `POST /api/session/reset` to clear it immediately without deleting saved
 memories or reminders.
 
+Chance utilities such as coin flips, dice rolls, and bounded random-number
+selection execute in local application code rather than relying on model text.
+Clear gas, fire, smoke, and urgent medical phrases also take a deterministic
+emergency path so model source metadata cannot replace urgent guidance with an
+offline-information error. Explicit facts stated in the recent conversation can
+be recalled directly when the follow-up names the same personal fact.
+
 Additional same-origin endpoints support the connected local features:
 
 - `GET /api/health`, `/api/privacy`, `/api/privacy/export`, `/api/reminders`,
@@ -128,7 +145,8 @@ Additional same-origin endpoints support the connected local features:
 - memory edit/delete/forget-all under `POST /api/privacy/memories/...`;
 - reminder create/edit/snooze/cancel/cancel-all under
   `POST /api/reminders/...`;
-- wake-word start/frame/stop under `POST /api/wake-word/...`.
+- wake-word start/frame/stop under `POST /api/wake-word/...`;
+- temporary state/display-history restoration under `GET /api/session`.
 
 Unknown `/api/` routes return JSON errors for both GET and POST requests. The
 browser checks health every five seconds, disables turn controls while
@@ -155,8 +173,8 @@ On the first visit, the UI opens a four-step setup for:
 
 - microphone and speaker selection;
 - speech rate and volume, with local voice preview;
-- wake-word sensitivity and wake-word, voice-first, push-to-talk, or text-first
-  control;
+- wake-word sensitivity, pause/follow-up/request timing, and wake-word,
+  voice-first, push-to-talk, or text-first control;
 - response length and spoken confirmation preferences.
 
 The browser asks for microphone permission only when **Find devices** is

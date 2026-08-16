@@ -5,6 +5,10 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Protocol
 
+from voice_concierge.app.local_utilities import (
+    resolve_conversation_fact,
+    resolve_local_utility,
+)
 from voice_concierge.app.memory import (
     MemoryGateway,
     NullMemoryGateway,
@@ -382,6 +386,29 @@ class VoiceConciergePipeline:
         )
         if command_result is not None:
             return command_result
+
+        utility_response = resolve_local_utility(normalized_text)
+        if utility_response is not None:
+            return self._context_response(
+                current_state,
+                context_decision,
+                transcript=transcript,
+                spoken_response=utility_response,
+                options=options,
+            )
+
+        conversation_response = resolve_conversation_fact(
+            normalized_text,
+            current_state.conversation_history,
+        )
+        if conversation_response is not None:
+            return self._context_response(
+                current_state,
+                context_decision,
+                transcript=transcript,
+                spoken_response=conversation_response,
+                options=options,
+            )
 
         memories: tuple[MemoryReference, ...] = ()
         runtime_context: tuple[RuntimeReference, ...] = ()

@@ -5,14 +5,12 @@ const DUE_POLL_MILLISECONDS = 5000;
 const REQUEST_TIMEOUT_MILLISECONDS = 130000;
 const WAKE_WORD_REQUEST_TIMEOUT_MILLISECONDS = 5000;
 const WAKE_WORD_FRAME_SAMPLES = 3200;
-const WAKE_COMMAND_SILENCE_MILLISECONDS = 900;
-const WAKE_COMMAND_MAX_MILLISECONDS = 12000;
 const WAKE_COMMAND_START_TIMEOUT_MILLISECONDS = 7000;
 const SILENT_WAV_URL = "data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQIAAAAAAA==";
 const { shouldAutoPlayResponse: playbackPolicyAllows } = window.GranitePlaybackPolicy;
 
 const defaultSettings = {
-  version: 1,
+  version: 2,
   setup_complete: false,
   microphone_id: "default",
   speaker_id: "default",
@@ -20,6 +18,9 @@ const defaultSettings = {
   volume: 80,
   response_length: "normal",
   wake_word_sensitivity: 60,
+  wake_end_pause_seconds: 1.8,
+  wake_follow_up_seconds: 7,
+  wake_max_request_seconds: 20,
   interaction_mode: "voice_first",
   speak_confirmations: true,
 };
@@ -42,6 +43,8 @@ const defaultState = {
 
 const state = {
   pipeline: structuredClone(defaultState),
+  sessionHistory: [],
+  sessionLoaded: false,
   settings: loadSettings(),
   settingsDraft: null,
   setupStep: 0,
@@ -69,6 +72,7 @@ const state = {
     commandStartedAt: 0,
     lastVoiceAt: 0,
     voiceDetected: false,
+    followUp: false,
     noiseFloor: 0.004,
   },
   playback: null,
@@ -96,6 +100,17 @@ const elements = {
   wakeWordTitle: document.querySelector("#wake-word-title"),
   wakeWordStatus: document.querySelector("#wake-word-status"),
   wakeWordDetail: document.querySelector("#wake-word-detail"),
+  wakePushButton: document.querySelector("#wake-push-button"),
+  wakePushLabel: document.querySelector("#wake-push-label"),
+  wakeCancelButton: document.querySelector("#wake-cancel-button"),
+  wakeQuickSensitivity: document.querySelector("#wake-quick-sensitivity"),
+  wakeQuickSensitivityOutput: document.querySelector("#wake-quick-sensitivity-output"),
+  wakeQuickPause: document.querySelector("#wake-quick-pause"),
+  wakeQuickPauseOutput: document.querySelector("#wake-quick-pause-output"),
+  wakeQuickFollowUp: document.querySelector("#wake-quick-follow-up"),
+  wakeQuickFollowUpOutput: document.querySelector("#wake-quick-follow-up-output"),
+  wakeQuickMaximum: document.querySelector("#wake-quick-maximum"),
+  wakeQuickMaximumOutput: document.querySelector("#wake-quick-maximum-output"),
   startupScreen: document.querySelector("#startup-screen"),
   startupTitle: document.querySelector("#startup-title"),
   startupMessage: document.querySelector("#startup-message"),
@@ -118,6 +133,12 @@ const elements = {
   volumeOutput: document.querySelector("#volume-output"),
   wakeSensitivity: document.querySelector("#wake-sensitivity"),
   sensitivityOutput: document.querySelector("#sensitivity-output"),
+  wakeEndPause: document.querySelector("#wake-end-pause"),
+  wakeEndPauseOutput: document.querySelector("#wake-end-pause-output"),
+  wakeFollowUp: document.querySelector("#wake-follow-up"),
+  wakeFollowUpOutput: document.querySelector("#wake-follow-up-output"),
+  wakeMaximumRequest: document.querySelector("#wake-maximum-request"),
+  wakeMaximumRequestOutput: document.querySelector("#wake-maximum-request-output"),
   previewVoice: document.querySelector("#preview-voice"),
   interactionLabel: document.querySelector("#interaction-label"),
   localDataButton: document.querySelector("#local-data-button"),
@@ -230,6 +251,9 @@ function populateSetupForm(settings) {
   elements.speechRate.value = settings.speech_rate;
   elements.voiceVolume.value = settings.volume;
   elements.wakeSensitivity.value = settings.wake_word_sensitivity;
+  elements.wakeEndPause.value = settings.wake_end_pause_seconds;
+  elements.wakeFollowUp.value = settings.wake_follow_up_seconds;
+  elements.wakeMaximumRequest.value = settings.wake_max_request_seconds;
   const interaction = elements.setupForm.querySelector(
     `[name="interaction_mode"][value="${settings.interaction_mode}"]`,
   );
@@ -240,6 +264,7 @@ function populateSetupForm(settings) {
   if (responseLength) responseLength.checked = true;
   elements.setupForm.elements.speak_confirmations.checked = settings.speak_confirmations;
   updateRangeOutputs();
+  populateWakeQuickSettings(settings);
 }
 
 function ensureSelectedDeviceOption(select, value, label) {
@@ -263,6 +288,9 @@ function collectSettingsDraft() {
     volume: Number(elements.voiceVolume.value),
     response_length: checkedLength?.value || "normal",
     wake_word_sensitivity: Number(elements.wakeSensitivity.value),
+    wake_end_pause_seconds: Number(elements.wakeEndPause.value),
+    wake_follow_up_seconds: Number(elements.wakeFollowUp.value),
+    wake_max_request_seconds: Number(elements.wakeMaximumRequest.value),
     interaction_mode: checkedInteraction?.value || "voice_first",
     speak_confirmations: elements.setupForm.elements.speak_confirmations.checked,
   };
@@ -288,6 +316,7 @@ async function savePersonalSettings() {
 
 function applyPersonalSettings() {
   const { response_length: responseLength } = state.settings;
+  populateWakeQuickSettings(state.settings);
   const interactionLabels = {
     wake_word: "Hands-free wake word",
     voice_first: "Automatic voice playback",
@@ -315,6 +344,58 @@ function updateRangeOutputs() {
     ? "Conservative"
     : sensitivity > 70 ? "Responsive" : "Balanced";
   elements.sensitivityOutput.textContent = `${sensitivityLabel} · ${sensitivity}%`;
+  elements.wakeEndPauseOutput.textContent = `${Number(elements.wakeEndPause.value).toFixed(1)} sec`;
+  elements.wakeFollowUpOutput.textContent = `${elements.wakeFollowUp.value} sec`;
+  elements.wakeMaximumRequestOutput.textContent = `${elements.wakeMaximumRequest.value} sec`;
+}
+
+function populateWakeQuickSettings(settings) {
+  elements.wakeQuickSensitivity.value = settings.wake_word_sensitivity;
+  elements.wakeQuickPause.value = settings.wake_end_pause_seconds;
+  elements.wakeQuickFollowUp.value = settings.wake_follow_up_seconds;
+  elements.wakeQuickMaximum.value = settings.wake_max_request_seconds;
+  updateWakeQuickOutputs();
+}
+
+function updateWakeQuickOutputs() {
+  elements.wakeQuickSensitivityOutput.textContent = `${elements.wakeQuickSensitivity.value}%`;
+  elements.wakeQuickPauseOutput.textContent = `${Number(elements.wakeQuickPause.value).toFixed(1)} sec`;
+  elements.wakeQuickFollowUpOutput.textContent = `${elements.wakeQuickFollowUp.value} sec`;
+  elements.wakeQuickMaximumOutput.textContent = `${elements.wakeQuickMaximum.value} sec`;
+}
+
+async function saveWakeQuickSettings() {
+  const previousSensitivity = state.settings.wake_word_sensitivity;
+  state.settings = {
+    ...state.settings,
+    wake_word_sensitivity: Number(elements.wakeQuickSensitivity.value),
+    wake_end_pause_seconds: Number(elements.wakeQuickPause.value),
+    wake_follow_up_seconds: Number(elements.wakeQuickFollowUp.value),
+    wake_max_request_seconds: Number(elements.wakeQuickMaximum.value),
+  };
+  window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(state.settings));
+  elements.wakeSensitivity.value = state.settings.wake_word_sensitivity;
+  elements.wakeEndPause.value = state.settings.wake_end_pause_seconds;
+  elements.wakeFollowUp.value = state.settings.wake_follow_up_seconds;
+  elements.wakeMaximumRequest.value = state.settings.wake_max_request_seconds;
+  updateWakeQuickOutputs();
+  updateRangeOutputs();
+  if (state.wakeWord.active
+      && previousSensitivity !== state.settings.wake_word_sensitivity) {
+    try {
+      await requestJson(
+        "/api/wake-word/start",
+        { sensitivity: state.settings.wake_word_sensitivity },
+        {
+          updateConnection: false,
+          timeoutMilliseconds: WAKE_WORD_REQUEST_TIMEOUT_MILLISECONDS,
+        },
+      );
+      resetWakeWordFrameBuffer();
+    } catch (error) {
+      showToast(error.message);
+    }
+  }
 }
 
 function updateSetupReview() {
@@ -824,6 +905,14 @@ function setWakeWordView(phase, { title, status, detail } = {}) {
   if (title) elements.wakeWordTitle.textContent = title;
   if (status) elements.wakeWordStatus.textContent = status;
   if (detail) elements.wakeWordDetail.textContent = detail;
+  const listening = phase === "listening";
+  elements.wakePushButton.disabled = !["waiting", "listening"].includes(phase);
+  elements.wakePushLabel.textContent = listening ? "Send now" : "Talk now";
+  elements.wakePushButton.setAttribute(
+    "aria-label",
+    listening ? "Send the current spoken request" : "Start push-to-talk",
+  );
+  elements.wakeCancelButton.hidden = !listening;
 }
 
 function resetWakeWordFrameBuffer() {
@@ -1021,16 +1110,19 @@ async function flushWakeWordFrame() {
   }
 }
 
-function beginWakeCommand() {
+function beginWakeCommand({ followUp = false } = {}) {
   resetWakeWordFrameBuffer();
   state.wakeWord.commandChunks = [];
   state.wakeWord.commandStartedAt = performance.now();
   state.wakeWord.lastVoiceAt = state.wakeWord.commandStartedAt;
   state.wakeWord.voiceDetected = false;
+  state.wakeWord.followUp = followUp;
   setWakeWordView("listening", {
-    title: "I’m listening",
-    status: "Speak your request",
-    detail: "Pause when you are finished. Granite will transcribe and respond locally.",
+    title: followUp ? "Anything else?" : "I’m listening",
+    status: followUp ? "Listening for a follow-up" : "Speak your request",
+    detail: followUp
+      ? `Speak within ${state.settings.wake_follow_up_seconds} seconds, or cancel to return to the wake phrase.`
+      : "Pause when you are finished, or press Send now. Granite responds locally.",
   });
 }
 
@@ -1044,14 +1136,21 @@ function collectWakeCommand(samples) {
     state.wakeWord.lastVoiceAt = now;
   }
   const elapsed = now - state.wakeWord.commandStartedAt;
+  const silenceMilliseconds = state.settings.wake_end_pause_seconds * 1000;
+  const maximumMilliseconds = state.settings.wake_max_request_seconds * 1000;
+  const startTimeoutMilliseconds = state.wakeWord.followUp
+    ? state.settings.wake_follow_up_seconds * 1000
+    : WAKE_COMMAND_START_TIMEOUT_MILLISECONDS;
   if (state.wakeWord.voiceDetected
-      && now - state.wakeWord.lastVoiceAt >= WAKE_COMMAND_SILENCE_MILLISECONDS) {
+      && now - state.wakeWord.lastVoiceAt >= silenceMilliseconds) {
     finishWakeCommand();
-  } else if (elapsed >= WAKE_COMMAND_MAX_MILLISECONDS) {
+  } else if (elapsed >= maximumMilliseconds) {
     finishWakeCommand();
   } else if (!state.wakeWord.voiceDetected
-      && elapsed >= WAKE_COMMAND_START_TIMEOUT_MILLISECONDS) {
-    resumeWakeWordListening("I didn’t hear a request. Listening for “Hey Jarvis” again.");
+      && elapsed >= startTimeoutMilliseconds) {
+    resumeWakeWordListening(state.wakeWord.followUp
+      ? "Follow-up window ended. Listening for “Hey Jarvis”."
+      : "I didn’t hear a request. Listening for “Hey Jarvis” again.");
   }
 }
 
@@ -1062,11 +1161,11 @@ function rootMeanSquare(samples) {
   return Math.sqrt(sum / samples.length);
 }
 
-async function finishWakeCommand() {
+async function finishWakeCommand({ force = false } = {}) {
   if (!state.wakeWord.active || state.wakeWord.phase !== "listening") return;
   const chunks = state.wakeWord.commandChunks;
   state.wakeWord.commandChunks = [];
-  if (!state.wakeWord.voiceDetected || !chunks.length) {
+  if ((!state.wakeWord.voiceDetected && !force) || !chunks.length) {
     resumeWakeWordListening("I didn’t hear a request. Listening for “Hey Jarvis” again.");
     return;
   }
@@ -1077,16 +1176,18 @@ async function finishWakeCommand() {
     detail: "This can take a moment while the on-device models prepare the response.",
   });
   const samples = mergeAudioChunks(chunks);
-  await runTurn({ kind: "audio", wavBase64: encodeWavBase64(samples, 16000) });
+  const response = await runTurn({ kind: "audio", wavBase64: encodeWavBase64(samples, 16000) });
   await waitForResponsePlayback();
   if (state.wakeWord.active) {
-    resumeWakeWordListening("Ready. Listening for the wake phrase.");
+    if (response) beginWakeCommand({ followUp: true });
+    else resumeWakeWordListening("I couldn’t complete that. Listening for “Hey Jarvis”.");
   }
 }
 
 function resumeWakeWordListening(status) {
   if (!state.wakeWord.active) return;
   state.wakeWord.commandChunks = [];
+  state.wakeWord.followUp = false;
   resetWakeWordFrameBuffer();
   setWakeWordView("waiting", {
     title: "Say “Hey Jarvis”",
@@ -1134,6 +1235,9 @@ async function runTurn(input) {
     if (response.context.command_action === "stop") stopPlayback();
 
     state.pipeline = response.state;
+    state.sessionHistory = Array.isArray(response.session_history)
+      ? response.session_history
+      : response.state.conversation_history;
     completedResponse = response;
     saveState();
 
@@ -1171,7 +1275,7 @@ function updateSendState() {
     || !state.capabilities.voice_input;
   elements.newConversation.disabled = state.running || state.connection !== "ready";
   elements.exportChat.disabled = state.running
-    || state.pipeline.conversation_history.length === 0;
+    || state.sessionHistory.length === 0;
   elements.wakeWordButton.disabled = state.running
     || Boolean(state.recorder)
     || state.wakeWord.active
@@ -1184,10 +1288,10 @@ function renderConversationHistory(response = null) {
   elements.conversation
     .querySelectorAll(":scope > :not(.date-rule):not([data-welcome])")
     .forEach((node) => node.remove());
-  state.pipeline.conversation_history.forEach((turn) => {
+  state.sessionHistory.forEach((turn) => {
     appendMessage("user", turn.user_transcript);
     const isCurrent = response
-      && turn === state.pipeline.conversation_history.at(-1)
+      && turn === state.sessionHistory.at(-1)
       && turn.assistant_response === response.spoken_response;
     const speakButton = appendMessage("assistant", turn.assistant_response, isCurrent ? {
       confirmation: confirmationKind(response),
@@ -1197,7 +1301,7 @@ function renderConversationHistory(response = null) {
     if (isCurrent) currentSpeakButton = speakButton;
   });
   const responseWasRecorded = response
-    && state.pipeline.conversation_history.at(-1)?.assistant_response
+    && state.sessionHistory.at(-1)?.assistant_response
       === response.spoken_response;
   if (response?.spoken_response && !responseWasRecorded) {
     currentSpeakButton = appendMessage("assistant", response.spoken_response, {
@@ -1269,7 +1373,22 @@ function setConnectionStatus(status, health = null) {
     });
   }
   if (previous === "offline" && status === "ready") showToast("Local assistant reconnected");
+  if (status === "offline" && previous === "ready") state.sessionLoaded = false;
   updateSendState();
+}
+
+async function restoreServerSession() {
+  const session = await getJson("/api/session", {
+    updateConnection: false,
+    timeoutMilliseconds: WAKE_WORD_REQUEST_TIMEOUT_MILLISECONDS,
+  });
+  state.pipeline = session.state || structuredClone(defaultState);
+  state.sessionHistory = Array.isArray(session.session_history)
+    ? session.session_history
+    : [];
+  state.sessionLoaded = true;
+  renderConversationHistory();
+  saveState();
 }
 
 async function connectPipeline({ silent = false } = {}) {
@@ -1284,6 +1403,9 @@ async function connectPipeline({ silent = false } = {}) {
       ? health.status
       : "error";
     setConnectionStatus(healthStatus, health);
+    if (healthStatus === "ready" && !state.sessionLoaded) {
+      await restoreServerSession();
+    }
     if (state.capabilities.voice_input) applyPersonalSettings();
     else elements.interactionLabel.textContent = "Transcript input · voice I/O disabled";
     if (!state.capabilities.voice_input) {
@@ -1327,6 +1449,8 @@ async function startNewConversation() {
   try {
     const response = await requestJson("/api/session/reset", {});
     state.pipeline = response.state || structuredClone(defaultState);
+    state.sessionHistory = response.session_history || [];
+    state.sessionLoaded = true;
     stopPlayback();
     renderConversationHistory();
     saveState();
@@ -1562,7 +1686,7 @@ async function exportMemories() {
 }
 
 function exportChat() {
-  const history = state.pipeline.conversation_history;
+  const history = state.sessionHistory;
   if (!history.length) {
     showToast("There is no conversation to export yet");
     return;
@@ -1677,6 +1801,22 @@ elements.themeButton.addEventListener("click", () => {
 elements.newConversation.addEventListener("click", startNewConversation);
 elements.exportChat.addEventListener("click", exportChat);
 elements.wakeWordButton.addEventListener("click", startWakeWordMode);
+elements.wakePushButton.addEventListener("click", () => {
+  if (state.wakeWord.phase === "waiting") beginWakeCommand();
+  else if (state.wakeWord.phase === "listening") finishWakeCommand({ force: true });
+});
+elements.wakeCancelButton.addEventListener("click", () => {
+  resumeWakeWordListening("Cancelled. Listening for “Hey Jarvis”.");
+});
+for (const control of [
+  elements.wakeQuickSensitivity,
+  elements.wakeQuickPause,
+  elements.wakeQuickFollowUp,
+  elements.wakeQuickMaximum,
+]) {
+  control.addEventListener("input", updateWakeQuickOutputs);
+  control.addEventListener("change", saveWakeQuickSettings);
+}
 elements.wakeWordCloseForm.addEventListener("submit", (event) => {
   event.preventDefault();
   stopWakeWordMode();

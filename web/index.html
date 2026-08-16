@@ -8,7 +8,7 @@
       content="Granite Voice Concierge local conversation interface"
     />
     <title>Granite Voice Concierge</title>
-    <link rel="stylesheet" href="./styles.css?v=20260816-5" />
+    <link rel="stylesheet" href="./styles.css?v=20260816-6" />
   </head>
   <body>
     <div class="app-shell">
@@ -157,6 +157,19 @@
               Conversation
             </button>
           </form>
+          <details class="wake-settings">
+            <summary>Wake settings</summary>
+            <div class="wake-settings-panel">
+              <label for="wake-quick-sensitivity"><span>Wake sensitivity</span><output id="wake-quick-sensitivity-output" for="wake-quick-sensitivity">60%</output></label>
+              <input id="wake-quick-sensitivity" type="range" min="20" max="100" value="60" step="10" />
+              <label for="wake-quick-pause"><span>Pause before sending</span><output id="wake-quick-pause-output" for="wake-quick-pause">1.8 sec</output></label>
+              <input id="wake-quick-pause" type="range" min="0.8" max="3" value="1.8" step="0.2" />
+              <label for="wake-quick-follow-up"><span>Follow-up listening</span><output id="wake-quick-follow-up-output" for="wake-quick-follow-up">7 sec</output></label>
+              <input id="wake-quick-follow-up" type="range" min="3" max="15" value="7" step="1" />
+              <label for="wake-quick-maximum"><span>Maximum request</span><output id="wake-quick-maximum-output" for="wake-quick-maximum">20 sec</output></label>
+              <input id="wake-quick-maximum" type="range" min="8" max="30" value="20" step="1" />
+            </div>
+          </details>
           <div class="wake-word-stage">
             <p class="eyebrow">Hands-free · processed locally</p>
             <h1 id="wake-word-title">Say “Hey Jarvis”</h1>
@@ -169,6 +182,13 @@
             <p class="wake-word-detail" id="wake-word-detail">
               Granite listens only for the wake phrase. After your request, it returns to wake-word listening.
             </p>
+            <div class="wake-word-actions">
+              <button class="wake-push-button" id="wake-push-button" type="button">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z" /><path d="M5 11v1a7 7 0 0 0 14 0v-1M12 19v2M9 21h6" /></svg>
+                <span id="wake-push-label">Talk now</span>
+              </button>
+              <button class="wake-cancel-button" id="wake-cancel-button" type="button" hidden>Cancel listening</button>
+            </div>
           </div>
         </dialog>
 
@@ -271,6 +291,23 @@
                 <div class="range-heading"><div><strong>Wake-word sensitivity</strong><span>Controls local “Hey Jarvis” detection in hands-free wake mode.</span></div><output id="sensitivity-output" for="wake-sensitivity">Balanced · 60%</output></div>
                 <input id="wake-sensitivity" name="wake_word_sensitivity" type="range" min="20" max="100" value="60" step="10" aria-label="Wake-word sensitivity" />
                 <div class="range-scale"><span>Fewer false triggers</span><span>Easier to activate</span></div>
+              </div>
+              <div class="wake-timing-grid">
+                <label class="compact-range" for="wake-end-pause">
+                  <span><strong>Pause before sending</strong><small>Silence allowed while speaking</small></span>
+                  <output id="wake-end-pause-output" for="wake-end-pause">1.8 sec</output>
+                  <input id="wake-end-pause" name="wake_end_pause_seconds" type="range" min="0.8" max="3" value="1.8" step="0.2" />
+                </label>
+                <label class="compact-range" for="wake-follow-up">
+                  <span><strong>Follow-up listening</strong><small>Open-mic window after a response</small></span>
+                  <output id="wake-follow-up-output" for="wake-follow-up">7 sec</output>
+                  <input id="wake-follow-up" name="wake_follow_up_seconds" type="range" min="3" max="15" value="7" step="1" />
+                </label>
+                <label class="compact-range" for="wake-maximum-request">
+                  <span><strong>Maximum request</strong><small>Longest single spoken request</small></span>
+                  <output id="wake-maximum-request-output" for="wake-maximum-request">20 sec</output>
+                  <input id="wake-maximum-request" name="wake_max_request_seconds" type="range" min="8" max="30" value="20" step="1" />
+                </label>
               </div>
               <fieldset class="preference-group interaction-options">
                 <legend>Preferred interaction</legend>
@@ -395,6 +432,6 @@
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
     <script src="./playback-policy.js?v=20260815"></script>
-    <script src="./app.js?v=20260816-8"></script>
+    <script src="./app.js?v=20260816-9"></script>
   </body>
 </html>

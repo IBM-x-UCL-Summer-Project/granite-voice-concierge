@@ -157,8 +157,8 @@ def test_static_ui_disables_browser_cache() -> None:
 
     assert cache_control == "no-store"
     assert "./playback-policy.js?v=20260815" in html
-    assert "./app.js?v=20260816-8" in html
-    assert "./styles.css?v=20260816-5" in html
+    assert "./app.js?v=20260816-9" in html
+    assert "./styles.css?v=20260816-6" in html
 
 
 def test_browser_never_persists_conversation_state() -> None:
@@ -186,9 +186,13 @@ def test_browser_exposes_waiting_wake_mode_and_private_chat_export() -> None:
     script = (REPOSITORY_ROOT / "web" / "app.js").read_text(encoding="utf-8")
 
     assert 'id="wake-word-screen"' in html
+    assert 'id="wake-push-button"' in html
+    assert 'id="wake-quick-pause"' in html
+    assert 'id="wake-quick-follow-up"' in html
     assert 'id="startup-screen"' in html
     assert 'id="export-chat-button"' in html
     assert "Transcribing and thinking locally" in script
+    assert "beginWakeCommand({ followUp: true })" in script
     assert 'link.href = "/api/session/export"' in script
     assert "localStorage.setItem(LEGACY_PIPELINE_STORAGE_KEY" not in script
 
@@ -311,6 +315,28 @@ def test_chat_export_downloads_transient_text_without_audio() -> None:
         {"role": "user", "content": "hello"},
         {"role": "assistant", "content": "Fake pipeline response for: hello"},
     ]
+
+
+def test_web_session_keeps_full_display_history_beyond_reasoning_window() -> None:
+    opener = build_opener(HTTPCookieProcessor(CookieJar()))
+    with running_server() as base_url:
+        response = {}
+        for index in range(8):
+            response = read_json(
+                f"{base_url}/api/turn",
+                payload={"transcript": f"message {index}"},
+                opener=opener,
+            )
+        restored = read_json(f"{base_url}/api/session", opener=opener)
+        with opener.open(f"{base_url}/api/session/export", timeout=2) as download:
+            exported = json.load(download)
+
+    assert len(response["state"]["conversation_history"]) == 6
+    assert len(response["session_history"]) == 8
+    assert restored["session_history"] == response["session_history"]
+    assert restored["session_history"][0]["user_transcript"] == "message 0"
+    assert restored["session_history"][-1]["user_transcript"] == "message 7"
+    assert len(exported["messages"]) == 16
 
 
 def test_web_turn_applies_response_length_to_server_owned_session() -> None:
@@ -448,6 +474,43 @@ def test_guided_routine_keeps_its_place_in_web_session() -> None:
         )
 
     assert started["spoken_response"] == "Step 1 of 2. Stand comfortably."
+    assert advanced["spoken_response"] == "Step 2 of 2. Reach up."
+
+
+def test_active_routine_does_not_hijack_ordinary_or_safety_questions() -> None:
+    features = WebFeatureServices(
+        routine_sessions=WebRoutineSessions(
+            lambda: RoutineCommandAdapter(DeterministicRoutineProvider())
+        )
+    )
+    opener = build_opener(HTTPCookieProcessor(CookieJar()))
+    with running_server(features=features) as base_url:
+        started = read_json(
+            f"{base_url}/api/turn",
+            payload={"transcript": "guide me through a morning stretch"},
+            opener=opener,
+        )
+        ordinary = read_json(
+            f"{base_url}/api/turn",
+            payload={"transcript": "spell accommodation"},
+            opener=opener,
+        )
+        safety = read_json(
+            f"{base_url}/api/turn",
+            payload={"transcript": "I smell gas. What should I do?"},
+            opener=opener,
+        )
+        advanced = read_json(
+            f"{base_url}/api/turn",
+            payload={"transcript": "next"},
+            opener=opener,
+        )
+
+    assert started["spoken_response"] == "Step 1 of 2. Stand comfortably."
+    assert (
+        ordinary["spoken_response"] == "Fake pipeline response for: spell accommodation"
+    )
+    assert safety["spoken_response"].startswith("Leave the building immediately")
     assert advanced["spoken_response"] == "Step 2 of 2. Reach up."
 
 

@@ -35,8 +35,9 @@ from voice_concierge.app.serialization import (
     app_turn_options_from_dict,
     app_turn_request_from_dict,
     app_turn_result_to_dict,
+    conversation_turn_to_dict,
 )
-from voice_concierge.app.types import AppPipelineState
+from voice_concierge.app.types import AppPipelineState, ConversationTurn
 from voice_concierge.app.web_features import (
     WebFeatureServices,
     WebReminderNotifier,
@@ -60,6 +61,7 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 4173
 MAX_REQUEST_BYTES = 16 * 1024 * 1024
 MAX_WEB_SESSIONS = 32
+MAX_WEB_SESSION_HISTORY = 200
 MAX_WAKE_WORD_FRAME_BYTES = 64 * 1024
 SESSION_COOKIE_NAME = "granite_session"
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -80,6 +82,7 @@ class PipelineSessionStore:
             raise ValueError("max_sessions must be positive.")
         self._max_sessions = max_sessions
         self._states: OrderedDict[str, AppPipelineState] = OrderedDict()
+        self._histories: OrderedDict[str, tuple[ConversationTurn, ...]] = OrderedDict()
         self._lock = RLock()
 
     def process(
@@ -93,10 +96,16 @@ class PipelineSessionStore:
             resolved_id = self._resolve_id(session_id)
             current_state = self._states.get(resolved_id)
             response, next_state = turn(resolved_id, current_state)
+            history = self._histories.get(resolved_id, ())
+            completed_turn = _completed_conversation_turn(response)
+            if completed_turn is not None:
+                history = (*history, completed_turn)[-MAX_WEB_SESSION_HISTORY:]
             self._states[resolved_id] = next_state
-            self._states.move_to_end(resolved_id)
-            while len(self._states) > self._max_sessions:
-                self._states.popitem(last=False)
+            self._histories[resolved_id] = history
+            response["session_history"] = [
+                conversation_turn_to_dict(item) for item in history
+            ]
+            self._touch_and_evict(resolved_id)
             return resolved_id, response
 
     def reset(self, session_id: str | None) -> tuple[str, AppPipelineState]:
@@ -106,9 +115,8 @@ class PipelineSessionStore:
             resolved_id = self._resolve_id(session_id)
             state = AppPipelineState()
             self._states[resolved_id] = state
-            self._states.move_to_end(resolved_id)
-            while len(self._states) > self._max_sessions:
-                self._states.popitem(last=False)
+            self._histories[resolved_id] = ()
+            self._touch_and_evict(resolved_id)
             return resolved_id, state
 
     def ensure(self, session_id: str | None) -> str:
@@ -118,9 +126,8 @@ class PipelineSessionStore:
             resolved_id = self._resolve_id(session_id)
             if resolved_id not in self._states:
                 self._states[resolved_id] = AppPipelineState()
-            self._states.move_to_end(resolved_id)
-            while len(self._states) > self._max_sessions:
-                self._states.popitem(last=False)
+                self._histories[resolved_id] = ()
+            self._touch_and_evict(resolved_id)
             return resolved_id
 
     def get(self, session_id: str | None) -> AppPipelineState | None:
@@ -131,6 +138,35 @@ class PipelineSessionStore:
                 return None
             return self._states.get(session_id)
 
+    def history(self, session_id: str | None) -> tuple[ConversationTurn, ...]:
+        """Return the complete bounded display transcript for one session."""
+
+        with self._lock:
+            if session_id is None:
+                return ()
+            return self._histories.get(session_id, ())
+
+    def snapshot(
+        self,
+        session_id: str | None,
+    ) -> tuple[str, AppPipelineState, tuple[ConversationTurn, ...]]:
+        """Return or create one transient browser session for page restoration."""
+
+        with self._lock:
+            resolved_id = self.ensure(session_id)
+            return (
+                resolved_id,
+                self._states[resolved_id],
+                self._histories[resolved_id],
+            )
+
+    def _touch_and_evict(self, session_id: str) -> None:
+        self._states.move_to_end(session_id)
+        self._histories.move_to_end(session_id)
+        while len(self._states) > self._max_sessions:
+            evicted_id, _ = self._states.popitem(last=False)
+            self._histories.pop(evicted_id, None)
+
     def _resolve_id(self, session_id: str | None) -> str:
         if session_id is not None and session_id in self._states:
             return session_id
@@ -138,6 +174,24 @@ class PipelineSessionStore:
             generated = secrets.token_urlsafe(24)
             if generated not in self._states:
                 return generated
+
+
+def _completed_conversation_turn(
+    response: Mapping[str, Any],
+) -> ConversationTurn | None:
+    """Extract the completed exchange already validated by the app boundary."""
+
+    transcript = response.get("transcript")
+    spoken_response = response.get("spoken_response")
+    if not isinstance(transcript, Mapping) or not isinstance(spoken_response, str):
+        return None
+    text = transcript.get("text")
+    if not isinstance(text, str) or not text.strip() or not spoken_response.strip():
+        return None
+    return ConversationTurn(
+        user_transcript=" ".join(text.strip().split()),
+        assistant_response=spoken_response,
+    )
 
 
 class StartupReadiness:
@@ -240,9 +294,25 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
                 },
             )
             return
+        if path == "/api/session":
+            session_id, state, history = self.server.sessions.snapshot(
+                self._posted_session_id()
+            )
+            self._write_json(
+                HTTPStatus.OK,
+                {
+                    "state": app_pipeline_state_to_dict(state),
+                    "session_history": [
+                        conversation_turn_to_dict(turn) for turn in history
+                    ],
+                },
+                session_id=session_id,
+            )
+            return
         if path == "/api/session/export":
             state = self.server.sessions.get(self._posted_session_id())
-            if state is None or not state.conversation_history:
+            history = self.server.sessions.history(self._posted_session_id())
+            if state is None or not history:
                 self._write_json(
                     HTTPStatus.BAD_REQUEST,
                     {
@@ -267,7 +337,7 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
                     "context": {"mode": state.context.mode},
                     "messages": [
                         message
-                        for turn in state.conversation_history
+                        for turn in history
                         for message in (
                             {"role": "user", "content": turn.user_transcript},
                             {
@@ -539,7 +609,10 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
                 self.server.features.reset_session(session_id)
                 self._write_json(
                     HTTPStatus.OK,
-                    {"state": app_pipeline_state_to_dict(state)},
+                    {
+                        "state": app_pipeline_state_to_dict(state),
+                        "session_history": [],
+                    },
                     session_id=session_id,
                 )
                 return True

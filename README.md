@@ -41,10 +41,12 @@ python -m voice_concierge.app.live --no-guided-routines
 
 ### Guided routines
 
-Asking to be walked through something ("guide me through making pasta", "how do
-I ...", "steps to ...") starts a guided routine instead of a one-shot answer.
-The assistant reads a step, keeps listening while it speaks, and moves on by
-itself if you stay quiet, so it works with your hands busy.
+Explicitly asking to be walked through something (for example, "guide me through
+making pasta") starts a guided routine instead of a one-shot answer. Ordinary
+requests for a recipe or a list of steps remain normal answers. The assistant
+reads a step, keeps listening while it speaks, and moves on by itself if you
+stay quiet, so it works with your hands busy. Unrelated and urgent requests can
+interrupt the routine without losing its place.
 
 While a step is being read, or in the quiet window after it:
 
@@ -83,11 +85,15 @@ python -m voice_concierge.app.web --voice-io --memory \
   --log-file .local/logs/web.log
 ```
 
-The browser supports push-to-talk and wake-word capture, automatic Piper
+The browser supports push-to-talk and wake-word capture, an automatic follow-up
+listening window, adjustable wake timing and sensitivity, automatic Piper
 response playback, startup and per-turn waiting states, and temporary chat JSON
-export. Reminder and guided-routine requests are routed to their local services,
-due reminders appear in the open browser, and **Local data** exposes memory
-review/edit/delete/export plus reminder edit/snooze/cancel controls.
+export. The header remains available while a long conversation scrolls, and an
+extended temporary display transcript (up to 200 completed exchanges) is kept
+separately from the shorter model context window. Reminder and guided-routine
+requests are routed to their local services, due reminders appear in the open
+browser, and **Local data** exposes
+memory review/edit/delete/export plus reminder edit/snooze/cancel controls.
 **New conversation** clears only transient conversation context; approved
 memories and scheduled reminders remain. Continuous wake-word listening remains
 available through the live runner.
