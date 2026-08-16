@@ -4,6 +4,7 @@ import pytest
 
 from voice_concierge.memory.structured_lists import (
     apply_structured_list_operation,
+    canonicalize_structured_list_content,
     create_structured_list,
     parse_legacy_structured_list,
     parse_structured_list,
@@ -62,6 +63,31 @@ def test_remove_items_preserves_the_rest_of_the_list() -> None:
             _shopping_remove("Wholemeal bread"),
         )
         == "Shopping list: milk, eggs."
+    )
+
+
+def test_legacy_command_wrapper_is_not_treated_as_a_list_item() -> None:
+    content = "Shopping list: I'll add milk, bread."
+    mutation = _shopping_add("eggs")
+
+    assert parse_structured_list(content, mutation) == ("milk", "bread")
+    assert (
+        apply_structured_list_operation(content, mutation)
+        == "Shopping list: milk, bread, eggs."
+    )
+    assert (
+        canonicalize_structured_list_content(content, "shopping")
+        == "Shopping list: milk, bread."
+    )
+
+
+def test_canonicalization_preserves_and_within_one_labelled_item() -> None:
+    assert (
+        canonicalize_structured_list_content(
+            "Task list: review research and development plan.",
+            "task",
+        )
+        == "Task list: review research and development plan."
     )
 
 

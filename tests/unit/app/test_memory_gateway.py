@@ -225,6 +225,24 @@ def test_memory_manager_gateway_retrieves_shopping_list_by_stable_key() -> None:
     assert manager.retrieve_calls == []
 
 
+def test_memory_manager_gateway_repairs_legacy_list_wrapper_for_reasoning() -> None:
+    manager = FakeMemoryManager()
+    manager.keyed_memories["list:shopping"] = _memory_record(
+        memory_id=10,
+        content="Shopping list: I'll add milk, bread.",
+        revision=3,
+        memory_key="list:shopping",
+        topic="shopping",
+    )
+    gateway = MemoryManagerGateway(manager)
+
+    memories = gateway.retrieve("What is on my shopping list?", "list_relevant")
+
+    assert memories[0].content == "Shopping list: milk, bread."
+    assert memories[0].memory_id == 10
+    assert memories[0].revision == 3
+
+
 def test_memory_manager_gateway_does_not_semantically_substitute_missing_list() -> None:
     manager = FakeMemoryManager()
     manager.keyed_memories.pop("list:shopping")

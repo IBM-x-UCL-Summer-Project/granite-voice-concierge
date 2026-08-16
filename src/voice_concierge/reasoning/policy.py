@@ -19,6 +19,18 @@ from voice_concierge.reasoning.types import (
     StructuredListOperation,
 )
 
+_LIST_ADD_LEAD = re.compile(
+    r"^\s*(?:"
+    r"(?:please\s+)?"
+    r"|(?:can|could|would|will)\s+you\s+(?:please\s+)?"
+    r"|i(?:['’]ll|\s+will)\s+"
+    r"|i(?:['’]d|\s+would)\s+like\s+to\s+"
+    r"|i\s+want\s+to\s+"
+    r")add\s+",
+    flags=re.IGNORECASE,
+)
+_EVIDENCE_TOKEN = re.compile(r"[a-z0-9]+(?:['’][a-z0-9]+)?", flags=re.IGNORECASE)
+
 
 def apply_reasoning_policy_guards(
     request: ReasoningRequest,
@@ -592,14 +604,12 @@ def _shopping_items_to_add(
     if "shopping list" not in text and mode.casefold() != "shopping":
         return None
 
+    lead = _LIST_ADD_LEAD.match(transcript)
+    if lead is None:
+        return None
+    cleaned = transcript[lead.end() :]
     cleaned = re.sub(
-        r"^\s*(please\s+)?add\s+",
-        "",
-        transcript,
-        flags=re.IGNORECASE,
-    )
-    cleaned = re.sub(
-        r"\s+to\s+(?:my|the)\s+(?:shopping\s+)?list\.?\s*$",
+        r"\s+to\s+(?:my|the)\s+(?:shopping\s+)?list[.?!]?\s*$",
         "",
         cleaned,
         flags=re.IGNORECASE,
@@ -612,14 +622,12 @@ def _task_items_to_add(transcript: str, text: str) -> tuple[str, ...] | None:
     if not re.search(rf"\b{list_name}\b", text) or not re.search(r"\badd\b", text):
         return None
 
+    lead = _LIST_ADD_LEAD.match(transcript)
+    if lead is None:
+        return None
+    cleaned = transcript[lead.end() :]
     cleaned = re.sub(
-        r"^\s*(please\s+)?add\s+",
-        "",
-        transcript,
-        flags=re.IGNORECASE,
-    )
-    cleaned = re.sub(
-        rf"\s+to\s+(?:my|the)\s+{list_name}\.?\s*$",
+        rf"\s+to\s+(?:my|the)\s+{list_name}[.?!]?\s*$",
         "",
         cleaned,
         flags=re.IGNORECASE,
@@ -754,6 +762,7 @@ def _normalize_information_classification(
 ) -> ReasoningResponse:
     """Normalize model labels only when trusted conversation evidence proves them."""
 
+    response = _normalize_identified_memory_evidence(request, response)
     if not request.conversation_summary:
         return response
     if (
@@ -793,6 +802,69 @@ def _normalize_information_classification(
             "policy_normalization": "non_live_request",
         },
     )
+
+
+def _normalize_identified_memory_evidence(
+    request: ReasoningRequest,
+    response: ReasoningResponse,
+) -> ReasoningResponse:
+    """Canonicalize a conservative paraphrase tied to an exact memory revision."""
+
+    if (
+        response.required_information_source != "local_context"
+        or not response.information_evidence
+    ):
+        return response
+
+    memories_by_identity = {
+        (memory.memory_id, memory.revision): memory for memory in request.memories
+    }
+    normalized_evidence: list[InformationEvidence] = []
+    changed = False
+    for evidence in response.information_evidence:
+        memory = memories_by_identity.get(
+            (evidence.memory_id, evidence.memory_revision)
+        )
+        if (
+            evidence.source == "memory"
+            and memory is not None
+            and evidence.quote not in memory.content
+            and _is_ordered_token_subsequence(evidence.quote, memory.content)
+        ):
+            normalized_evidence.append(memory.information_evidence())
+            changed = True
+        else:
+            normalized_evidence.append(evidence)
+
+    if not changed:
+        return response
+    return replace(
+        response,
+        information_evidence=tuple(normalized_evidence),
+        metadata={
+            **response.metadata,
+            "policy_normalization": "identified_memory_quote_canonicalized",
+        },
+    )
+
+
+def _is_ordered_token_subsequence(candidate: str, source: str) -> bool:
+    """Accept omitted wrapper words, but never invented or reordered content."""
+
+    candidate_tokens = tuple(
+        token.casefold() for token in _EVIDENCE_TOKEN.findall(candidate)
+    )
+    source_tokens = tuple(token.casefold() for token in _EVIDENCE_TOKEN.findall(source))
+    if len(candidate_tokens) < 2:
+        return False
+
+    source_index = 0
+    for candidate_token in candidate_tokens:
+        try:
+            source_index = source_tokens.index(candidate_token, source_index) + 1
+        except ValueError:
+            return False
+    return True
 
 
 def _accessibility_target_key(content: str) -> str:

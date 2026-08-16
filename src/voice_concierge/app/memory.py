@@ -7,6 +7,9 @@ from threading import RLock
 from typing import TYPE_CHECKING, Protocol
 
 from voice_concierge.context.types import MemoryScope
+from voice_concierge.memory.structured_lists import (
+    canonicalize_structured_list_content,
+)
 from voice_concierge.memory.types import (
     ApplyStructuredListCommand,
     DeleteMemoryCommand,
@@ -335,9 +338,17 @@ def _memory_reference(
         memory = value
     else:
         return None
+    content = memory.content
+    list_name = None
+    if memory.memory_key == SHOPPING_LIST_MEMORY_KEY:
+        list_name = "shopping"
+    elif memory.memory_key == TASK_LIST_MEMORY_KEY:
+        list_name = "task"
+    if list_name is not None:
+        content = canonicalize_structured_list_content(content, list_name) or content
     return MemoryReference(
         memory_id=memory.id,
-        content=memory.content,
+        content=content,
         layer=memory.layer,
         revision=memory.revision,
         memory_key=memory.memory_key,

@@ -7,6 +7,17 @@ import re
 from voice_concierge.memory.types import StructuredListMutation
 from voice_concierge.memory_contracts import StructuredListName
 
+_LEGACY_LIST_ADD_LEAD = re.compile(
+    r"^(?:"
+    r"(?:please\s+)?"
+    r"|(?:can|could|would|will)\s+you\s+(?:please\s+)?"
+    r"|i(?:['’]ll|\s+will)\s+"
+    r"|i(?:['’]d|\s+would)\s+like\s+to\s+"
+    r"|i\s+want\s+to\s+"
+    r")add\s+",
+    flags=re.IGNORECASE,
+)
+
 
 def create_structured_list(mutation: StructuredListMutation) -> str:
     """Render the first persisted value for a typed list operation."""
@@ -49,7 +60,11 @@ def parse_structured_list(
 ) -> tuple[str, ...] | None:
     """Parse canonical content for the list targeted by an operation."""
 
-    prefix = f"{_list_label(mutation)}:"
+    return _parse_labelled_items(content, _list_label(mutation))
+
+
+def _parse_labelled_items(content: str, label: str) -> tuple[str, ...] | None:
+    prefix = f"{label}:"
     normalized = content.strip()
     if not normalized.casefold().startswith(prefix.casefold()):
         return None
@@ -62,7 +77,22 @@ def parse_structured_list(
     items = tuple(item.strip() for item in item_text.split(",") if item.strip())
     if not items:
         return None
-    return items
+    return _normalize_legacy_command_items(items)
+
+
+def canonicalize_structured_list_content(
+    content: str,
+    list_name: StructuredListName,
+) -> str | None:
+    """Return clean assistant-facing content for an identifiable list record."""
+
+    label = "Shopping list" if list_name == "shopping" else "Task list"
+    items = _parse_labelled_items(content, label)
+    if items is None:
+        items = parse_legacy_structured_list(content, list_name)
+    if items is None:
+        return None
+    return _render(label, items)
 
 
 def parse_legacy_structured_list(
@@ -111,7 +141,18 @@ def _split_legacy_items(value: str) -> tuple[str, ...] | None:
         if item and key not in seen:
             seen.add(key)
             items.append(item)
-    return tuple(items) or None
+    return _normalize_legacy_command_items(tuple(items)) or None
+
+
+def _normalize_legacy_command_items(items: tuple[str, ...]) -> tuple[str, ...]:
+    """Repair records created when a spoken add wrapper became the first item."""
+
+    if not items:
+        return items
+    normalized_first = _LEGACY_LIST_ADD_LEAD.sub("", items[0], count=1).strip(" .")
+    if not normalized_first or normalized_first == items[0]:
+        return items
+    return (normalized_first, *items[1:])
 
 
 def _render(label: str, items: tuple[str, ...]) -> str:

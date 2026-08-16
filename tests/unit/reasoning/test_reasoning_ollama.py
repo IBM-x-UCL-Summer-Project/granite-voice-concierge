@@ -540,6 +540,42 @@ def test_ollama_engine_trace_preserves_raw_and_guarded_response() -> None:
     )
 
 
+def test_ollama_engine_repairs_paraphrased_quote_for_exact_memory_identity() -> None:
+    engine, _ = _engine_with_response(
+        _structured_content(
+            "You prefer tea.",
+            confidence="high",
+            required_information_source="local_context",
+            information_evidence=[
+                {
+                    "source": "memory",
+                    "quote": "You prefer tea.",
+                    "memory_id": 1,
+                    "memory_revision": 1,
+                }
+            ],
+        )
+    )
+    memory = memory_reference(
+        "You remember that I prefer tea",
+        memory_id=1,
+        revision=1,
+    )
+
+    trace = engine.generate_trace(
+        ReasoningRequest(
+            transcript="What drink do I prefer?",
+            memories=(memory,),
+        )
+    )
+
+    assert trace.raw_response.information_evidence[0].quote == "You prefer tea."
+    assert trace.guarded_response.spoken_response == "You prefer tea."
+    assert trace.guarded_response.information_evidence == (
+        memory.information_evidence(),
+    )
+
+
 def test_ollama_engine_applies_delete_confirmation_guard() -> None:
     engine, _ = _engine_with_response(_structured_content("Okay, forgotten."))
 

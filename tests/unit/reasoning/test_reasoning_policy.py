@@ -257,6 +257,70 @@ def test_policy_guard_rejects_local_answer_when_model_omits_evidence() -> None:
     assert response.metadata["policy_guard"] == "missing_local_context_evidence"
 
 
+def test_policy_guard_canonicalizes_paraphrased_identified_memory_evidence() -> None:
+    memory = memory_reference(
+        "You remember that I prefer tea",
+        memory_id=17,
+        revision=4,
+    )
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(
+            transcript="What drink do I prefer?",
+            memories=(memory,),
+        ),
+        ReasoningResponse(
+            spoken_response="You prefer tea.",
+            required_information_source="local_context",
+            information_evidence=(
+                InformationEvidence(
+                    source="memory",
+                    quote="You prefer tea.",
+                    memory_id=17,
+                    memory_revision=4,
+                ),
+            ),
+        ),
+    )
+
+    assert response.spoken_response == "You prefer tea."
+    assert response.information_evidence == (memory.information_evidence(),)
+    assert response.metadata["policy_normalization"] == (
+        "identified_memory_quote_canonicalized"
+    )
+
+
+def test_policy_guard_rejects_unrelated_quote_for_identified_memory() -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(
+            transcript="What drink do I prefer?",
+            memories=(
+                memory_reference(
+                    "You remember that I prefer tea",
+                    memory_id=17,
+                    revision=4,
+                ),
+            ),
+        ),
+        ReasoningResponse(
+            spoken_response="You prefer coffee.",
+            required_information_source="local_context",
+            information_evidence=(
+                InformationEvidence(
+                    source="memory",
+                    quote="You prefer coffee.",
+                    memory_id=17,
+                    memory_revision=4,
+                ),
+            ),
+        ),
+    )
+
+    assert response.spoken_response == (
+        "I could not verify which local information supports that answer."
+    )
+    assert response.metadata["policy_guard"] == "invalid_local_context_evidence"
+
+
 def test_policy_guard_does_not_substitute_unrelated_memory_for_missing_evidence() -> (
     None
 ):
@@ -532,6 +596,49 @@ def test_policy_guard_extracts_three_shopping_items_without_conjunctions(
     assert response.proposed_memory_action.list_operation == _add_items(
         "shopping", "milk", "bread", "apples"
     )
+
+
+@pytest.mark.parametrize(
+    "transcript",
+    (
+        "I'll add milk and bread to my shopping list.",
+        "I’ll add milk and bread to my shopping list.",
+        "I will add milk and bread to my shopping list.",
+        "Could you add milk and bread to my shopping list?",
+        "Can you please add milk and bread to my shopping list?",
+        "I'd like to add milk and bread to my shopping list.",
+        "I want to add milk and bread to my shopping list.",
+    ),
+)
+def test_policy_guard_strips_natural_shopping_list_add_wrappers(
+    transcript: str,
+) -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(transcript=transcript),
+        ReasoningResponse(spoken_response="Okay."),
+    )
+
+    assert response.spoken_response == (
+        "I can add milk and bread to your shopping list. "
+        "Please confirm before I save it."
+    )
+    assert response.proposed_memory_action is not None
+    assert response.proposed_memory_action.list_operation == _add_items(
+        "shopping", "milk", "bread"
+    )
+
+
+def test_policy_guard_does_not_store_an_unrecognized_list_clause_as_an_item() -> None:
+    original = ReasoningResponse(spoken_response="Okay.")
+
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(
+            transcript=("Milk and bread are things I need to add to my shopping list."),
+        ),
+        original,
+    )
+
+    assert response is original
 
 
 def test_policy_guard_handles_explicit_shopping_list_outside_shopping_mode() -> None:
