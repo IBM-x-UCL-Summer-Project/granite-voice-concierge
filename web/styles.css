@@ -425,6 +425,29 @@ h3 { font-size: 17px; }
 .storage-item code { grid-column: 1 / -1; color: var(--muted); font-size: 8px; overflow-wrap: anywhere; }
 .storage-item span { color: var(--muted); font-size: 9px; }
 
+.action-dialog {
+  width: min(470px, calc(100% - 32px));
+  max-width: none;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 18px;
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: 0 32px 90px rgba(27, 26, 21, 0.3);
+}
+.action-dialog::backdrop { background: rgba(20, 20, 17, 0.42); backdrop-filter: blur(3px); }
+.action-form { display: flex; flex-direction: column; }
+.action-header { padding: 23px 24px 17px; display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; border-bottom: 1px solid var(--line); }
+.action-header h2 { margin-top: 5px; font-size: 22px; }
+.action-content { padding: 21px 24px 24px; }
+.action-content > p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
+.action-input-field { display: grid; gap: 8px; margin-top: 18px; color: var(--muted); font-size: 10px; font-weight: 700; }
+.action-input-field[hidden] { display: none; }
+.action-input-field textarea { width: 100%; min-height: 96px; resize: vertical; padding: 11px 12px; border: 1px solid var(--line-strong); border-radius: 10px; outline: 0; background: var(--paper-strong); color: var(--ink); font-size: 12px; line-height: 1.5; }
+.action-input-field textarea:focus { border-color: var(--blue); box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 14%, transparent); }
+.action-footer { padding: 15px 24px; display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--line); }
+.action-confirm.is-danger { border-color: var(--danger); background: var(--danger); color: #fff; }
+
 @keyframes pulse { 50% { transform: scale(0.92); opacity: 0.72; } }
 @keyframes rise { from { opacity: 0; transform: translateY(7px); } }
 
@@ -476,4 +499,5 @@ h3 { font-size: 17px; }
   .data-content { padding: 0 20px 20px; }
   .data-section-heading, .data-item-main { flex-direction: column; }
   .data-item-actions { justify-content: flex-start; }
+  .action-dialog { width: calc(100% - 24px); }
 }

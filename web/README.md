@@ -53,8 +53,8 @@ browser does not silently consume a due reminder.
 The **Local data** panel lists scheduled reminders and, when `--memory` is
 enabled, saved memories and their local storage locations. Memories can be
 edited, deleted, exported, or forgotten together; reminders can be edited,
-snoozed, or cancelled. Destructive bulk actions require an explicit browser
-confirmation and a separate API confirmation token.
+snoozed, or cancelled. Destructive actions use an explicit in-app confirmation
+dialog, and bulk actions also require a separate API confirmation token.
 
 For privacy-conscious diagnostic logs in both the terminal and an ignored local
 file:

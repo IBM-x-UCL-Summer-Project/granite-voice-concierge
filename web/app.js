@@ -54,6 +54,7 @@ const state = {
   recorder: null,
   playback: null,
   responseAudioElement: null,
+  actionDialogResolve: null,
 };
 
 const elements = {
@@ -102,6 +103,16 @@ const elements = {
   forgetAllMemories: document.querySelector("#forget-all-memories"),
   cancelAllReminders: document.querySelector("#cancel-all-reminders"),
   newConversation: document.querySelector("#new-conversation-button"),
+  actionDialog: document.querySelector("#action-dialog"),
+  actionForm: document.querySelector("#action-form"),
+  actionClose: document.querySelector("#action-close"),
+  actionTitle: document.querySelector("#action-title"),
+  actionDescription: document.querySelector("#action-description"),
+  actionInputField: document.querySelector("#action-input-field"),
+  actionInputLabel: document.querySelector("#action-input-label"),
+  actionInput: document.querySelector("#action-input"),
+  actionCancel: document.querySelector("#action-cancel"),
+  actionConfirm: document.querySelector("#action-confirm"),
 };
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -988,18 +999,74 @@ function renderStorage(locations) {
     </div>`).join("");
 }
 
+function finishActionDialog(result) {
+  const resolve = state.actionDialogResolve;
+  if (!resolve) return;
+  state.actionDialogResolve = null;
+  if (elements.actionDialog.open) elements.actionDialog.close();
+  resolve(result);
+}
+
+function requestAction({
+  title,
+  description,
+  confirmLabel,
+  inputLabel = "Updated value",
+  inputValue = null,
+  danger = false,
+}) {
+  if (state.actionDialogResolve) {
+    return Promise.reject(new Error("Finish the open Local data action first."));
+  }
+  const hasInput = inputValue !== null;
+  elements.actionTitle.textContent = title;
+  elements.actionDescription.textContent = description;
+  elements.actionInputField.hidden = !hasInput;
+  elements.actionInputLabel.textContent = inputLabel;
+  elements.actionInput.value = hasInput ? inputValue : "";
+  elements.actionInput.required = hasInput;
+  elements.actionInput.setCustomValidity("");
+  elements.actionConfirm.textContent = confirmLabel;
+  elements.actionConfirm.classList.toggle("is-danger", danger);
+
+  return new Promise((resolve) => {
+    state.actionDialogResolve = resolve;
+    elements.actionDialog.showModal();
+    window.requestAnimationFrame(() => {
+      if (hasInput) {
+        elements.actionInput.focus();
+        elements.actionInput.select();
+      } else {
+        elements.actionConfirm.focus();
+      }
+    });
+  });
+}
+
 async function handleMemoryAction(button) {
   const item = button.closest("[data-memory-id]");
   const identifier = Number(item.dataset.memoryId);
   const action = button.dataset.memoryAction;
   if (action === "edit") {
-    const current = item.querySelector(".data-item-content").textContent;
-    const content = window.prompt("Correct this saved memory:", current);
-    if (content === null || !content.trim() || content.trim() === current) return;
+    const current = item.querySelector(".data-item-content").textContent.trim();
+    const content = await requestAction({
+      title: "Edit saved memory",
+      description: "Correct this memory. The updated text will remain on this device.",
+      confirmLabel: "Save change",
+      inputLabel: "Memory",
+      inputValue: current,
+    });
+    if (content === null || content === current) return;
     await requestJson("/api/privacy/memories/edit", { id: identifier, content });
     showToast("Memory updated");
   } else {
-    if (!window.confirm("Delete this saved memory? This cannot be undone.")) return;
+    const confirmed = await requestAction({
+      title: "Delete saved memory?",
+      description: "This memory will be permanently removed from this device. This cannot be undone.",
+      confirmLabel: "Delete memory",
+      danger: true,
+    });
+    if (!confirmed) return;
     await requestJson("/api/privacy/memories/delete", { id: identifier });
     showToast("Memory deleted");
   }
@@ -1011,15 +1078,28 @@ async function handleReminderAction(button) {
   const identifier = Number(item.dataset.reminderId);
   const action = button.dataset.reminderAction;
   if (action === "edit") {
-    const text = window.prompt("Change the reminder text:", item.dataset.reminderText);
-    if (text === null || !text.trim() || text.trim() === item.dataset.reminderText) return;
+    const current = item.dataset.reminderText.trim();
+    const text = await requestAction({
+      title: "Edit reminder text",
+      description: "Change what the assistant will say when this reminder is due.",
+      confirmLabel: "Save change",
+      inputLabel: "Reminder text",
+      inputValue: current,
+    });
+    if (text === null || text === current) return;
     await requestJson("/api/reminders/edit", { id: identifier, text });
     showToast("Reminder updated");
   } else if (action === "snooze") {
     await requestJson("/api/reminders/snooze", { id: identifier, seconds: 600 });
     showToast("Reminder snoozed for 10 minutes");
   } else {
-    if (!window.confirm("Cancel this reminder?")) return;
+    const confirmed = await requestAction({
+      title: "Cancel this reminder?",
+      description: "The reminder will be removed and will not be announced.",
+      confirmLabel: "Cancel reminder",
+      danger: true,
+    });
+    if (!confirmed) return;
     await requestJson("/api/reminders/cancel", { id: identifier });
     showToast("Reminder cancelled");
   }
@@ -1144,7 +1224,13 @@ elements.localDataDialog.addEventListener("click", async (event) => {
 });
 elements.exportMemories.addEventListener("click", exportMemories);
 elements.forgetAllMemories.addEventListener("click", async () => {
-  if (!window.confirm("Forget every saved memory? This cannot be undone.")) return;
+  const confirmed = await requestAction({
+    title: "Forget all memories?",
+    description: "Every saved memory will be permanently removed from this device. This cannot be undone.",
+    confirmLabel: "Forget all memories",
+    danger: true,
+  });
+  if (!confirmed) return;
   try {
     const result = await requestJson("/api/privacy/memories/forget-all", {
       confirmation: "DELETE",
@@ -1156,7 +1242,13 @@ elements.forgetAllMemories.addEventListener("click", async () => {
   }
 });
 elements.cancelAllReminders.addEventListener("click", async () => {
-  if (!window.confirm("Cancel every scheduled reminder and timer?")) return;
+  const confirmed = await requestAction({
+    title: "Cancel all reminders?",
+    description: "Every scheduled reminder and timer will be removed and will not be announced.",
+    confirmLabel: "Cancel all reminders",
+    danger: true,
+  });
+  if (!confirmed) return;
   try {
     const result = await requestJson("/api/reminders/cancel-all", {
       confirmation: "DELETE",
@@ -1167,6 +1259,30 @@ elements.cancelAllReminders.addEventListener("click", async () => {
     showToast(error.message);
   }
 });
+elements.actionForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (!elements.actionInputField.hidden) {
+    const value = elements.actionInput.value.trim();
+    if (!value) {
+      elements.actionInput.setCustomValidity("Enter a value before saving.");
+      elements.actionInput.reportValidity();
+      return;
+    }
+    finishActionDialog(value);
+    return;
+  }
+  finishActionDialog(true);
+});
+elements.actionInput.addEventListener("input", () => {
+  elements.actionInput.setCustomValidity("");
+});
+elements.actionClose.addEventListener("click", () => finishActionDialog(null));
+elements.actionCancel.addEventListener("click", () => finishActionDialog(null));
+elements.actionDialog.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  finishActionDialog(null);
+});
+elements.actionDialog.addEventListener("close", () => finishActionDialog(null));
 elements.settingsButton.addEventListener("click", openSetup);
 elements.setupClose.addEventListener("click", closeSetup);
 elements.setupSkip.addEventListener("click", closeSetup);

@@ -133,8 +133,8 @@ def test_static_ui_disables_browser_cache() -> None:
 
     assert cache_control == "no-store"
     assert "./playback-policy.js?v=20260815" in html
-    assert "./app.js?v=20260816" in html
-    assert "./styles.css?v=20260816" in html
+    assert "./app.js?v=20260816-2" in html
+    assert "./styles.css?v=20260816-2" in html
 
 
 def test_browser_never_persists_conversation_state() -> None:
@@ -144,6 +144,17 @@ def test_browser_never_persists_conversation_state() -> None:
     assert "localStorage.removeItem(LEGACY_PIPELINE_STORAGE_KEY)" in script
     assert 'connection: "connecting"' in script
     assert "The local assistant is disconnected. Reconnecting…" in script
+
+
+def test_local_data_actions_use_an_application_owned_dialog() -> None:
+    html = (REPOSITORY_ROOT / "web" / "index.html").read_text(encoding="utf-8")
+    script = (REPOSITORY_ROOT / "web" / "app.js").read_text(encoding="utf-8")
+
+    assert 'id="action-dialog"' in html
+    assert 'id="action-input"' in html
+    assert "requestAction({" in script
+    assert "window.prompt(" not in script
+    assert "window.confirm(" not in script
 
 
 def test_unknown_api_get_returns_json_404() -> None:

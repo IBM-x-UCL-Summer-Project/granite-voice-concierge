@@ -8,7 +8,7 @@
       content="Granite Voice Concierge local conversation interface"
     />
     <title>Granite Voice Concierge</title>
-    <link rel="stylesheet" href="./styles.css?v=20260816" />
+    <link rel="stylesheet" href="./styles.css?v=20260816-2" />
   </head>
   <body>
     <div class="app-shell">
@@ -322,8 +322,33 @@
       </div>
     </dialog>
 
+    <dialog class="action-dialog" id="action-dialog" aria-labelledby="action-title" aria-describedby="action-description">
+      <form class="action-form" id="action-form">
+        <header class="action-header">
+          <div>
+            <p class="eyebrow">Local data</p>
+            <h2 id="action-title">Confirm action</h2>
+          </div>
+          <button class="dialog-close" id="action-close" type="button" aria-label="Close confirmation">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
+          </button>
+        </header>
+        <div class="action-content">
+          <p id="action-description"></p>
+          <label class="action-input-field" id="action-input-field" for="action-input" hidden>
+            <span id="action-input-label">Updated value</span>
+            <textarea id="action-input" rows="4"></textarea>
+          </label>
+        </div>
+        <footer class="action-footer">
+          <button class="secondary-button" id="action-cancel" type="button">Cancel</button>
+          <button class="primary-button action-confirm" id="action-confirm" type="submit">Confirm</button>
+        </footer>
+      </form>
+    </dialog>
+
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
     <script src="./playback-policy.js?v=20260815"></script>
-    <script src="./app.js?v=20260816"></script>
+    <script src="./app.js?v=20260816-2"></script>
   </body>
 </html>
