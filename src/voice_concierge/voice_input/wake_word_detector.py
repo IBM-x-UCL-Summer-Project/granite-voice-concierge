@@ -1,5 +1,6 @@
 # Standard library
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 
 # Third-party
@@ -17,6 +18,14 @@ DEFAULT_CHUNK: int = 1280  # ~80ms at 16kHz (openWakeWord's expected chunk size)
 DEFAULT_RATE: int = 16000  # sample rate required by openWakeWord
 DEFAULT_CHANNELS: int = 1  # mono audio
 DEFAULT_CONFIDENCE_THRESHOLD: float = 0.3  # from spike benchmarks
+
+
+@dataclass(frozen=True)
+class WakeWordPrediction:
+    """One threshold-crossing prediction from streamed microphone audio."""
+
+    phrase: str
+    confidence: float
 
 
 def _resolve_model_reference(model_name: str) -> str:
@@ -116,23 +125,19 @@ class WakeWordDetector:
             while True:
                 audio_chunk: bytes = self._audio_source.read(self._chunk)
                 audio_np: np.ndarray = np.frombuffer(audio_chunk, dtype=np.int16)
+                prediction = self.process_audio(audio_np)
+                if prediction is not None:
+                    print(
+                        f"Wake word detected: '{prediction.phrase}' "
+                        f"(confidence: {prediction.confidence:.2f})"
+                    )
 
-                self._model.predict(audio_np)
-
-                for wake_word, confidence in self._model.prediction_buffer.items():
-                    if confidence[-1] > self._confidence_threshold:
-                        print(
-                            f"Wake word detected: '{wake_word}' "
-                            f"(confidence: {confidence[-1]:.2f})"
-                        )
-                        self._model.reset()
-
-                        # Close the mic before invoking the callback so the VAD
-                        # can open the same device.
-                        self._audio_source.close()
-                        closed = True
-                        on_wake_word()
-                        return
+                    # Close the mic before invoking the callback so the VAD
+                    # can open the same device.
+                    self._audio_source.close()
+                    closed = True
+                    on_wake_word()
+                    return
 
         except KeyboardInterrupt:
             print("\nWake word detector stopped.")
@@ -140,3 +145,43 @@ class WakeWordDetector:
         finally:
             if not closed:
                 self._audio_source.close()
+
+    def process_audio(
+        self,
+        audio: np.ndarray,
+        *,
+        confidence_threshold: float | None = None,
+    ) -> WakeWordPrediction | None:
+        """Process mono 16 kHz PCM samples from any local audio transport.
+
+        The live runner reads those samples from ``PyAudioSource``. The browser
+        UI streams the same sample format over its same-origin local server, so
+        both paths use one detector implementation and one confidence rule.
+        """
+
+        if not isinstance(audio, np.ndarray) or audio.dtype != np.int16:
+            raise ValueError("audio must be a NumPy int16 array.")
+        if audio.ndim != 1 or audio.size == 0:
+            raise ValueError("audio must contain one-dimensional mono samples.")
+        threshold = (
+            self._confidence_threshold
+            if confidence_threshold is None
+            else confidence_threshold
+        )
+        if threshold < 0:
+            raise ValueError("confidence_threshold must not be negative.")
+
+        scores = self._model.predict(audio)
+        if not isinstance(scores, Mapping) or not scores:
+            return None
+        phrase, confidence = max(scores.items(), key=lambda item: float(item[1]))
+        resolved_confidence = float(confidence)
+        if resolved_confidence <= threshold:
+            return None
+        self._model.reset()
+        return WakeWordPrediction(str(phrase), resolved_confidence)
+
+    def reset(self) -> None:
+        """Discard buffered audio and scores before starting a new stream."""
+
+        self._model.reset()

@@ -166,6 +166,21 @@ class VoiceConciergePipeline:
         if callable(close_memory):
             close_memory()
 
+    def warm_up(self) -> None:
+        """Load the local reasoning model without mutating user-visible state."""
+
+        result = self._reasoning.process_transcript(
+            "Reply with the single word ready.",
+            ReasoningTurnContext(
+                max_words=3,
+                allow_memory_writes=False,
+                offline=True,
+                voice_first=False,
+            ),
+        )
+        if result.failure is not None:
+            raise RuntimeError(result.failure.user_message)
+
     def process_transcript(
         self,
         transcript: str,

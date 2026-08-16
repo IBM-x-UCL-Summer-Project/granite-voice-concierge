@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import json
 import logging
 import secrets
 import time
 from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
+from datetime import UTC, datetime
 from http import HTTPStatus
 from http.cookies import CookieError, SimpleCookie
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from threading import RLock
+from threading import RLock, Thread
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -42,6 +45,10 @@ from voice_concierge.app.web_features import (
     reminder_to_dict,
     stored_memory_to_dict,
 )
+from voice_concierge.app.web_wake_word import (
+    WakeWordSessionInactiveError,
+    WebWakeWordService,
+)
 from voice_concierge.privacy.errors import PrivacyError
 from voice_concierge.reasoning.models import (
     DEFAULT_MODEL_SELECTION_PATH,
@@ -53,6 +60,7 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 4173
 MAX_REQUEST_BYTES = 16 * 1024 * 1024
 MAX_WEB_SESSIONS = 32
+MAX_WAKE_WORD_FRAME_BYTES = 64 * 1024
 SESSION_COOKIE_NAME = "granite_session"
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_WEB_DIRECTORY = REPOSITORY_ROOT / "web"
@@ -103,6 +111,26 @@ class PipelineSessionStore:
                 self._states.popitem(last=False)
             return resolved_id, state
 
+    def ensure(self, session_id: str | None) -> str:
+        """Return a valid server-owned session without changing its state."""
+
+        with self._lock:
+            resolved_id = self._resolve_id(session_id)
+            if resolved_id not in self._states:
+                self._states[resolved_id] = AppPipelineState()
+            self._states.move_to_end(resolved_id)
+            while len(self._states) > self._max_sessions:
+                self._states.popitem(last=False)
+            return resolved_id
+
+    def get(self, session_id: str | None) -> AppPipelineState | None:
+        """Return one trusted transient state without creating a session."""
+
+        with self._lock:
+            if session_id is None:
+                return None
+            return self._states.get(session_id)
+
     def _resolve_id(self, session_id: str | None) -> str:
         if session_id is not None and session_id in self._states:
             return session_id
@@ -110,6 +138,48 @@ class PipelineSessionStore:
             generated = secrets.token_urlsafe(24)
             if generated not in self._states:
                 return generated
+
+
+class StartupReadiness:
+    """Run local model warm-up in the background and expose safe UI status."""
+
+    def __init__(self, warm_up: Callable[[], None] | None = None) -> None:
+        self._warm_up = warm_up
+        self._status = "ready" if warm_up is None else "starting"
+        self._message = (
+            "Local engine is ready."
+            if warm_up is None
+            else "Loading the local reasoning model…"
+        )
+        self._lock = RLock()
+        if warm_up is not None:
+            Thread(target=self._run, name="web-startup-warmup", daemon=True).start()
+
+    @property
+    def ready(self) -> bool:
+        with self._lock:
+            return self._status == "ready"
+
+    def snapshot(self) -> dict[str, str]:
+        with self._lock:
+            return {"status": self._status, "message": self._message}
+
+    def _run(self) -> None:
+        try:
+            assert self._warm_up is not None
+            self._warm_up()
+        except Exception:
+            LOGGER.exception("web_startup_warmup_failed")
+            with self._lock:
+                self._status = "error"
+                self._message = (
+                    "The local engine could not start. "
+                    "Check the server log, then retry."
+                )
+            return
+        with self._lock:
+            self._status = "ready"
+            self._message = "Local engine is ready."
 
 
 class PipelineWebServer(ThreadingHTTPServer):
@@ -125,20 +195,24 @@ class PipelineWebServer(ThreadingHTTPServer):
         voice_output_enabled: bool = False,
         model_name: str = "configured model",
         features: WebFeatureServices | None = None,
+        wake_word_service: WebWakeWordService | None = None,
+        warm_up: Callable[[], None] | None = None,
     ) -> None:
         self.pipeline = pipeline
         self.features = features or WebFeatureServices()
+        self.wake_word_service = wake_word_service
         self.web_directory = web_directory
         self.capabilities = {
             "text_input": True,
             "voice_input": voice_input_enabled,
             "voice_output": voice_output_enabled,
-            "wake_word": False,
+            "wake_word": wake_word_service is not None and voice_input_enabled,
             **self.features.capabilities,
         }
         self.runtime = {"model": model_name}
         self.sessions = PipelineSessionStore()
         super().__init__(server_address, PipelineRequestHandler)
+        self.readiness = StartupReadiness(warm_up)
 
 
 class PipelineRequestHandler(SimpleHTTPRequestHandler):
@@ -156,13 +230,54 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         path = urlsplit(self.path).path
         if path == "/api/health":
+            readiness = self.server.readiness.snapshot()
             self._write_json(
                 HTTPStatus.OK,
                 {
-                    "status": "ready",
+                    **readiness,
                     "capabilities": self.server.capabilities,
                     "runtime": self.server.runtime,
                 },
+            )
+            return
+        if path == "/api/session/export":
+            state = self.server.sessions.get(self._posted_session_id())
+            if state is None or not state.conversation_history:
+                self._write_json(
+                    HTTPStatus.BAD_REQUEST,
+                    {
+                        "error": {
+                            "code": "empty_conversation",
+                            "message": "There is no conversation to export yet.",
+                        }
+                    },
+                )
+                return
+            exported_at = datetime.now(UTC)
+            self._write_json_download(
+                {
+                    "format": "granite-chat",
+                    "version": 1,
+                    "exported_at": exported_at.isoformat(),
+                    "privacy": {
+                        "session_scope": "temporary",
+                        "persisted_by_application": False,
+                        "audio_included": False,
+                    },
+                    "context": {"mode": state.context.mode},
+                    "messages": [
+                        message
+                        for turn in state.conversation_history
+                        for message in (
+                            {"role": "user", "content": turn.user_transcript},
+                            {
+                                "role": "assistant",
+                                "content": turn.assistant_response,
+                            },
+                        )
+                    ],
+                },
+                filename=f"granite-chat-{exported_at.date().isoformat()}.json",
             )
             return
         if path == "/api/privacy":
@@ -224,10 +339,29 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store")
         super().end_headers()
 
+    def log_request(self, code: int | str = "-", size: int | str = "-") -> None:
+        """Keep continuous local wake-word frames out of terminal noise."""
+
+        if urlsplit(self.path).path == "/api/wake-word/frame":
+            return
+        super().log_request(code, size)
+
     def do_POST(self) -> None:  # noqa: N802
         request_id = secrets.token_hex(4)
         started_at = time.monotonic()
         path = urlsplit(self.path).path
+        if path in {"/api/turn", "/api/audio"} and not self.server.readiness.ready:
+            readiness = self.server.readiness.snapshot()
+            self._write_json(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                {
+                    "error": {
+                        "code": f"engine_{readiness['status']}",
+                        "message": readiness["message"],
+                    }
+                },
+            )
+            return
         if path not in {"/api/turn", "/api/audio"}:
             if self._handle_control_post(path):
                 return
@@ -387,11 +521,17 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
             "/api/reminders/snooze",
             "/api/reminders/cancel",
             "/api/reminders/cancel-all",
+            "/api/wake-word/start",
+            "/api/wake-word/frame",
+            "/api/wake-word/stop",
         }
         if path not in known_paths:
             return False
         try:
             payload = self._read_json_body()
+            if path.startswith("/api/wake-word/"):
+                self._handle_wake_word_post(path, payload)
+                return True
             if path == "/api/session/reset":
                 session_id, state = self.server.sessions.reset(
                     self._posted_session_id()
@@ -415,6 +555,11 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
             )
         except (PrivacyError, SchedulingError) as exc:
             self._domain_error("operation_failed", str(exc))
+        except WakeWordSessionInactiveError as exc:
+            self._write_json(
+                HTTPStatus.CONFLICT,
+                {"error": {"code": "wake_word_inactive", "message": str(exc)}},
+            )
         except Exception:
             LOGGER.exception("web_control_request_failed endpoint=%s", path)
             self._write_json(
@@ -427,6 +572,67 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
                 },
             )
         return True
+
+    def _handle_wake_word_post(
+        self,
+        path: str,
+        payload: Mapping[str, Any],
+    ) -> None:
+        service = self.server.wake_word_service
+        if service is None:
+            self._feature_unavailable(
+                "wake_word",
+                "Wake-word mode is disabled. Restart the server with --voice-io.",
+            )
+            return
+
+        posted_session_id = self._posted_session_id()
+        if path == "/api/wake-word/start":
+            session_id = self.server.sessions.ensure(posted_session_id)
+            sensitivity = payload.get("sensitivity", 60)
+            try:
+                threshold = service.start(session_id, sensitivity=sensitivity)
+            except ValueError as exc:
+                raise PayloadValidationError(str(exc)) from exc
+            self._write_json(
+                HTTPStatus.OK,
+                {
+                    "active": True,
+                    "sample_rate": 16000,
+                    "confidence_threshold": threshold,
+                },
+                session_id=session_id,
+            )
+            return
+
+        if path == "/api/wake-word/stop":
+            self._write_json(
+                HTTPStatus.OK,
+                {"active": not service.stop(posted_session_id)},
+            )
+            return
+
+        encoded = payload.get("pcm_base64")
+        if not isinstance(encoded, str) or not encoded:
+            raise PayloadValidationError("pcm_base64 must be a non-empty string.")
+        try:
+            pcm = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise PayloadValidationError("pcm_base64 must be valid base64.") from exc
+        if len(pcm) > MAX_WAKE_WORD_FRAME_BYTES:
+            raise PayloadValidationError("Wake-word audio frame is too large.")
+        try:
+            result = service.process_pcm(posted_session_id, pcm)
+        except ValueError as exc:
+            raise PayloadValidationError(str(exc)) from exc
+        self._write_json(
+            HTTPStatus.OK,
+            {
+                "detected": result.detected,
+                "phrase": result.phrase,
+                "confidence": result.confidence,
+            },
+        )
 
     def _handle_privacy_post(
         self,
@@ -587,6 +793,21 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _write_json_download(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        filename: str,
+    ) -> None:
+        body = json.dumps(payload, indent=2).encode("utf-8")
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
 
 def build_web_pipeline(
     *,
@@ -712,7 +933,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--voice-io",
         action="store_true",
-        help="Load local STT and TTS for browser audio turns.",
+        help="Load local STT, TTS, and browser wake-word audio support.",
+    )
+    parser.add_argument(
+        "--no-wake-word",
+        action="store_true",
+        help="Disable browser wake-word mode while keeping push-to-talk voice I/O.",
     )
     parser.add_argument(
         "--no-reminders",
@@ -761,6 +987,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             "the project virtual environment or run 'python -m pip install -e .'. "
             "Use '--demo' to start without Ollama."
         )
+    wake_word_service = None
+    wake_word_enabled = voice_io_enabled and not args.no_wake_word
+    if wake_word_enabled:
+        from voice_concierge.voice_input.wake_word_detector import WakeWordDetector
+
+        wake_word_service = WebWakeWordService(WakeWordDetector(download_models=False))
     server = PipelineWebServer(
         (args.host, args.port),
         pipeline,
@@ -768,12 +1000,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         voice_output_enabled=voice_io_enabled,
         model_name=model_name,
         features=features,
+        wake_word_service=wake_word_service,
+        warm_up=None if args.demo else pipeline.warm_up,
     )
     features.start()
     print(f"Granite web UI: http://{args.host}:{args.port}")
     LOGGER.info(
         "web_server_started host=%s port=%s memory=%s voice_io=%s "
-        "model=%s reminders=%s guided_routines=%s wake_word=false",
+        "model=%s reminders=%s guided_routines=%s wake_word=%s",
         args.host,
         args.port,
         args.memory,
@@ -781,6 +1015,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         model_name,
         not args.no_reminders and not args.demo,
         not args.no_guided_routines and not args.demo,
+        wake_word_enabled,
     )
     try:
         server.serve_forever()

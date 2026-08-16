@@ -2,7 +2,12 @@ const LEGACY_PIPELINE_STORAGE_KEY = "granite-pipeline-state-v1";
 const SETTINGS_STORAGE_KEY = "granite-personal-settings-v1";
 const HEALTH_POLL_MILLISECONDS = 5000;
 const DUE_POLL_MILLISECONDS = 5000;
-const REQUEST_TIMEOUT_MILLISECONDS = 12000;
+const REQUEST_TIMEOUT_MILLISECONDS = 130000;
+const WAKE_WORD_REQUEST_TIMEOUT_MILLISECONDS = 5000;
+const WAKE_WORD_FRAME_SAMPLES = 3200;
+const WAKE_COMMAND_SILENCE_MILLISECONDS = 900;
+const WAKE_COMMAND_MAX_MILLISECONDS = 12000;
+const WAKE_COMMAND_START_TIMEOUT_MILLISECONDS = 7000;
 const SILENT_WAV_URL = "data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQIAAAAAAA==";
 const { shouldAutoPlayResponse: playbackPolicyAllows } = window.GranitePlaybackPolicy;
 
@@ -52,9 +57,24 @@ const state = {
   },
   connection: "connecting",
   recorder: null,
+  wakeWord: {
+    active: false,
+    generation: 0,
+    audio: null,
+    phase: "inactive",
+    frameChunks: [],
+    frameSampleCount: 0,
+    sendingFrame: false,
+    commandChunks: [],
+    commandStartedAt: 0,
+    lastVoiceAt: 0,
+    voiceDetected: false,
+    noiseFloor: 0.004,
+  },
   playback: null,
   responseAudioElement: null,
   actionDialogResolve: null,
+  setupPrompted: false,
 };
 
 const elements = {
@@ -70,6 +90,15 @@ const elements = {
   toast: document.querySelector("#toast"),
   themeButton: document.querySelector("#theme-button"),
   settingsButton: document.querySelector("#settings-button"),
+  wakeWordButton: document.querySelector("#wake-word-button"),
+  wakeWordScreen: document.querySelector("#wake-word-screen"),
+  wakeWordCloseForm: document.querySelector("#wake-word-close-form"),
+  wakeWordTitle: document.querySelector("#wake-word-title"),
+  wakeWordStatus: document.querySelector("#wake-word-status"),
+  wakeWordDetail: document.querySelector("#wake-word-detail"),
+  startupScreen: document.querySelector("#startup-screen"),
+  startupTitle: document.querySelector("#startup-title"),
+  startupMessage: document.querySelector("#startup-message"),
   setupDialog: document.querySelector("#setup-dialog"),
   setupForm: document.querySelector("#setup-form"),
   setupClose: document.querySelector("#setup-close"),
@@ -103,6 +132,7 @@ const elements = {
   forgetAllMemories: document.querySelector("#forget-all-memories"),
   cancelAllReminders: document.querySelector("#cancel-all-reminders"),
   newConversation: document.querySelector("#new-conversation-button"),
+  exportChat: document.querySelector("#export-chat-button"),
   actionDialog: document.querySelector("#action-dialog"),
   actionForm: document.querySelector("#action-form"),
   actionClose: document.querySelector("#action-close"),
@@ -239,7 +269,7 @@ function collectSettingsDraft() {
   updateRangeOutputs();
 }
 
-function savePersonalSettings() {
+async function savePersonalSettings() {
   collectSettingsDraft();
   state.settings = {
     ...state.settingsDraft,
@@ -250,11 +280,16 @@ function savePersonalSettings() {
   applyPersonalSettings();
   closeSetup();
   showToast("Personal settings saved on this device");
+  if (state.settings.interaction_mode === "wake_word") {
+    if (state.capabilities.wake_word) await startWakeWordMode();
+    else showToast("Restart the server with --voice-io to use wake-word mode");
+  }
 }
 
 function applyPersonalSettings() {
   const { response_length: responseLength } = state.settings;
   const interactionLabels = {
+    wake_word: "Hands-free wake word",
     voice_first: "Automatic voice playback",
     push_to_talk: "Voice after microphone turns",
     text_first: "Manual playback",
@@ -275,7 +310,11 @@ function updateRangeOutputs() {
   const speechLabel = speechRate < 0.9 ? "Slow" : speechRate > 1.1 ? "Fast" : "Normal";
   elements.speechRateOutput.textContent = `${speechLabel} · ${speechRate.toFixed(1)}×`;
   elements.volumeOutput.textContent = `${elements.voiceVolume.value}%`;
-  elements.sensitivityOutput.textContent = "Live runner only";
+  const sensitivity = Number(elements.wakeSensitivity.value);
+  const sensitivityLabel = sensitivity < 50
+    ? "Conservative"
+    : sensitivity > 70 ? "Responsive" : "Balanced";
+  elements.sensitivityOutput.textContent = `${sensitivityLabel} · ${sensitivity}%`;
 }
 
 function updateSetupReview() {
@@ -287,6 +326,7 @@ function updateSetupReview() {
     ? "System defaults"
     : "Custom devices";
   const interactionLabels = {
+    wake_word: "Wake word",
     voice_first: "Voice first",
     push_to_talk: "Push to talk",
     text_first: "Text first",
@@ -437,6 +477,28 @@ function appendPipelineError(message) {
   error.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
+function appendPendingMessage(label) {
+  removePendingMessage();
+  const article = document.createElement("article");
+  article.className = "message message-assistant message-pending";
+  article.dataset.pending = "true";
+  article.innerHTML = `
+    <div class="avatar" aria-hidden="true">G</div>
+    <div class="message-body">
+      <div class="message-meta"><strong>Granite</strong><span>Working locally</span></div>
+      <div class="bubble">
+        <span>${escapeHtml(label)}</span>
+        <span class="thinking-dots" aria-hidden="true"><span></span><span></span><span></span></span>
+      </div>
+    </div>`;
+  elements.conversation.appendChild(article);
+  article.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function removePendingMessage() {
+  elements.conversation.querySelector('[data-pending="true"]')?.remove();
+}
+
 function appendConfirmation(kind) {
   const card = document.createElement("div");
   card.className = "confirmation-card";
@@ -453,9 +515,17 @@ function appendConfirmation(kind) {
   elements.conversation.appendChild(card);
 }
 
-async function requestJson(path, payload = null, { method = "POST" } = {}) {
+async function requestJson(
+  path,
+  payload = null,
+  {
+    method = "POST",
+    updateConnection = true,
+    timeoutMilliseconds = REQUEST_TIMEOUT_MILLISECONDS,
+  } = {},
+) {
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MILLISECONDS);
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMilliseconds);
   let response;
   try {
     response = await fetch(path, {
@@ -467,7 +537,7 @@ async function requestJson(path, payload = null, { method = "POST" } = {}) {
       signal: controller.signal,
     });
   } catch (error) {
-    setConnectionStatus("offline");
+    if (updateConnection) setConnectionStatus("offline");
     throw new Error(error.name === "AbortError"
       ? "The local assistant did not respond. Reconnecting…"
       : "The local assistant is disconnected. Reconnecting…");
@@ -483,12 +553,12 @@ async function requestJson(path, payload = null, { method = "POST" } = {}) {
   if (!response.ok) {
     throw new Error(body?.error?.message || `Local request failed (${response.status}).`);
   }
-  setConnectionStatus("ready");
+  if (updateConnection) setConnectionStatus("ready");
   return body;
 }
 
-function getJson(path) {
-  return requestJson(path, null, { method: "GET" });
+function getJson(path, options = {}) {
+  return requestJson(path, null, { method: "GET", ...options });
 }
 
 function turnOptions() {
@@ -606,7 +676,9 @@ function shouldAutoPlayResponse(response, isAudioTurn) {
     audioAvailable: Boolean(response?.audio?.wav_base64),
     confirmationRequired: Boolean(confirmationKind(response)),
     speakConfirmations: state.settings.speak_confirmations,
-    interactionMode: state.settings.interaction_mode,
+    interactionMode: state.wakeWord.active
+      ? "wake_word"
+      : state.settings.interaction_mode,
     isAudioTurn,
   });
 }
@@ -727,6 +799,313 @@ function encodeWavBase64(samples, sampleRate) {
   return window.btoa(binary);
 }
 
+function encodePcmBase64(samples) {
+  const buffer = new ArrayBuffer(samples.length * 2);
+  const view = new DataView(buffer);
+  samples.forEach((sample, index) => {
+    const clipped = Math.max(-1, Math.min(1, sample));
+    view.setInt16(
+      index * 2,
+      clipped < 0 ? clipped * 0x8000 : clipped * 0x7fff,
+      true,
+    );
+  });
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  }
+  return window.btoa(binary);
+}
+
+function setWakeWordView(phase, { title, status, detail } = {}) {
+  state.wakeWord.phase = phase;
+  elements.wakeWordScreen.dataset.state = phase;
+  if (title) elements.wakeWordTitle.textContent = title;
+  if (status) elements.wakeWordStatus.textContent = status;
+  if (detail) elements.wakeWordDetail.textContent = detail;
+}
+
+function resetWakeWordFrameBuffer() {
+  state.wakeWord.frameChunks = [];
+  state.wakeWord.frameSampleCount = 0;
+}
+
+function tearDownWakeWordAudio() {
+  const audio = state.wakeWord.audio;
+  state.wakeWord.audio = null;
+  if (!audio) return;
+  audio.processor.onaudioprocess = null;
+  for (const node of [audio.processor, audio.source, audio.silentGain]) {
+    try {
+      node.disconnect();
+    } catch {
+      // A browser may disconnect audio nodes automatically as the context closes.
+    }
+  }
+  audio.stream.getTracks().forEach((track) => track.stop());
+  const closing = audio.context.close();
+  if (closing?.catch) closing.catch(() => {});
+}
+
+async function startWakeWordMode() {
+  if (state.wakeWord.active || state.running || state.recorder) return;
+  if (!state.capabilities.wake_word) {
+    showToast("Restart the local UI server with --voice-io to enable wake-word mode");
+    return;
+  }
+  const generation = state.wakeWord.generation + 1;
+  state.wakeWord.generation = generation;
+  state.wakeWord.sendingFrame = false;
+
+  unlockResponsePlayback();
+  if (!elements.wakeWordScreen.open) elements.wakeWordScreen.showModal();
+  setWakeWordView("starting", {
+    title: "Preparing wake mode",
+    status: "Opening the local microphone…",
+    detail: "Microphone samples remain on this device and are checked by the local wake-word model.",
+  });
+
+  const audioConstraint = state.settings.microphone_id === "default"
+    ? true
+    : { deviceId: { exact: state.settings.microphone_id } };
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraint });
+    if (generation !== state.wakeWord.generation) {
+      stream.getTracks().forEach((track) => track.stop());
+      return;
+    }
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    const context = new AudioContext();
+    await context.resume();
+    if (generation !== state.wakeWord.generation) {
+      stream.getTracks().forEach((track) => track.stop());
+      const closing = context.close();
+      if (closing?.catch) closing.catch(() => {});
+      return;
+    }
+    const source = context.createMediaStreamSource(stream);
+    const processor = context.createScriptProcessor(4096, 1, 1);
+    const silentGain = context.createGain();
+    silentGain.gain.value = 0;
+    source.connect(processor);
+    processor.connect(silentGain);
+    silentGain.connect(context.destination);
+    state.wakeWord.audio = {
+      stream,
+      context,
+      source,
+      processor,
+      silentGain,
+      sourceRate: context.sampleRate,
+    };
+    state.wakeWord.active = true;
+    state.wakeWord.noiseFloor = 0.004;
+    processor.onaudioprocess = handleWakeWordAudio;
+    await requestJson(
+      "/api/wake-word/start",
+      { sensitivity: Number(state.settings.wake_word_sensitivity) },
+      { timeoutMilliseconds: WAKE_WORD_REQUEST_TIMEOUT_MILLISECONDS },
+    );
+    if (generation !== state.wakeWord.generation) return;
+    resetWakeWordFrameBuffer();
+    setWakeWordView("waiting", {
+      title: "Say “Hey Jarvis”",
+      status: "Listening for the wake phrase",
+      detail: "After the chime-like visual changes, speak your request and pause when finished.",
+    });
+  } catch (error) {
+    if (generation !== state.wakeWord.generation) return;
+    state.wakeWord.active = false;
+    tearDownWakeWordAudio();
+    setWakeWordView("error", {
+      title: "Wake mode unavailable",
+      status: error.name === "NotAllowedError"
+        ? "Microphone permission was not allowed"
+        : error.message || "The local wake-word model could not start",
+      detail: "Return to the conversation, check the microphone and local server, then try again.",
+    });
+  } finally {
+    updateSendState();
+  }
+}
+
+function stopWakeWordMode() {
+  const wasActive = state.wakeWord.active;
+  state.wakeWord.active = false;
+  state.wakeWord.generation += 1;
+  state.wakeWord.sendingFrame = false;
+  state.wakeWord.phase = "inactive";
+  resetWakeWordFrameBuffer();
+  state.wakeWord.commandChunks = [];
+  if (elements.wakeWordScreen.open) elements.wakeWordScreen.close();
+  tearDownWakeWordAudio();
+  if (wasActive) {
+    requestJson(
+      "/api/wake-word/stop",
+      {},
+      {
+        updateConnection: false,
+        timeoutMilliseconds: WAKE_WORD_REQUEST_TIMEOUT_MILLISECONDS,
+      },
+    ).catch(() => {
+      // The microphone has already been stopped locally; health polling handles the server.
+    });
+  }
+  updateSendState();
+}
+
+function handleWakeWordAudio(event) {
+  if (!state.wakeWord.active) return;
+  const sourceSamples = new Float32Array(event.inputBuffer.getChannelData(0));
+  const samples = resampleAudio(
+    sourceSamples,
+    state.wakeWord.audio.sourceRate,
+    16000,
+  );
+  if (state.wakeWord.phase === "waiting") enqueueWakeWordFrame(samples);
+  else if (state.wakeWord.phase === "listening") collectWakeCommand(samples);
+}
+
+function enqueueWakeWordFrame(samples) {
+  const rms = rootMeanSquare(samples);
+  state.wakeWord.noiseFloor = Math.min(
+    0.03,
+    state.wakeWord.noiseFloor * 0.97 + rms * 0.03,
+  );
+  state.wakeWord.frameChunks.push(samples);
+  state.wakeWord.frameSampleCount += samples.length;
+  flushWakeWordFrame();
+}
+
+async function flushWakeWordFrame() {
+  if (!state.wakeWord.active
+      || state.wakeWord.phase !== "waiting"
+      || state.wakeWord.sendingFrame
+      || state.wakeWord.frameSampleCount < WAKE_WORD_FRAME_SAMPLES) return;
+
+  const samples = mergeAudioChunks(state.wakeWord.frameChunks);
+  const generation = state.wakeWord.generation;
+  const frame = samples.slice(0, WAKE_WORD_FRAME_SAMPLES);
+  const remainder = samples.slice(WAKE_WORD_FRAME_SAMPLES);
+  state.wakeWord.frameChunks = remainder.length ? [remainder] : [];
+  state.wakeWord.frameSampleCount = remainder.length;
+  state.wakeWord.sendingFrame = true;
+  try {
+    const result = await requestJson(
+      "/api/wake-word/frame",
+      { pcm_base64: encodePcmBase64(frame) },
+      {
+        updateConnection: false,
+        timeoutMilliseconds: WAKE_WORD_REQUEST_TIMEOUT_MILLISECONDS,
+      },
+    );
+    if (result.detected
+        && state.wakeWord.active
+        && generation === state.wakeWord.generation) beginWakeCommand();
+  } catch (error) {
+    if (state.wakeWord.active && generation === state.wakeWord.generation) {
+      state.wakeWord.active = false;
+      tearDownWakeWordAudio();
+      setWakeWordView("error", {
+        title: "Wake mode stopped",
+        status: error.message,
+        detail: "Another tab may have taken over wake-word listening, or the local server may need attention.",
+      });
+    }
+  } finally {
+    if (generation === state.wakeWord.generation) {
+      state.wakeWord.sendingFrame = false;
+      if (state.wakeWord.phase === "waiting") flushWakeWordFrame();
+    }
+  }
+}
+
+function beginWakeCommand() {
+  resetWakeWordFrameBuffer();
+  state.wakeWord.commandChunks = [];
+  state.wakeWord.commandStartedAt = performance.now();
+  state.wakeWord.lastVoiceAt = state.wakeWord.commandStartedAt;
+  state.wakeWord.voiceDetected = false;
+  setWakeWordView("listening", {
+    title: "I’m listening",
+    status: "Speak your request",
+    detail: "Pause when you are finished. Granite will transcribe and respond locally.",
+  });
+}
+
+function collectWakeCommand(samples) {
+  state.wakeWord.commandChunks.push(samples);
+  const now = performance.now();
+  const rms = rootMeanSquare(samples);
+  const speechThreshold = Math.max(0.012, state.wakeWord.noiseFloor * 3);
+  if (rms >= speechThreshold) {
+    state.wakeWord.voiceDetected = true;
+    state.wakeWord.lastVoiceAt = now;
+  }
+  const elapsed = now - state.wakeWord.commandStartedAt;
+  if (state.wakeWord.voiceDetected
+      && now - state.wakeWord.lastVoiceAt >= WAKE_COMMAND_SILENCE_MILLISECONDS) {
+    finishWakeCommand();
+  } else if (elapsed >= WAKE_COMMAND_MAX_MILLISECONDS) {
+    finishWakeCommand();
+  } else if (!state.wakeWord.voiceDetected
+      && elapsed >= WAKE_COMMAND_START_TIMEOUT_MILLISECONDS) {
+    resumeWakeWordListening("I didn’t hear a request. Listening for “Hey Jarvis” again.");
+  }
+}
+
+function rootMeanSquare(samples) {
+  if (!samples.length) return 0;
+  let sum = 0;
+  for (const sample of samples) sum += sample * sample;
+  return Math.sqrt(sum / samples.length);
+}
+
+async function finishWakeCommand() {
+  if (!state.wakeWord.active || state.wakeWord.phase !== "listening") return;
+  const chunks = state.wakeWord.commandChunks;
+  state.wakeWord.commandChunks = [];
+  if (!state.wakeWord.voiceDetected || !chunks.length) {
+    resumeWakeWordListening("I didn’t hear a request. Listening for “Hey Jarvis” again.");
+    return;
+  }
+
+  setWakeWordView("thinking", {
+    title: "Working on that",
+    status: "Transcribing and thinking locally…",
+    detail: "This can take a moment while the on-device models prepare the response.",
+  });
+  const samples = mergeAudioChunks(chunks);
+  await runTurn({ kind: "audio", wavBase64: encodeWavBase64(samples, 16000) });
+  await waitForResponsePlayback();
+  if (state.wakeWord.active) {
+    resumeWakeWordListening("Ready. Listening for the wake phrase.");
+  }
+}
+
+function resumeWakeWordListening(status) {
+  if (!state.wakeWord.active) return;
+  state.wakeWord.commandChunks = [];
+  resetWakeWordFrameBuffer();
+  setWakeWordView("waiting", {
+    title: "Say “Hey Jarvis”",
+    status,
+    detail: "Granite listens only for the wake phrase until it activates again.",
+  });
+}
+
+function waitForResponsePlayback() {
+  const audio = state.playback?.audio;
+  if (!audio || audio.paused || audio.ended) return Promise.resolve();
+  return new Promise((resolve) => {
+    const finish = () => resolve();
+    audio.addEventListener("ended", finish, { once: true });
+    audio.addEventListener("error", finish, { once: true });
+    window.setTimeout(finish, 45000);
+  });
+}
+
 async function runTurn(input) {
   if (state.running) return;
   const isAudio = typeof input === "object" && input.kind === "audio";
@@ -740,8 +1119,10 @@ async function runTurn(input) {
     autoSizeInput();
     appendMessage("user", transcript);
   }
+  appendPendingMessage(isAudio ? "Transcribing and thinking locally" : "Thinking locally");
   updateSendState();
 
+  let completedResponse = null;
   try {
     const response = isAudio
       ? await requestAudioTurn(input.wavBase64)
@@ -753,6 +1134,7 @@ async function runTurn(input) {
     if (response.context.command_action === "stop") stopPlayback();
 
     state.pipeline = response.state;
+    completedResponse = response;
     saveState();
 
     const currentSpeakButton = renderConversationHistory(response);
@@ -760,11 +1142,13 @@ async function runTurn(input) {
       await playResponse(currentSpeakButton);
     }
   } catch (error) {
+    removePendingMessage();
     appendPipelineError(error.message);
   } finally {
     state.running = false;
     updateSendState();
   }
+  return completedResponse;
 }
 
 function autoSizeInput() {
@@ -786,6 +1170,13 @@ function updateSendState() {
     || state.connection !== "ready"
     || !state.capabilities.voice_input;
   elements.newConversation.disabled = state.running || state.connection !== "ready";
+  elements.exportChat.disabled = state.running
+    || state.pipeline.conversation_history.length === 0;
+  elements.wakeWordButton.disabled = state.running
+    || Boolean(state.recorder)
+    || state.wakeWord.active
+    || state.connection !== "ready"
+    || !state.capabilities.wake_word;
 }
 
 function renderConversationHistory(response = null) {
@@ -821,6 +1212,7 @@ function renderConversationHistory(response = null) {
     if (state.pipeline.context.pending_mode) appendConfirmation("mode");
     else if (state.pipeline.pending_memory_action) appendConfirmation("memory");
   }
+  updateSendState();
   return currentSpeakButton;
 }
 
@@ -832,15 +1224,49 @@ function setConnectionStatus(status, health = null) {
   const previous = state.connection;
   state.connection = status;
   elements.runtimeDot.classList.toggle("is-offline", status === "offline");
-  elements.runtimeDot.classList.toggle("is-connecting", status === "connecting");
+  elements.runtimeDot.classList.toggle(
+    "is-connecting",
+    status === "connecting" || status === "starting",
+  );
+  elements.startupScreen.classList.toggle("is-hidden", status === "ready");
+  elements.startupScreen.classList.toggle("is-error", status === "error");
   if (status === "ready") {
     elements.runtimeLabel.textContent = "Local pipeline";
     if (health?.runtime?.model) elements.runtimeModel.textContent = health.runtime.model;
+    elements.startupTitle.textContent = "Granite is ready";
+    elements.startupMessage.textContent = health?.message || "Local engine is ready.";
+    if (!state.settings.setup_complete && !state.setupPrompted) {
+      state.setupPrompted = true;
+      window.setTimeout(openSetup, 180);
+    }
+  } else if (status === "starting") {
+    elements.runtimeLabel.textContent = "Starting local engine…";
+    elements.startupTitle.textContent = "Starting Granite";
+    elements.startupMessage.textContent = health?.message || "Loading local models…";
+    if (health?.runtime?.model) elements.runtimeModel.textContent = health.runtime.model;
+  } else if (status === "error") {
+    elements.runtimeLabel.textContent = "Engine needs attention";
+    elements.runtimeModel.textContent = "check local server";
+    elements.startupTitle.textContent = "Granite could not start";
+    elements.startupMessage.textContent = health?.message || "Check the local server log, then retry.";
   } else if (status === "connecting") {
     elements.runtimeLabel.textContent = "Reconnecting…";
+    elements.startupTitle.textContent = "Connecting to Granite";
+    elements.startupMessage.textContent = "Waiting for the local application server…";
   } else {
     elements.runtimeLabel.textContent = "Assistant disconnected";
     elements.runtimeModel.textContent = "retrying locally";
+    elements.startupTitle.textContent = "Waiting for the local backend";
+    elements.startupMessage.textContent = "Granite will reconnect automatically when the local server is available.";
+  }
+  if (status !== "ready" && state.wakeWord.active) {
+    state.wakeWord.active = false;
+    tearDownWakeWordAudio();
+    setWakeWordView("error", {
+      title: "Wake mode stopped",
+      status: "The local assistant disconnected",
+      detail: "Wake-word listening can be started again after the local engine reconnects.",
+    });
   }
   if (previous === "offline" && status === "ready") showToast("Local assistant reconnected");
   updateSendState();
@@ -849,12 +1275,17 @@ function setConnectionStatus(status, health = null) {
 async function connectPipeline({ silent = false } = {}) {
   if (!silent && state.connection !== "offline") setConnectionStatus("connecting");
   try {
-    const health = await getJson("/api/health");
+    const health = await getJson("/api/health", {
+      updateConnection: false,
+      timeoutMilliseconds: WAKE_WORD_REQUEST_TIMEOUT_MILLISECONDS,
+    });
     state.capabilities = { ...state.capabilities, ...health.capabilities };
-    setConnectionStatus("ready", health);
-    elements.interactionLabel.textContent = state.capabilities.voice_input
-      ? "Transcript or voice input"
-      : "Transcript input · voice I/O disabled";
+    const healthStatus = ["ready", "starting", "error"].includes(health.status)
+      ? health.status
+      : "error";
+    setConnectionStatus(healthStatus, health);
+    if (state.capabilities.voice_input) applyPersonalSettings();
+    else elements.interactionLabel.textContent = "Transcript input · voice I/O disabled";
     if (!state.capabilities.voice_input) {
       elements.deviceStatus.textContent = (
         "Browser devices can be selected, but local STT/TTS is disabled. "
@@ -864,6 +1295,17 @@ async function connectPipeline({ silent = false } = {}) {
     elements.microphoneButton.title = state.capabilities.voice_input
       ? "Start voice input"
       : "Run the server with --voice-io to enable voice input";
+    elements.wakeWordButton.title = state.capabilities.wake_word
+      ? "Open hands-free wake-word mode"
+      : "Run the server with --voice-io to enable wake-word mode";
+    const wakeChoice = elements.setupForm.querySelector(
+      '[name="interaction_mode"][value="wake_word"]',
+    );
+    wakeChoice.disabled = !state.capabilities.wake_word;
+    document.querySelector("#wake-word-choice").classList.toggle(
+      "is-disabled",
+      !state.capabilities.wake_word,
+    );
     renderState();
   } catch {
     state.capabilities = {
@@ -1109,19 +1551,43 @@ async function handleReminderAction(button) {
 async function exportMemories() {
   try {
     const data = await getJson("/api/privacy/export");
-    const url = URL.createObjectURL(new Blob(
-      [JSON.stringify(data, null, 2)],
-      { type: "application/json" },
-    ));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `granite-memories-${new Date().toISOString().slice(0, 10)}.json`;
-    link.click();
-    URL.revokeObjectURL(url);
+    downloadJson(
+      data,
+      `granite-memories-${new Date().toISOString().slice(0, 10)}.json`,
+    );
     showToast("Memory export downloaded");
   } catch (error) {
     showToast(error.message);
   }
+}
+
+function exportChat() {
+  const history = state.pipeline.conversation_history;
+  if (!history.length) {
+    showToast("There is no conversation to export yet");
+    return;
+  }
+  const link = document.createElement("a");
+  link.href = "/api/session/export";
+  link.download = `granite-chat-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  showToast("Preparing chat export");
+}
+
+function downloadJson(data, filename) {
+  const url = URL.createObjectURL(new Blob(
+    [JSON.stringify(data, null, 2)],
+    { type: "application/json" },
+  ));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 async function pollDueReminders() {
@@ -1209,6 +1675,13 @@ elements.themeButton.addEventListener("click", () => {
 });
 
 elements.newConversation.addEventListener("click", startNewConversation);
+elements.exportChat.addEventListener("click", exportChat);
+elements.wakeWordButton.addEventListener("click", startWakeWordMode);
+elements.wakeWordCloseForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  stopWakeWordMode();
+});
+elements.wakeWordScreen.addEventListener("close", stopWakeWordMode);
 elements.localDataButton.addEventListener("click", openLocalData);
 elements.localDataClose.addEventListener("click", () => elements.localDataDialog.close());
 elements.localDataDialog.addEventListener("click", async (event) => {
@@ -1320,6 +1793,4 @@ restoreConversationHistory();
 connectPipeline();
 window.setInterval(() => connectPipeline({ silent: true }), HEALTH_POLL_MILLISECONDS);
 window.setInterval(pollDueReminders, DUE_POLL_MILLISECONDS);
-if (!state.settings.setup_complete) {
-  window.setTimeout(openSetup, 180);
-}
+window.addEventListener("pagehide", tearDownWakeWordAudio);

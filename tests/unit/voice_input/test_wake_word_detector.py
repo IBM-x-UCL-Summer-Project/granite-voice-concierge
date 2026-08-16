@@ -1,5 +1,4 @@
 # Standard library
-from collections import defaultdict, deque
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -166,10 +165,7 @@ class TestWakeWordDetectorListen:
             [_CHUNK_BYTES], raise_when_exhausted=KeyboardInterrupt()
         )
         detector = WakeWordDetector(download_models=False, audio_source=source)
-        detector._model.predict = MagicMock()
-        detector._model.prediction_buffer = defaultdict(
-            deque, {"hey_jarvis_v0.1.onnx": deque([0.9])}
-        )
+        detector._model.predict = MagicMock(return_value={"hey_jarvis_v0.1.onnx": 0.9})
         detector._model.reset = MagicMock()
         callback = MagicMock()
 
@@ -178,3 +174,39 @@ class TestWakeWordDetectorListen:
         callback.assert_called_once()
         detector._model.reset.assert_called_once()
         assert source.close_count == 1
+
+
+class TestWakeWordDetectorStream:
+    """Tests for transport-independent streamed sample detection."""
+
+    @pytest.mark.unit
+    def test_process_audio_returns_threshold_crossing_prediction(self) -> None:
+        detector = WakeWordDetector(download_models=False)
+        detector._model.predict = MagicMock(return_value={"hey_jarvis": 0.72})
+        detector._model.reset = MagicMock()
+
+        prediction = detector.process_audio(np.zeros(3200, dtype=np.int16))
+
+        assert prediction is not None
+        assert prediction.phrase == "hey_jarvis"
+        assert prediction.confidence == 0.72
+        detector._model.reset.assert_called_once()
+
+    @pytest.mark.unit
+    def test_process_audio_uses_supplied_stream_threshold(self) -> None:
+        detector = WakeWordDetector(download_models=False)
+        detector._model.predict = MagicMock(return_value={"hey_jarvis": 0.35})
+
+        assert (
+            detector.process_audio(
+                np.zeros(3200, dtype=np.int16), confidence_threshold=0.4
+            )
+            is None
+        )
+
+    @pytest.mark.unit
+    def test_process_audio_rejects_non_pcm_samples(self) -> None:
+        detector = WakeWordDetector(download_models=False)
+
+        with pytest.raises(ValueError, match="int16"):
+            detector.process_audio(np.zeros(3200, dtype=np.float32))

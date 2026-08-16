@@ -23,6 +23,7 @@ POLICY_PATH = REPOSITORY_ROOT / "web" / "playback-policy.js"
         ({"interactionMode": "text_first"}, False),
         ({"interactionMode": "push_to_talk", "isAudioTurn": False}, False),
         ({"interactionMode": "push_to_talk", "isAudioTurn": True}, True),
+        ({"interactionMode": "wake_word", "isAudioTurn": True}, True),
     ),
 )
 def test_automatic_playback_policy(changes: dict[str, object], expected: bool) -> None:

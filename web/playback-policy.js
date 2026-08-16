@@ -13,7 +13,7 @@
     if (confirmationRequired && !speakConfirmations) return false;
     if (interactionMode === "text_first") return false;
     if (interactionMode === "push_to_talk") return Boolean(isAudioTurn);
-    return interactionMode === "voice_first";
+    return interactionMode === "voice_first" || interactionMode === "wake_word";
   }
 
   root.GranitePlaybackPolicy = Object.freeze({ shouldAutoPlayResponse });

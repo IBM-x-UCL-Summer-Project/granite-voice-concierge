@@ -69,9 +69,10 @@ source .venv/bin/activate
 python -m voice_concierge.app.web
 ```
 
-Add `--voice-io` for browser recording/STT and response TTS, `--memory` for
-persistent local memory, or `--demo` to review the UI without Ollama and audio
-models. If the virtual environment has not been installed yet, run
+Add `--voice-io` for browser recording/STT, response TTS, and hands-free
+**Hey Jarvis** wake-word mode; add `--memory` for persistent local memory. Use
+`--demo` to review the UI without Ollama and audio models. If the virtual
+environment has not been installed yet, run
 `python -m pip install -e .` after activating it. See
 [the web UI guide](web/README.md) for details.
 
@@ -82,10 +83,11 @@ python -m voice_concierge.app.web --voice-io --memory \
   --log-file .local/logs/web.log
 ```
 
-The browser supports push-to-talk capture and automatic Piper response
-playback. Reminder and guided-routine requests are routed to their local
-services, due reminders appear in the open browser, and **Local data** exposes
-memory review/edit/delete/export plus reminder edit/snooze/cancel controls.
+The browser supports push-to-talk and wake-word capture, automatic Piper
+response playback, startup and per-turn waiting states, and temporary chat JSON
+export. Reminder and guided-routine requests are routed to their local services,
+due reminders appear in the open browser, and **Local data** exposes memory
+review/edit/delete/export plus reminder edit/snooze/cancel controls.
 **New conversation** clears only transient conversation context; approved
 memories and scheduled reminders remain. Continuous wake-word listening remains
 available through the live runner.

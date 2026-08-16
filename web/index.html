@@ -8,7 +8,7 @@
       content="Granite Voice Concierge local conversation interface"
     />
     <title>Granite Voice Concierge</title>
-    <link rel="stylesheet" href="./styles.css?v=20260816-2" />
+    <link rel="stylesheet" href="./styles.css?v=20260816-5" />
   </head>
   <body>
     <div class="app-shell">
@@ -31,6 +31,13 @@
         </div>
 
         <div class="topbar-actions">
+          <button class="settings-button" id="wake-word-button" type="button" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z" />
+              <path d="M5 11v1a7 7 0 0 0 14 0v-1M12 19v2M9 21h6" />
+            </svg>
+            <span>Wake mode</span>
+          </button>
           <button class="settings-button" id="local-data-button" type="button">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M4 6h16v12H4zM8 10h8M8 14h5" />
@@ -61,6 +68,9 @@
               <h1 id="conversation-title">Conversation</h1>
             </div>
             <div class="session-controls">
+              <button class="secondary-button" id="export-chat-button" type="button" disabled>
+                Export chat
+              </button>
               <button class="secondary-button" id="new-conversation-button" type="button">
                 New conversation
               </button>
@@ -140,8 +150,39 @@
           </p>
         </section>
 
+        <dialog class="wake-word-screen" id="wake-word-screen" aria-labelledby="wake-word-title">
+          <form id="wake-word-close-form" method="dialog">
+            <button class="wake-word-close" id="wake-word-close" type="submit" aria-label="Return to conversation">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5-7 7 7 7" /></svg>
+              Conversation
+            </button>
+          </form>
+          <div class="wake-word-stage">
+            <p class="eyebrow">Hands-free · processed locally</p>
+            <h1 id="wake-word-title">Say “Hey Jarvis”</h1>
+            <div class="wake-orb" id="wake-orb" aria-hidden="true">
+              <span></span><span></span><span></span>
+            </div>
+            <p class="wake-word-status" id="wake-word-status" role="status" aria-live="polite">
+              Preparing the local microphone…
+            </p>
+            <p class="wake-word-detail" id="wake-word-detail">
+              Granite listens only for the wake phrase. After your request, it returns to wake-word listening.
+            </p>
+          </div>
+        </dialog>
+
       </main>
     </div>
+
+    <section class="startup-screen" id="startup-screen" aria-labelledby="startup-title">
+      <div class="startup-card">
+        <span class="startup-mark" aria-hidden="true"><span></span><span></span><span></span></span>
+        <p class="eyebrow">Local runtime</p>
+        <h1 id="startup-title">Starting Granite</h1>
+        <p id="startup-message">Connecting to the local engine…</p>
+      </div>
+    </section>
 
     <dialog class="setup-dialog" id="setup-dialog" aria-labelledby="setup-title">
       <div class="setup-shell">
@@ -227,12 +268,17 @@
 
             <section class="setup-step" data-setup-step="2" hidden>
               <div class="range-setting">
-                <div class="range-heading"><div><strong>Wake-word sensitivity</strong><span>The web UI does not stream microphone audio continuously; wake word remains available in the live runner.</span></div><output id="sensitivity-output" for="wake-sensitivity">Live runner only</output></div>
-                <input id="wake-sensitivity" name="wake_word_sensitivity" type="range" min="20" max="100" value="60" step="10" aria-label="Wake-word sensitivity" disabled />
+                <div class="range-heading"><div><strong>Wake-word sensitivity</strong><span>Controls local “Hey Jarvis” detection in hands-free wake mode.</span></div><output id="sensitivity-output" for="wake-sensitivity">Balanced · 60%</output></div>
+                <input id="wake-sensitivity" name="wake_word_sensitivity" type="range" min="20" max="100" value="60" step="10" aria-label="Wake-word sensitivity" />
                 <div class="range-scale"><span>Fewer false triggers</span><span>Easier to activate</span></div>
               </div>
-              <fieldset class="preference-group">
+              <fieldset class="preference-group interaction-options">
                 <legend>Preferred interaction</legend>
+                <label class="choice-card" id="wake-word-choice">
+                  <input type="radio" name="interaction_mode" value="wake_word" />
+                  <span class="choice-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z" /><path d="M5 11v1a7 7 0 0 0 14 0v-1" /></svg></span>
+                  <span><strong>Wake word</strong><small>Keep listening locally for “Hey Jarvis”</small></span>
+                </label>
                 <label class="choice-card">
                   <input type="radio" name="interaction_mode" value="voice_first" checked />
                   <span class="choice-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" /><path d="M5 10v2a7 7 0 0 0 14 0v-2" /></svg></span>
@@ -349,6 +395,6 @@
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
     <script src="./playback-policy.js?v=20260815"></script>
-    <script src="./app.js?v=20260816-2"></script>
+    <script src="./app.js?v=20260816-8"></script>
   </body>
 </html>

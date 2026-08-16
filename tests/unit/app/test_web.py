@@ -8,7 +8,8 @@ import os
 import subprocess
 import sys
 import threading
-from collections.abc import Iterator
+import time
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from http.cookiejar import CookieJar
 from pathlib import Path
@@ -36,6 +37,7 @@ from voice_concierge.app.web_features import (
     WebReminderNotifier,
     WebRoutineSessions,
 )
+from voice_concierge.app.web_wake_word import WebWakeWordService
 from voice_concierge.memory import LocalMemoryConfig, build_memory_manager
 from voice_concierge.privacy.centre import PrivacyCentre
 from voice_concierge.reasoning.types import MemoryAction
@@ -45,6 +47,7 @@ from voice_concierge.scheduling.runner import ReminderRunner
 from voice_concierge.scheduling.service import ReminderService
 from voice_concierge.scheduling.store import ReminderStore
 from voice_concierge.scheduling.types import Reminder, Schedule
+from voice_concierge.voice_input.wake_word_detector import WakeWordPrediction
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 
@@ -62,11 +65,28 @@ class DeterministicRoutineProvider:
         )
 
 
+class FakeWakeWordDetector:
+    def __init__(self) -> None:
+        self.detect = False
+        self.reset_count = 0
+
+    def process_audio(self, audio, *, confidence_threshold=None):
+        if self.detect:
+            return WakeWordPrediction("hey_jarvis", 0.8)
+        return None
+
+    def reset(self) -> None:
+        self.reset_count += 1
+
+
 @contextmanager
 def running_server(
     pipeline: VoiceConciergePipeline | None = None,
     *,
     features: WebFeatureServices | None = None,
+    wake_word_service: WebWakeWordService | None = None,
+    warm_up: Callable[[], None] | None = None,
+    voice_input_enabled: bool = False,
 ) -> Iterator[str]:
     resolved_pipeline = pipeline or build_smoke_pipeline()
     server = PipelineWebServer(
@@ -74,6 +94,9 @@ def running_server(
         resolved_pipeline,
         model_name="smoke model",
         features=features,
+        wake_word_service=wake_word_service,
+        warm_up=warm_up,
+        voice_input_enabled=voice_input_enabled,
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -112,6 +135,7 @@ def test_health_reports_pipeline_capabilities() -> None:
 
     assert response == {
         "status": "ready",
+        "message": "Local engine is ready.",
         "capabilities": {
             "text_input": True,
             "voice_input": False,
@@ -133,8 +157,8 @@ def test_static_ui_disables_browser_cache() -> None:
 
     assert cache_control == "no-store"
     assert "./playback-policy.js?v=20260815" in html
-    assert "./app.js?v=20260816-2" in html
-    assert "./styles.css?v=20260816-2" in html
+    assert "./app.js?v=20260816-8" in html
+    assert "./styles.css?v=20260816-5" in html
 
 
 def test_browser_never_persists_conversation_state() -> None:
@@ -155,6 +179,79 @@ def test_local_data_actions_use_an_application_owned_dialog() -> None:
     assert "requestAction({" in script
     assert "window.prompt(" not in script
     assert "window.confirm(" not in script
+
+
+def test_browser_exposes_waiting_wake_mode_and_private_chat_export() -> None:
+    html = (REPOSITORY_ROOT / "web" / "index.html").read_text(encoding="utf-8")
+    script = (REPOSITORY_ROOT / "web" / "app.js").read_text(encoding="utf-8")
+
+    assert 'id="wake-word-screen"' in html
+    assert 'id="startup-screen"' in html
+    assert 'id="export-chat-button"' in html
+    assert "Transcribing and thinking locally" in script
+    assert 'link.href = "/api/session/export"' in script
+    assert "localStorage.setItem(LEGACY_PIPELINE_STORAGE_KEY" not in script
+
+
+def test_startup_warmup_exposes_loading_before_ready() -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    def warm_up() -> None:
+        started.set()
+        release.wait(timeout=2)
+
+    with running_server(warm_up=warm_up) as base_url:
+        assert started.wait(timeout=1)
+        loading = read_json(f"{base_url}/api/health")
+        with pytest.raises(HTTPError) as error:
+            read_json(f"{base_url}/api/turn", payload={"transcript": "hello"})
+        release.set()
+        deadline = time.monotonic() + 1
+        ready = loading
+        while ready["status"] != "ready" and time.monotonic() < deadline:
+            time.sleep(0.01)
+            ready = read_json(f"{base_url}/api/health")
+
+    assert loading["status"] == "starting"
+    assert "Loading" in loading["message"]
+    assert error.value.code == 503
+    assert ready["status"] == "ready"
+
+
+def test_browser_wake_word_api_keeps_detector_on_session() -> None:
+    detector = FakeWakeWordDetector()
+    service = WebWakeWordService(detector)
+    opener = build_opener(HTTPCookieProcessor(CookieJar()))
+    with running_server(
+        wake_word_service=service,
+        voice_input_enabled=True,
+    ) as base_url:
+        started = read_json(
+            f"{base_url}/api/wake-word/start",
+            payload={"sensitivity": 60},
+            opener=opener,
+        )
+        detector.detect = True
+        frame = read_json(
+            f"{base_url}/api/wake-word/frame",
+            payload={"pcm_base64": "AAAAAA=="},
+            opener=opener,
+        )
+        stopped = read_json(
+            f"{base_url}/api/wake-word/stop",
+            payload={},
+            opener=opener,
+        )
+
+    assert started["active"] is True
+    assert started["confidence_threshold"] == 0.3
+    assert frame == {
+        "detected": True,
+        "phrase": "hey_jarvis",
+        "confidence": 0.8,
+    }
+    assert stopped == {"active": False}
 
 
 def test_unknown_api_get_returns_json_404() -> None:
@@ -187,6 +284,32 @@ def test_text_turn_runs_through_serialized_pipeline_contract() -> None:
             "user_transcript": "hello",
             "assistant_response": "Fake pipeline response for: hello",
         }
+    ]
+
+
+def test_chat_export_downloads_transient_text_without_audio() -> None:
+    opener = build_opener(HTTPCookieProcessor(CookieJar()))
+    with running_server() as base_url:
+        read_json(
+            f"{base_url}/api/turn",
+            payload={"transcript": "hello"},
+            opener=opener,
+        )
+        with opener.open(f"{base_url}/api/session/export", timeout=2) as response:
+            exported = json.load(response)
+            disposition = response.headers.get("Content-Disposition")
+
+    assert disposition is not None
+    assert disposition.startswith('attachment; filename="granite-chat-')
+    assert exported["format"] == "granite-chat"
+    assert exported["privacy"] == {
+        "session_scope": "temporary",
+        "persisted_by_application": False,
+        "audio_included": False,
+    }
+    assert exported["messages"] == [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "Fake pipeline response for: hello"},
     ]
 
 
