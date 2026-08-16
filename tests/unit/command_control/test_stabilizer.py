@@ -146,3 +146,13 @@ class TestConformance:
 
         assert event is not None
         assert event.command == "stop"
+
+    def test_reset_discards_unconfirmed_sighting(self) -> None:
+        clock = _FakeClock()
+        spotter = _spotter([_event("yes"), _event("yes")], clock)
+
+        assert spotter.process(_FRAME) is None
+        spotter.reset()
+        clock.advance(0.1)
+
+        assert spotter.process(_FRAME) is None

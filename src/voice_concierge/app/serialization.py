@@ -123,6 +123,11 @@ def app_pipeline_state_from_dict(payload: object) -> AppPipelineState | None:
             _MEMORY_SCOPES,
             "memory scope",
         ),
+        pending_bulk_memory_delete=_optional_bool(
+            state_payload,
+            "pending_bulk_memory_delete",
+            default=False,
+        ),
     )
 
 
@@ -137,6 +142,7 @@ def app_pipeline_state_to_dict(state: AppPipelineState) -> JsonDict:
         ],
         "pending_memory_action": memory_action_to_dict(state.pending_memory_action),
         "pending_memory_scope": state.pending_memory_scope,
+        "pending_bulk_memory_delete": state.pending_bulk_memory_delete,
     }
 
 

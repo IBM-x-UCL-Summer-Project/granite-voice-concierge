@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -22,6 +23,7 @@ from urllib.request import (
     urlopen,
 )
 
+import numpy as np
 import pytest
 
 from voice_concierge.app import web as web_module
@@ -37,7 +39,10 @@ from voice_concierge.app.web_features import (
     WebReminderNotifier,
     WebRoutineSessions,
 )
+from voice_concierge.app.web_routine_commands import WebRoutineCommandService
 from voice_concierge.app.web_wake_word import WebWakeWordService
+from voice_concierge.audio.types import CapturedAudio
+from voice_concierge.command_control.types import CommandEvent
 from voice_concierge.memory import LocalMemoryConfig, build_memory_manager
 from voice_concierge.privacy.centre import PrivacyCentre
 from voice_concierge.reasoning.types import MemoryAction
@@ -85,6 +90,7 @@ def running_server(
     *,
     features: WebFeatureServices | None = None,
     wake_word_service: WebWakeWordService | None = None,
+    routine_command_service: WebRoutineCommandService | None = None,
     warm_up: Callable[[], None] | None = None,
     voice_input_enabled: bool = False,
 ) -> Iterator[str]:
@@ -95,6 +101,7 @@ def running_server(
         model_name="smoke model",
         features=features,
         wake_word_service=wake_word_service,
+        routine_command_service=routine_command_service,
         warm_up=warm_up,
         voice_input_enabled=voice_input_enabled,
     )
@@ -141,6 +148,7 @@ def test_health_reports_pipeline_capabilities() -> None:
             "voice_input": False,
             "voice_output": False,
             "wake_word": False,
+            "routine_barge_in": False,
             "reminders": False,
             "guided_routines": False,
             "privacy_centre": False,
@@ -164,6 +172,7 @@ def test_web_application_uses_relaxed_uat_policy_by_default(
     )
 
     built_pipeline, features = web_module.build_web_application(
+        load_memory=False,
         load_reminders=False,
         load_guided_routines=False,
     )
@@ -184,7 +193,7 @@ def test_static_ui_disables_browser_cache() -> None:
 
     assert cache_control == "no-store"
     assert "./playback-policy.js?v=20260815" in html
-    assert "./app.js?v=20260816-10" in html
+    assert "./app.js?v=20260816-12" in html
     assert "./styles.css?v=20260816-6" in html
 
 
@@ -282,6 +291,53 @@ def test_browser_wake_word_api_keeps_detector_on_session() -> None:
         "phrase": "hey_jarvis",
         "confidence": 0.8,
     }
+    assert stopped == {"active": False}
+
+
+def test_browser_routine_command_api_returns_local_spotter_event() -> None:
+    class FakeSpotter:
+        def __init__(self) -> None:
+            self.reset_count = 0
+
+        def process(self, frame: bytes) -> CommandEvent:
+            assert frame == b"\0\0"
+            return CommandEvent(command="next", phrase="next", confidence=0.9)
+
+        def reset(self) -> None:
+            self.reset_count += 1
+
+    spotter = FakeSpotter()
+    service = WebRoutineCommandService(lambda: spotter)
+    opener = build_opener(HTTPCookieProcessor(CookieJar()))
+    with running_server(
+        routine_command_service=service,
+        voice_input_enabled=True,
+    ) as base_url:
+        started = read_json(
+            f"{base_url}/api/routine-command/start",
+            payload={},
+            opener=opener,
+        )
+        result = read_json(
+            f"{base_url}/api/routine-command/frame",
+            payload={"pcm_base64": base64.b64encode(b"\0\0").decode("ascii")},
+            opener=opener,
+        )
+        reset = read_json(
+            f"{base_url}/api/routine-command/reset",
+            payload={},
+            opener=opener,
+        )
+        stopped = read_json(
+            f"{base_url}/api/routine-command/stop",
+            payload={},
+            opener=opener,
+        )
+
+    assert started == {"active": True, "sample_rate": 16000}
+    assert result == {"command": "next", "phrase": "next", "confidence": 0.9}
+    assert reset == {"active": True}
+    assert spotter.reset_count == 1
     assert stopped == {"active": False}
 
 
@@ -496,12 +552,18 @@ def test_guided_routine_keeps_its_place_in_web_session() -> None:
         )
         advanced = read_json(
             f"{base_url}/api/turn",
-            payload={"transcript": "next"},
+            payload={"transcript": "next", "automatic_routine": True},
             opener=opener,
         )
 
     assert started["spoken_response"] == "Step 1 of 2. Stand comfortably."
+    assert started["routine"]["active"] is True
     assert advanced["spoken_response"] == "Step 2 of 2. Reach up."
+    assert advanced["automatic_routine"] is True
+    assert advanced["session_history"][-1] == {
+        "user_transcript": "",
+        "assistant_response": "Step 2 of 2. Reach up.",
+    }
 
 
 def test_active_routine_does_not_hijack_ordinary_or_safety_questions() -> None:
@@ -541,7 +603,28 @@ def test_active_routine_does_not_hijack_ordinary_or_safety_questions() -> None:
     assert advanced["spoken_response"] == "Step 2 of 2. Reach up."
 
 
-def test_due_reminder_is_acknowledged_only_when_browser_collects_it(
+def test_web_routine_supports_pause_pacing_and_confirmed_back() -> None:
+    sessions = WebRoutineSessions(
+        lambda: RoutineCommandAdapter(DeterministicRoutineProvider())
+    )
+    session_id = "session-a"
+
+    assert sessions.route(session_id, "guide me through stretching").startswith(
+        "Step 1"
+    )
+    assert sessions.route(session_id, "next").startswith("Step 2")
+    assert sessions.route(session_id, "back") == "Go back a step? Say yes to confirm."
+    assert sessions.snapshot(session_id)["awaiting_confirmation"] is True
+    assert sessions.route(session_id, "yes").startswith("Step 1")
+    assert sessions.route(session_id, "pause").startswith("Paused.")
+    assert sessions.snapshot(session_id)["status"] == "paused"
+    assert sessions.route(session_id, "continue").startswith("Resuming.")
+    assert sessions.route(session_id, "slower").startswith("Step 1")
+    assert sessions.snapshot(session_id)["pace_delta"] == -0.1
+    assert "pace_delta" not in sessions.snapshot(session_id)
+
+
+def test_due_reminder_is_queued_until_browser_collects_it(
     tmp_path: Path,
 ) -> None:
     store = ReminderStore(tmp_path / "reminders.sqlite3")
@@ -555,8 +638,8 @@ def test_due_reminder_is_acknowledged_only_when_browser_collects_it(
         reminder_runner=runner,
     )
 
-    assert runner.check_now() == ()
-    assert service.upcoming() == (stored,)
+    assert runner.check_now() == (stored,)
+    assert service.upcoming() == ()
     with running_server(features=features) as base_url:
         delivered = read_json(f"{base_url}/api/reminders/due")
         repeated = read_json(f"{base_url}/api/reminders/due")
@@ -565,6 +648,26 @@ def test_due_reminder_is_acknowledged_only_when_browser_collects_it(
         "Reminder: check the oven."
     )
     assert repeated == {"notifications": []}
+
+
+def test_due_reminder_uses_configured_local_speech_synthesizer() -> None:
+    class FakeSpeech:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def synthesize(self, text: str) -> CapturedAudio:
+            self.calls.append(text)
+            return CapturedAudio(samples=np.zeros(160, dtype=np.int16))
+
+    speech = FakeSpeech()
+    notifier = WebReminderNotifier(speech)
+    reminder = Reminder(text="check the oven", schedule=Schedule(1))
+
+    notifier.notify(reminder)
+    queued = notifier.drain()
+
+    assert speech.calls == ["Reminder: check the oven."]
+    assert queued[0]["audio"]["wav_base64"]
 
 
 def test_privacy_centre_exposes_edit_and_delete_controls(tmp_path: Path) -> None:

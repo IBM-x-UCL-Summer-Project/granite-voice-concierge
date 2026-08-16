@@ -61,20 +61,27 @@ setup. The browser unlocks one reusable response-audio element during the
 initiating click or key action so delayed local Piper responses can still play
 under browser autoplay rules.
 
-Persistent local memory remains opt-in:
+Persistent local memory is enabled by default. To run without it:
 
 ```bash
-python -m voice_concierge.app.web --voice-io --memory
+python -m voice_concierge.app.web --voice-io --no-memory
 ```
 
 Reminders and guided routines are enabled by default for the real pipeline.
 Use `--no-reminders` or `--no-guided-routines` to disable either service. The
 same chat composer accepts reminder and routine requests. Due reminders are
-acknowledged only when an open browser polls and receives them, so closing the
-browser does not silently consume a due reminder.
+queued by the running local application, delivered to the browser exactly once,
+and use configured Piper audio when voice I/O is enabled. If the bounded queue
+is full, a reminder stays due and is retried instead of being discarded.
 
-The **Local data** panel lists scheduled reminders and, when `--memory` is
-enabled, saved memories and their local storage locations. Memories can be
+Guided routines automatically move on after a six-second quiet window. With
+`--voice-io`, local Vosk spotting keeps the same CLI control vocabulary active
+during playback and between steps: `pause`, `continue`, `next`, `back`,
+`repeat`, `slower`, `faster`, and `stop`. Going back still requires a spoken or
+typed confirmation.
+
+The **Local data** panel lists scheduled reminders and saved memories with their
+local storage locations. Memories can be
 edited, deleted, exported, or forgotten together; reminders can be edited,
 snoozed, or cancelled. Destructive actions use an explicit in-app confirmation
 dialog, and bulk actions also require a separate API confirmation token.
@@ -94,7 +101,7 @@ For privacy-conscious diagnostic logs in both the terminal and an ignored local
 file:
 
 ```bash
-python -m voice_concierge.app.web --voice-io --memory \
+python -m voice_concierge.app.web --voice-io \
   --log-level INFO --log-file .local/logs/web.log
 ```
 
@@ -157,6 +164,8 @@ Additional same-origin endpoints support the connected local features:
 - reminder create/edit/snooze/cancel/cancel-all under
   `POST /api/reminders/...`;
 - wake-word start/frame/stop under `POST /api/wake-word/...`;
+- guided-routine command start/frame/reset/stop under
+  `POST /api/routine-command/...`;
 - temporary state/display-history restoration under `GET /api/session`.
 
 Unknown `/api/` routes return JSON errors for both GET and POST requests. The

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from threading import RLock
 from typing import TYPE_CHECKING, Protocol
 
@@ -37,6 +38,18 @@ if TYPE_CHECKING:
     from voice_concierge.memory.factory import LocalMemoryConfig
 
 
+@dataclass(frozen=True)
+class BulkMemoryDeleteResult:
+    """Outcome and count for one confirmed all-memory deletion."""
+
+    deleted_count: int
+    outcome: MemoryOperationOutcome
+
+    def __post_init__(self) -> None:
+        if self.deleted_count < 0:
+            raise ValueError("Deleted memory count must not be negative.")
+
+
 class MemoryGateway(Protocol):
     """Small app-owned boundary over memory retrieval and confirmed writes."""
 
@@ -55,6 +68,9 @@ class MemoryGateway(Protocol):
         scope: MemoryScope,
     ) -> MemoryOperationOutcome:
         """Apply a previously confirmed memory action."""
+
+    def delete_all(self) -> BulkMemoryDeleteResult:
+        """Delete every saved memory after app-level confirmation."""
 
     def close(self) -> None:
         """Release persistent memory resources."""
@@ -94,6 +110,12 @@ class NullMemoryGateway:
         scope: MemoryScope,
     ) -> MemoryOperationOutcome:
         return MemoryOperationOutcome(MemoryOperationStatus.MEMORY_NOT_CONFIGURED)
+
+    def delete_all(self) -> BulkMemoryDeleteResult:
+        return BulkMemoryDeleteResult(
+            0,
+            MemoryOperationOutcome(MemoryOperationStatus.MEMORY_NOT_CONFIGURED),
+        )
 
     def close(self) -> None:
         """Release no resources for the no-op gateway."""
@@ -192,6 +214,55 @@ class MemoryManagerGateway:
             return target_outcome
         command = _memory_command_from_action(action, scope)
         return self._manager.execute_memory_command(command)
+
+    def delete_all(self) -> BulkMemoryDeleteResult:
+        """Delete the current snapshot with revision-safe manager operations."""
+
+        with self._operation_lock:
+            memories = self._manager.get_all_memories()
+            if not memories:
+                return BulkMemoryDeleteResult(
+                    0,
+                    MemoryOperationOutcome(MemoryOperationStatus.NO_CHANGES),
+                )
+
+            deleted_count = 0
+            pending_cleanup = False
+            failed_ids: list[int] = []
+            for memory in memories:
+                outcome = self._manager.delete_memory(
+                    memory.id,
+                    expected_revision=memory.revision,
+                )
+                if outcome.succeeded:
+                    deleted_count += 1
+                    pending_cleanup = pending_cleanup or (
+                        outcome.status
+                        is MemoryOperationStatus.DELETED_PENDING_INDEX_CLEANUP
+                    )
+                else:
+                    failed_ids.append(memory.id)
+
+            if failed_ids:
+                return BulkMemoryDeleteResult(
+                    deleted_count,
+                    MemoryOperationOutcome(
+                        MemoryOperationStatus.DELETE_ERROR,
+                        detail=(
+                            "Could not delete memory IDs "
+                            + ", ".join(str(memory_id) for memory_id in failed_ids)
+                        ),
+                    ),
+                )
+            status = (
+                MemoryOperationStatus.DELETED_PENDING_INDEX_CLEANUP
+                if pending_cleanup
+                else MemoryOperationStatus.DELETED_SUCCESSFULLY
+            )
+            return BulkMemoryDeleteResult(
+                deleted_count,
+                MemoryOperationOutcome(status),
+            )
 
     def _authorize_target(
         self,
@@ -375,6 +446,14 @@ class MemoryManagerPort(Protocol):
     def execute_memory_command(
         self,
         command: MemoryCommand,
+    ) -> MemoryOperationOutcome: ...
+
+    def get_all_memories(self) -> list[MemoryRecord]: ...
+
+    def delete_memory(
+        self,
+        memory_id: int,
+        expected_revision: int | None = None,
     ) -> MemoryOperationOutcome: ...
 
     def close(self) -> None: ...

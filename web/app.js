@@ -5,6 +5,7 @@ const DUE_POLL_MILLISECONDS = 5000;
 const REQUEST_TIMEOUT_MILLISECONDS = 130000;
 const WAKE_WORD_REQUEST_TIMEOUT_MILLISECONDS = 5000;
 const WAKE_WORD_FRAME_SAMPLES = 3200;
+const ROUTINE_COMMAND_FRAME_SAMPLES = 3200;
 const WAKE_COMMAND_START_TIMEOUT_MILLISECONDS = 7000;
 const SILENT_WAV_URL = "data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQIAAAAAAA==";
 const { shouldAutoPlayResponse: playbackPolicyAllows } = window.GranitePlaybackPolicy;
@@ -39,6 +40,7 @@ const defaultState = {
   conversation_history: [],
   pending_memory_action: null,
   pending_memory_scope: null,
+  pending_bulk_memory_delete: false,
 };
 
 const state = {
@@ -56,6 +58,7 @@ const state = {
     wake_word: false,
     reminders: false,
     guided_routines: false,
+    routine_barge_in: false,
     privacy_centre: false,
   },
   connection: "connecting",
@@ -74,6 +77,25 @@ const state = {
     voiceDetected: false,
     followUp: false,
     noiseFloor: 0.004,
+  },
+  routine: {
+    active: false,
+    status: null,
+    awaiting_choice: false,
+    awaiting_confirmation: false,
+    auto_advance_seconds: 6,
+    serverActive: false,
+    sendingFrame: false,
+    frameChunks: [],
+    frameSampleCount: 0,
+    audio: null,
+    autoTimer: null,
+    confirmationTimer: null,
+    confirmationReady: false,
+    generation: 0,
+    autoGeneration: 0,
+    starting: false,
+    playbackPaused: false,
   },
   playback: null,
   responseAudioElement: null,
@@ -584,10 +606,12 @@ function appendConfirmation(kind) {
   const card = document.createElement("div");
   card.className = "confirmation-card";
   const isMode = kind === "mode";
+  const isBulkDelete = kind === "bulk-memory-delete";
+  const isRoutine = kind === "routine";
   card.innerHTML = `
     <div>
-      <strong>${isMode ? "Mode change requires confirmation" : "Memory change requires confirmation"}</strong>
-      <span>${isMode ? "Driving mode changes response policy." : "No memory is changed until you approve."}</span>
+      <strong>${isMode ? "Mode change requires confirmation" : isBulkDelete ? "Delete every saved memory?" : isRoutine ? "Go back one routine step?" : "Memory change requires confirmation"}</strong>
+      <span>${isMode ? "Driving mode changes response policy." : isBulkDelete ? "This cannot be undone." : isRoutine ? "The routine stays on this step until you approve." : "No memory is changed until you approve."}</span>
     </div>
     <div class="confirmation-actions">
       <button type="button" data-confirm="cancel">Cancel</button>
@@ -650,10 +674,11 @@ function turnOptions() {
   };
 }
 
-function requestTextTurn(transcript) {
+function requestTextTurn(transcript, { automaticRoutine = false } = {}) {
   return requestJson("/api/turn", {
     transcript,
     options: turnOptions(),
+    automatic_routine: automaticRoutine,
   });
 }
 
@@ -665,6 +690,8 @@ function requestAudioTurn(wavBase64) {
 }
 
 function confirmationKind(response) {
+  if (response.state?.pending_bulk_memory_delete) return "bulk-memory-delete";
+  if (response.routine?.awaiting_confirmation) return "routine";
   if (response.context?.needs_confirmation || response.state?.context?.pending_mode) {
     return "mode";
   }
@@ -678,12 +705,15 @@ function stopPlayback() {
   if (!state.playback) return;
   const playback = state.playback;
   state.playback = null;
+  state.routine.playbackPaused = false;
   playback.audio.onended = null;
+  playback.audio.onerror = null;
   playback.audio.pause();
   playback.audio.currentTime = 0;
   playback.button?.classList.remove("is-playing");
   if (playback.button) playback.button.lastChild.textContent = " Play response";
   URL.revokeObjectURL(playback.url);
+  playback.resolveCompletion?.();
 }
 
 function unlockResponsePlayback() {
@@ -739,10 +769,15 @@ async function playResponse(button) {
       showToast("The selected speaker is unavailable; using the system default");
     }
   }
-  state.playback = { audio, button, url };
+  let resolveCompletion;
+  const completion = new Promise((resolve) => {
+    resolveCompletion = resolve;
+  });
+  state.playback = { audio, button, url, completion, resolveCompletion };
   button.classList.add("is-playing");
   button.lastChild.textContent = " Stop response";
   audio.onended = stopPlayback;
+  audio.onerror = stopPlayback;
   try {
     await audio.play();
   } catch {
@@ -899,6 +934,300 @@ function encodePcmBase64(samples) {
   return window.btoa(binary);
 }
 
+function resetRoutineCommandFrameBuffer() {
+  state.routine.frameChunks = [];
+  state.routine.frameSampleCount = 0;
+}
+
+function tearDownRoutineCommandAudio() {
+  const audio = state.routine.audio;
+  state.routine.audio = null;
+  if (!audio) return;
+  audio.processor.onaudioprocess = null;
+  for (const node of [audio.processor, audio.source, audio.silentGain]) {
+    try {
+      node.disconnect();
+    } catch {
+      // Browsers may disconnect audio nodes while their context is closing.
+    }
+  }
+  audio.stream.getTracks().forEach((track) => track.stop());
+  const closing = audio.context.close();
+  if (closing?.catch) closing.catch(() => {});
+}
+
+async function startRoutineCommandListening() {
+  if (!state.routine.active
+      || state.routine.serverActive
+      || state.routine.starting
+      || !state.capabilities.routine_barge_in) return;
+  state.routine.starting = true;
+  const generation = state.routine.generation;
+  try {
+    await requestJson(
+      "/api/routine-command/start",
+      {},
+      {
+        updateConnection: false,
+        timeoutMilliseconds: WAKE_WORD_REQUEST_TIMEOUT_MILLISECONDS,
+      },
+    );
+    state.routine.serverActive = true;
+    resetRoutineCommandFrameBuffer();
+    if (!state.routine.active || generation !== state.routine.generation) {
+      stopRoutineCommandListening();
+      return;
+    }
+    if (state.wakeWord.active || state.routine.audio) return;
+
+    const selectedDevice = state.settings.microphone_id === "default"
+      ? {}
+      : { deviceId: { exact: state.settings.microphone_id } };
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        ...selectedDevice,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+    if (!state.routine.active || state.wakeWord.active) {
+      stream.getTracks().forEach((track) => track.stop());
+      return;
+    }
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    const context = new AudioContext();
+    await context.resume();
+    const source = context.createMediaStreamSource(stream);
+    const processor = context.createScriptProcessor(4096, 1, 1);
+    const silentGain = context.createGain();
+    silentGain.gain.value = 0;
+    source.connect(processor);
+    processor.connect(silentGain);
+    silentGain.connect(context.destination);
+    state.routine.audio = {
+      stream,
+      context,
+      source,
+      processor,
+      silentGain,
+      sourceRate: context.sampleRate,
+    };
+    processor.onaudioprocess = (event) => {
+      const samples = resampleAudio(
+        new Float32Array(event.inputBuffer.getChannelData(0)),
+        context.sampleRate,
+        16000,
+      );
+      enqueueRoutineCommandFrame(samples);
+    };
+  } catch (error) {
+    state.routine.serverActive = false;
+    tearDownRoutineCommandAudio();
+    showToast(error.name === "NotAllowedError"
+      ? "Microphone access is needed for hands-free routine controls"
+      : "Hands-free routine controls are unavailable; typed controls still work");
+  } finally {
+    state.routine.starting = false;
+  }
+}
+
+function stopRoutineCommandListening() {
+  state.routine.generation += 1;
+  state.routine.sendingFrame = false;
+  state.routine.playbackPaused = false;
+  resetRoutineCommandFrameBuffer();
+  tearDownRoutineCommandAudio();
+  if (!state.routine.serverActive) return;
+  state.routine.serverActive = false;
+  requestJson(
+    "/api/routine-command/stop",
+    {},
+    {
+      updateConnection: false,
+      timeoutMilliseconds: WAKE_WORD_REQUEST_TIMEOUT_MILLISECONDS,
+    },
+  ).catch(() => {
+    // Local state is already stopped; the server expires with the session.
+  });
+}
+
+function enqueueRoutineCommandFrame(samples) {
+  if (!state.routine.active || !state.routine.serverActive) return;
+  if (state.routine.awaiting_confirmation
+      && !state.routine.confirmationReady
+      && !state.playback) return;
+  state.routine.frameChunks.push(samples);
+  state.routine.frameSampleCount += samples.length;
+  flushRoutineCommandFrame();
+}
+
+async function flushRoutineCommandFrame() {
+  if (!state.routine.active
+      || !state.routine.serverActive
+      || state.routine.sendingFrame
+      || state.routine.frameSampleCount < ROUTINE_COMMAND_FRAME_SAMPLES) return;
+  const samples = mergeAudioChunks(state.routine.frameChunks);
+  const generation = state.routine.generation;
+  const frame = samples.slice(0, ROUTINE_COMMAND_FRAME_SAMPLES);
+  const remainder = samples.slice(ROUTINE_COMMAND_FRAME_SAMPLES);
+  state.routine.frameChunks = remainder.length ? [remainder] : [];
+  state.routine.frameSampleCount = remainder.length;
+  state.routine.sendingFrame = true;
+  try {
+    const result = await requestJson(
+      "/api/routine-command/frame",
+      { pcm_base64: encodePcmBase64(frame) },
+      {
+        updateConnection: false,
+        timeoutMilliseconds: WAKE_WORD_REQUEST_TIMEOUT_MILLISECONDS,
+      },
+    );
+    if (result.command
+        && state.routine.active
+        && generation === state.routine.generation) {
+      await handleRoutineVoiceCommand(result.command);
+    }
+  } catch {
+    if (generation === state.routine.generation) {
+      state.routine.serverActive = false;
+      tearDownRoutineCommandAudio();
+      showToast("Hands-free routine controls stopped; typed controls still work");
+    }
+  } finally {
+    if (generation === state.routine.generation) {
+      state.routine.sendingFrame = false;
+      flushRoutineCommandFrame();
+    }
+  }
+}
+
+async function handleRoutineVoiceCommand(command) {
+  const playback = state.playback;
+  if (command === "pause" && playback?.audio && !playback.audio.paused) {
+    playback.audio.pause();
+    state.routine.playbackPaused = true;
+    cancelRoutineAutoAdvance();
+    showToast("Routine speech paused — say Continue to resume");
+    return;
+  }
+  if (command === "resume" && state.routine.playbackPaused && playback?.audio) {
+    state.routine.playbackPaused = false;
+    await playback.audio.play();
+    showToast("Routine speech resumed");
+    return;
+  }
+  if (state.routine.awaiting_confirmation) {
+    if (!state.routine.confirmationReady || !["yes", "no"].includes(command)) {
+      return;
+    }
+  } else if (["yes", "no"].includes(command)) {
+    return;
+  }
+  stopPlayback();
+  await runTurn(command, { routineControl: true });
+}
+
+function cancelRoutineAutoAdvance() {
+  state.routine.autoGeneration += 1;
+  if (state.routine.autoTimer !== null) {
+    window.clearTimeout(state.routine.autoTimer);
+    state.routine.autoTimer = null;
+  }
+  if (state.routine.confirmationTimer !== null) {
+    window.clearTimeout(state.routine.confirmationTimer);
+    state.routine.confirmationTimer = null;
+  }
+  state.routine.confirmationReady = false;
+}
+
+function syncRoutineState(routine) {
+  cancelRoutineAutoAdvance();
+  const previousActive = state.routine.active;
+  const next = routine || { active: false };
+  state.routine = {
+    ...state.routine,
+    ...next,
+    active: Boolean(next.active),
+  };
+  if (Number.isFinite(next.pace_delta)) {
+    state.settings.speech_rate = Math.max(
+      0.6,
+      Math.min(1.6, Number(state.settings.speech_rate) + Number(next.pace_delta)),
+    );
+    window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(state.settings));
+    showToast(`Routine speech rate ${state.settings.speech_rate.toFixed(1)}×`);
+  }
+  if (state.routine.active) {
+    startRoutineCommandListening();
+    if (state.wakeWord.active) {
+      setWakeWordView("routine", {
+        title: "Guided routine",
+        status: state.routine.status === "paused"
+          ? "Paused — say Continue when ready"
+          : "Say Pause, Next, Back, Repeat, Slower, Faster, or Stop",
+        detail: "Routine control words work without saying the wake word.",
+      });
+    }
+  } else if (previousActive || state.routine.serverActive) {
+    stopRoutineCommandListening();
+    if (state.wakeWord.active) {
+      resumeWakeWordListening("Routine finished. Listening for “Hey Jarvis”.");
+    }
+  }
+}
+
+function scheduleRoutineAutoAdvance() {
+  if (!state.routine.active
+      || state.routine.status !== "running"
+      || state.routine.awaiting_choice
+      || state.routine.awaiting_confirmation) return;
+  const generation = state.routine.autoGeneration;
+  const delayMilliseconds = Number(state.routine.auto_advance_seconds || 6) * 1000;
+  waitForResponsePlayback().then(() => {
+    if (generation !== state.routine.autoGeneration
+        || !state.routine.active
+        || state.routine.status !== "running") return;
+    state.routine.autoTimer = window.setTimeout(() => {
+      state.routine.autoTimer = null;
+      if (generation === state.routine.autoGeneration && !state.running) {
+        runTurn("next", { routineControl: true, automatic: true });
+      }
+    }, delayMilliseconds);
+  });
+}
+
+function armRoutineConfirmationWindow() {
+  if (!state.capabilities.routine_barge_in
+      || !state.routine.active
+      || !state.routine.awaiting_confirmation) return;
+  const generation = state.routine.autoGeneration;
+  waitForResponsePlayback().then(() => {
+    if (generation !== state.routine.autoGeneration
+        || !state.routine.awaiting_confirmation) return;
+    state.routine.confirmationTimer = window.setTimeout(async () => {
+      state.routine.confirmationTimer = null;
+      if (generation !== state.routine.autoGeneration) return;
+      resetRoutineCommandFrameBuffer();
+      try {
+        await requestJson(
+          "/api/routine-command/reset",
+          {},
+          {
+            updateConnection: false,
+            timeoutMilliseconds: WAKE_WORD_REQUEST_TIMEOUT_MILLISECONDS,
+          },
+        );
+        if (generation === state.routine.autoGeneration) {
+          state.routine.confirmationReady = true;
+        }
+      } catch {
+        showToast("Say yes through push-to-talk or use the confirmation buttons");
+      }
+    }, 500);
+  });
+}
+
 function setWakeWordView(phase, { title, status, detail } = {}) {
   state.wakeWord.phase = phase;
   elements.wakeWordScreen.dataset.state = phase;
@@ -989,6 +1318,7 @@ async function startWakeWordMode() {
       sourceRate: context.sampleRate,
     };
     state.wakeWord.active = true;
+    if (state.routine.active) tearDownRoutineCommandAudio();
     state.wakeWord.noiseFloor = 0.004;
     processor.onaudioprocess = handleWakeWordAudio;
     await requestJson(
@@ -1029,6 +1359,10 @@ function stopWakeWordMode() {
   state.wakeWord.commandChunks = [];
   if (elements.wakeWordScreen.open) elements.wakeWordScreen.close();
   tearDownWakeWordAudio();
+  if (state.routine.active) {
+    state.routine.serverActive = false;
+    startRoutineCommandListening();
+  }
   if (wasActive) {
     requestJson(
       "/api/wake-word/stop",
@@ -1052,6 +1386,7 @@ function handleWakeWordAudio(event) {
     state.wakeWord.audio.sourceRate,
     16000,
   );
+  if (state.routine.active) enqueueRoutineCommandFrame(samples);
   if (state.wakeWord.phase === "waiting") enqueueWakeWordFrame(samples);
   else if (state.wakeWord.phase === "listening") collectWakeCommand(samples);
 }
@@ -1179,7 +1514,13 @@ async function finishWakeCommand({ force = false } = {}) {
   const response = await runTurn({ kind: "audio", wavBase64: encodeWavBase64(samples, 16000) });
   await waitForResponsePlayback();
   if (state.wakeWord.active) {
-    if (response) beginWakeCommand({ followUp: true });
+    if (response?.routine?.active) {
+      setWakeWordView("routine", {
+        title: "Guided routine",
+        status: "Routine controls are listening",
+        detail: "Say Pause, Continue, Next, Back, Repeat, Slower, Faster, or Stop.",
+      });
+    } else if (response) beginWakeCommand({ followUp: true });
     else resumeWakeWordListening("I couldn’t complete that. Listening for “Hey Jarvis”.");
   }
 }
@@ -1197,17 +1538,10 @@ function resumeWakeWordListening(status) {
 }
 
 function waitForResponsePlayback() {
-  const audio = state.playback?.audio;
-  if (!audio || audio.paused || audio.ended) return Promise.resolve();
-  return new Promise((resolve) => {
-    const finish = () => resolve();
-    audio.addEventListener("ended", finish, { once: true });
-    audio.addEventListener("error", finish, { once: true });
-    window.setTimeout(finish, 45000);
-  });
+  return state.playback?.completion || Promise.resolve();
 }
 
-async function runTurn(input) {
+async function runTurn(input, { routineControl = false, automatic = false } = {}) {
   if (state.running) return;
   const isAudio = typeof input === "object" && input.kind === "audio";
   const transcript = isAudio ? "" : String(input || "").trim();
@@ -1215,7 +1549,7 @@ async function runTurn(input) {
 
   unlockResponsePlayback();
   state.running = true;
-  if (!isAudio) {
+  if (!isAudio && !automatic) {
     elements.input.value = "";
     autoSizeInput();
     appendMessage("user", transcript);
@@ -1227,7 +1561,7 @@ async function runTurn(input) {
   try {
     const response = isAudio
       ? await requestAudioTurn(input.wavBase64)
-      : await requestTextTurn(transcript);
+      : await requestTextTurn(transcript, { automaticRoutine: automatic });
     if (!response?.state || !response?.context || !Array.isArray(response.errors)) {
       throw new Error("The local pipeline returned an incomplete response.");
     }
@@ -1239,12 +1573,15 @@ async function runTurn(input) {
       ? response.session_history
       : response.state.conversation_history;
     completedResponse = response;
+    syncRoutineState(response.routine);
     saveState();
 
     const currentSpeakButton = renderConversationHistory(response);
     if (currentSpeakButton && shouldAutoPlayResponse(response, isAudio)) {
       await playResponse(currentSpeakButton);
     }
+    scheduleRoutineAutoAdvance();
+    armRoutineConfirmationWindow();
   } catch (error) {
     removePendingMessage();
     appendPipelineError(error.message);
@@ -1289,7 +1626,7 @@ function renderConversationHistory(response = null) {
     .querySelectorAll(":scope > :not(.date-rule):not([data-welcome])")
     .forEach((node) => node.remove());
   state.sessionHistory.forEach((turn) => {
-    appendMessage("user", turn.user_transcript);
+    if (turn.user_transcript) appendMessage("user", turn.user_transcript);
     const isCurrent = response
       && turn === state.sessionHistory.at(-1)
       && turn.assistant_response === response.spoken_response;
@@ -1314,6 +1651,7 @@ function renderConversationHistory(response = null) {
   }
   if (!response) {
     if (state.pipeline.context.pending_mode) appendConfirmation("mode");
+    else if (state.pipeline.pending_bulk_memory_delete) appendConfirmation("bulk-memory-delete");
     else if (state.pipeline.pending_memory_action) appendConfirmation("memory");
   }
   updateSendState();
@@ -1379,6 +1717,9 @@ function setConnectionStatus(status, health = null) {
       detail: "Wake-word listening can be started again after the local engine reconnects.",
     });
   }
+  if (status !== "ready" && state.routine.active) {
+    syncRoutineState({ active: false });
+  }
   if (previous === "offline" && status === "ready") showToast("Local assistant reconnected");
   if (status === "offline" && previous === "ready") state.sessionLoaded = false;
   updateSendState();
@@ -1393,6 +1734,7 @@ async function restoreServerSession() {
   state.sessionHistory = Array.isArray(session.session_history)
     ? session.session_history
     : [];
+  syncRoutineState(session.routine);
   state.sessionLoaded = true;
   renderConversationHistory();
   saveState();
@@ -1444,6 +1786,7 @@ async function connectPipeline({ silent = false } = {}) {
       wake_word: false,
       reminders: false,
       guided_routines: false,
+      routine_barge_in: false,
       privacy_centre: false,
     };
     setConnectionStatus("offline");
@@ -1457,6 +1800,7 @@ async function startNewConversation() {
     const response = await requestJson("/api/session/reset", {});
     state.pipeline = response.state || structuredClone(defaultState);
     state.sessionHistory = response.session_history || [];
+    syncRoutineState({ active: false });
     state.sessionLoaded = true;
     stopPlayback();
     renderConversationHistory();
@@ -1489,7 +1833,7 @@ async function refreshLocalData() {
   } else {
     const message = state.capabilities.privacy_centre
       ? privacy.reason?.message || "Saved memories could not be loaded."
-      : "Memory is disabled. Restart the server with --memory to save and review memories.";
+      : "Memory was disabled for this run. Restart without --no-memory to save and review memories.";
     elements.memorySummary.textContent = message;
     elements.memoryList.innerHTML = `<p class="data-empty">${escapeHtml(message)}</p>`;
     elements.storageList.innerHTML = '<p class="data-empty">No persistent memory storage is active.</p>';
@@ -1726,8 +2070,10 @@ async function pollDueReminders() {
   try {
     const result = await getJson("/api/reminders/due");
     for (const reminder of result.notifications || []) {
-      appendMessage("assistant", reminder.announcement);
-      speakText(reminder.announcement);
+      const speakButton = appendMessage("assistant", reminder.announcement, {
+        audio: reminder.audio,
+      });
+      if (speakButton) await playResponse(speakButton);
     }
     if ((result.notifications || []).length && elements.localDataDialog.open) {
       await refreshLocalData();
@@ -1940,4 +2286,7 @@ restoreConversationHistory();
 connectPipeline();
 window.setInterval(() => connectPipeline({ silent: true }), HEALTH_POLL_MILLISECONDS);
 window.setInterval(pollDueReminders, DUE_POLL_MILLISECONDS);
-window.addEventListener("pagehide", tearDownWakeWordAudio);
+window.addEventListener("pagehide", () => {
+  tearDownWakeWordAudio();
+  tearDownRoutineCommandAudio();
+});

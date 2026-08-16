@@ -73,8 +73,9 @@ python -m voice_concierge.app.web
 ```
 
 Add `--voice-io` for browser recording/STT, response TTS, and hands-free
-**Hey Jarvis** wake-word mode; add `--memory` for persistent local memory. Use
-`--demo` to review the UI without Ollama and audio models. If the virtual
+**Hey Jarvis** wake-word mode. Persistent local memory is enabled by default;
+use `--no-memory` for a memory-free run. Use `--demo` to review the UI without
+Ollama and audio models. If the virtual
 environment has not been installed yet, run
 `python -m pip install -e .` after activating it. See
 [the web UI guide](web/README.md) for details.
@@ -89,7 +90,7 @@ enforcement. Programmatic reasoning construction remains strict by default.
 For the complete local browser path with diagnostic logs:
 
 ```bash
-python -m voice_concierge.app.web --voice-io --memory \
+python -m voice_concierge.app.web --voice-io \
   --log-file .local/logs/web.log
 ```
 
@@ -102,6 +103,9 @@ separately from the shorter model context window. Reminder and guided-routine
 requests are routed to their local services, due reminders appear in the open
 browser, and **Local data** exposes
 memory review/edit/delete/export plus reminder edit/snooze/cancel controls.
+Guided routines automatically advance after each spoken step and accept the
+same no-wake control words as the CLI, including pause, continue, next, back,
+repeat, slower, faster, and stop.
 **New conversation** clears only transient conversation context; approved
 memories and scheduled reminders remain. Continuous wake-word listening remains
 available through the live runner.

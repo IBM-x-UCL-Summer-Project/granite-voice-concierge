@@ -28,9 +28,7 @@ def test_malformed_output_returns_none() -> None:
 
 @pytest.mark.unit
 def test_splits_numbered_steps_flattened_onto_one_line() -> None:
-    engine = _fake(
-        "1. Crack the eggs. 2. Whisk them together. 3. Cook them gently."
-    )
+    engine = _fake("1. Crack the eggs. 2. Whisk them together. 3. Cook them gently.")
 
     routine = LLMRoutineProvider(engine).get_routine("make scrambled eggs")
 

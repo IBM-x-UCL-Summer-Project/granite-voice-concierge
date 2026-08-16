@@ -62,3 +62,8 @@ class VoskPhraseRecognizer:
         # Reset so the phrase is emitted once per utterance, not once per frame.
         self._recognizer.Reset()
         return words[-1]
+
+    def reset(self) -> None:
+        """Discard partial audio when the listening context changes."""
+
+        self._recognizer.Reset()

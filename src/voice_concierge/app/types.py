@@ -109,6 +109,7 @@ class AppPipelineState:
     conversation_history: tuple[ConversationTurn, ...] = ()
     pending_memory_action: MemoryAction | None = None
     pending_memory_scope: MemoryScope | None = None
+    pending_bulk_memory_delete: bool = False
 
 
 @dataclass(frozen=True)

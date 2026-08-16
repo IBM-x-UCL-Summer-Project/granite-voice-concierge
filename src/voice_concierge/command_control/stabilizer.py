@@ -69,3 +69,14 @@ class StableCommandSpotter:
             return event  # a second sighting in time confirms it
         self._pending, self._pending_at = command, now
         return None  # first sighting: wait for confirmation
+
+    def reset(self) -> None:
+        """Discard pending and cooldown state at a trusted audio boundary."""
+
+        self._pending = None
+        self._pending_at = 0.0
+        self._emitted = None
+        self._emitted_at = 0.0
+        reset = getattr(self._inner, "reset", None)
+        if callable(reset):
+            reset()

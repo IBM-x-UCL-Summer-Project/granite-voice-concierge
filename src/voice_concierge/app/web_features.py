@@ -10,14 +10,28 @@ from threading import RLock
 
 from voice_concierge.app.pipeline import VoiceConciergePipeline
 from voice_concierge.app.reminders import ReminderTurnHandler
-from voice_concierge.app.serialization import app_turn_result_to_dict
-from voice_concierge.app.types import AppPipelineState, AppTurnOptions
+from voice_concierge.app.serialization import (
+    app_turn_result_to_dict,
+    captured_audio_to_dict,
+)
+from voice_concierge.app.types import (
+    AppPipelineState,
+    AppTurnOptions,
+    TextToSpeechAdapter,
+)
 from voice_concierge.command_control.transcript_parser import TranscriptCommandParser
+from voice_concierge.command_control.types import CommandEvent
 from voice_concierge.privacy.centre import PrivacyCentre
 from voice_concierge.privacy.disclosure import build_report
 from voice_concierge.privacy.types import StoredMemory
 from voice_concierge.routines.adapter import RoutineCommandAdapter
 from voice_concierge.routines.intent import is_routine_request
+from voice_concierge.routines.runner import (
+    CONFIRM_PROMPTS,
+    CONFIRMATION_WORDS,
+    DEFAULT_AUTO_ADVANCE_DELAY,
+    DEFAULT_IDLE_TIMEOUT,
+)
 from voice_concierge.scheduling.runner import ReminderRunner
 from voice_concierge.scheduling.types import Reminder
 
@@ -33,16 +47,30 @@ _SAFETY_INTERRUPT = re.compile(
 class WebReminderNotifier:
     """Queue due reminders until the local browser acknowledges displaying them."""
 
-    def __init__(self, *, max_notifications: int = MAX_DUE_NOTIFICATIONS) -> None:
-        self._notifications: deque[dict[str, object]] = deque(maxlen=max_notifications)
+    def __init__(
+        self,
+        text_to_speech: TextToSpeechAdapter | None = None,
+        *,
+        max_notifications: int = MAX_DUE_NOTIFICATIONS,
+    ) -> None:
+        self._text_to_speech = text_to_speech
+        self._max_notifications = max_notifications
+        self._notifications: deque[dict[str, object]] = deque()
         self._lock = RLock()
-        self._accepting = False
 
     def notify(self, reminder: Reminder) -> None:
+        notification = reminder_to_dict(reminder, due=True)
+        if self._text_to_speech is not None:
+            try:
+                notification["audio"] = captured_audio_to_dict(
+                    self._text_to_speech.synthesize(reminder.announcement)
+                )
+            except Exception:
+                notification["audio"] = None
         with self._lock:
-            if not self._accepting:
-                raise RuntimeError("No browser is currently collecting reminders.")
-            self._notifications.append(reminder_to_dict(reminder, due=True))
+            if len(self._notifications) >= self._max_notifications:
+                raise RuntimeError("The browser reminder queue is full.")
+            self._notifications.append(notification)
 
     def drain(self) -> list[dict[str, object]]:
         """Return queued announcements exactly once."""
@@ -53,15 +81,17 @@ class WebReminderNotifier:
             return notifications
 
     def collect(self, check_due: Callable[[], object]) -> list[dict[str, object]]:
-        """Accept delivery only while a browser request can receive it."""
+        """Check once immediately, then return queued announcements."""
 
-        with self._lock:
-            self._accepting = True
-            try:
-                check_due()
-            finally:
-                self._accepting = False
-            return self.drain()
+        check_due()
+        return self.drain()
+
+
+@dataclass
+class _WebRoutineSession:
+    adapter: RoutineCommandAdapter
+    pending_command: CommandEvent | None = None
+    pace_delta: float | None = None
 
 
 class WebRoutineSessions:
@@ -75,27 +105,38 @@ class WebRoutineSessions:
     ) -> None:
         self._adapter_factory = adapter_factory
         self._max_sessions = max_sessions
-        self._adapters: OrderedDict[str, RoutineCommandAdapter] = OrderedDict()
+        self._sessions: OrderedDict[str, _WebRoutineSession] = OrderedDict()
         self._parser = TranscriptCommandParser()
 
     def route(self, session_id: str, transcript: str) -> str | None:
         """Return a routine response, or None when this is an ordinary turn."""
 
-        adapter = self._adapters.get(session_id)
-        if adapter is not None:
-            self._adapters.move_to_end(session_id)
+        session = self._sessions.get(session_id)
+        if session is not None:
+            self._sessions.move_to_end(session_id)
             if _SAFETY_INTERRUPT.search(transcript):
                 return None
+            adapter = session.adapter
             if adapter.awaiting_choice:
                 return self._keep_or_finish(
                     session_id, adapter.resolve_choice(transcript)
                 )
             if adapter.status in {"running", "paused"}:
                 event = self._parser.parse(transcript)
-                if event is None or event.command in {"yes", "no", "slower", "faster"}:
+                if session.pending_command is not None:
+                    return self._resolve_confirmation(session_id, event)
+                if event is None:
                     return None
+                if event.command in CONFIRMATION_WORDS:
+                    return "There isn't a routine command to confirm."
+                if event.command == "back":
+                    session.pending_command = event
+                    return CONFIRM_PROMPTS["back"]
+                if event.command in {"slower", "faster"}:
+                    session.pace_delta = -0.1 if event.command == "slower" else 0.1
+                    event = CommandEvent(command="repeat", phrase="(pace changed)")
                 return self._keep_or_finish(session_id, adapter.handle_command(event))
-            self._adapters.pop(session_id, None)
+            self._sessions.pop(session_id, None)
 
         if not is_routine_request(transcript):
             return None
@@ -103,30 +144,75 @@ class WebRoutineSessions:
             adapter = self._adapter_factory()
         except Exception:
             return "I couldn't load guided routines right now."
-        self._adapters[session_id] = adapter
+        self._sessions[session_id] = _WebRoutineSession(adapter)
         self._trim()
         return self._keep_or_finish(session_id, adapter.start_routine(transcript))
 
     def reset(self, session_id: str) -> None:
-        self._adapters.pop(session_id, None)
+        self._sessions.pop(session_id, None)
+
+    def snapshot(self, session_id: str) -> dict[str, object]:
+        """Return browser control metadata without exposing routine internals."""
+
+        session = self._sessions.get(session_id)
+        if session is None:
+            return {
+                "active": False,
+                "status": None,
+                "awaiting_choice": False,
+                "awaiting_confirmation": False,
+            }
+        adapter = session.adapter
+        active = adapter.awaiting_choice or adapter.status in {"running", "paused"}
+        snapshot: dict[str, object] = {
+            "active": active,
+            "status": adapter.status,
+            "awaiting_choice": adapter.awaiting_choice,
+            "awaiting_confirmation": session.pending_command is not None,
+            "auto_advance_seconds": DEFAULT_AUTO_ADVANCE_DELAY,
+            "paused_idle_seconds": DEFAULT_IDLE_TIMEOUT,
+        }
+        if session.pace_delta is not None:
+            snapshot["pace_delta"] = session.pace_delta
+            session.pace_delta = None
+        return snapshot
+
+    def _resolve_confirmation(
+        self,
+        session_id: str,
+        event: CommandEvent | None,
+    ) -> str:
+        session = self._sessions[session_id]
+        if event is None or event.command not in CONFIRMATION_WORDS:
+            return "Sorry, was that a yes or a no?"
+        pending = session.pending_command
+        session.pending_command = None
+        if event.command == "no" or pending is None:
+            return "Okay, staying on this step."
+        return self._keep_or_finish(
+            session_id,
+            session.adapter.handle_command(pending),
+        )
 
     def _keep_or_finish(self, session_id: str, response: str) -> str:
-        adapter = self._adapters.get(session_id)
+        session = self._sessions.get(session_id)
+        adapter = session.adapter if session is not None else None
         if (
             adapter is not None
             and not adapter.awaiting_choice
+            and session.pending_command is None
             and adapter.status
             not in {
                 "running",
                 "paused",
             }
         ):
-            self._adapters.pop(session_id, None)
+            self._sessions.pop(session_id, None)
         return response
 
     def _trim(self) -> None:
-        while len(self._adapters) > self._max_sessions:
-            self._adapters.popitem(last=False)
+        while len(self._sessions) > self._max_sessions:
+            self._sessions.popitem(last=False)
 
 
 @dataclass
@@ -148,7 +234,10 @@ class WebFeatureServices:
         }
 
     def start(self) -> None:
-        """Feature lifecycle hook; due reminders are pulled by the browser."""
+        """Start due-reminder checks as soon as the Web application starts."""
+
+        if self.reminder_runner is not None:
+            self.reminder_runner.start()
 
     def close(self) -> None:
         if self.reminder_runner is not None:
@@ -160,11 +249,18 @@ class WebFeatureServices:
         if self.routine_sessions is not None:
             self.routine_sessions.reset(session_id)
 
+    def routine_snapshot(self, session_id: str) -> dict[str, object]:
+        if self.routine_sessions is None:
+            return {"active": False}
+        return self.routine_sessions.snapshot(session_id)
+
     def due_notifications(self) -> list[dict[str, object]]:
         """Deliver due reminders into the browser request that collected them."""
 
         if self.reminder_notifier is None or self.reminder_runner is None:
             return []
+        if self.reminder_runner.running:
+            return self.reminder_notifier.drain()
         return self.reminder_notifier.collect(self.reminder_runner.check_now)
 
     def route_transcript(
@@ -174,12 +270,15 @@ class WebFeatureServices:
         transcript: str,
         state: AppPipelineState | None,
         options: AppTurnOptions,
+        *,
+        record_conversation: bool = True,
     ) -> dict[str, object] | None:
         """Run an integrated feature turn before falling through to reasoning."""
 
         current_state = state or AppPipelineState()
         if (
             current_state.pending_memory_action is not None
+            or current_state.pending_bulk_memory_delete
             or current_state.context.pending_mode is not None
         ):
             return None
@@ -209,6 +308,7 @@ class WebFeatureServices:
             synthesize=options.synthesize,
             play=options.play,
             response_length=options.response_length,
+            record_conversation=record_conversation,
         )
         return app_turn_result_to_dict(result)
 

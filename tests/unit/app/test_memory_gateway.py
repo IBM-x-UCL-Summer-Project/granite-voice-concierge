@@ -29,6 +29,8 @@ class FakeMemoryManager:
         self.id_calls: list[int] = []
         self.retrieve_calls: list[dict[str, object]] = []
         self.processed_commands: list[MemoryCommand] = []
+        self.deleted: list[tuple[int, int | None]] = []
+        self.delete_outcomes: dict[int, MemoryOperationOutcome] = {}
         self.closed = False
         self.keyed_memories: dict[str, MemoryRecord] = {
             "list:shopping": _memory_record(
@@ -127,6 +129,23 @@ class FakeMemoryManager:
             )
         return MemoryOperationOutcome(MemoryOperationStatus.UPDATED_SUCCESSFULLY)
 
+    def get_all_memories(self) -> list[MemoryRecord]:
+        return [*self.keyed_memories.values(), *self.id_memories.values()]
+
+    def delete_memory(
+        self,
+        memory_id: int,
+        expected_revision: int | None = None,
+    ) -> MemoryOperationOutcome:
+        self.deleted.append((memory_id, expected_revision))
+        return self.delete_outcomes.get(
+            memory_id,
+            MemoryOperationOutcome(
+                MemoryOperationStatus.DELETED_SUCCESSFULLY,
+                memory_id=memory_id,
+            ),
+        )
+
     def close(self) -> None:
         self.closed = True
 
@@ -170,6 +189,35 @@ def test_null_memory_gateway_returns_no_memories_and_blocks_writes() -> None:
     outcome = gateway.apply(action, "personal_relevant")
     assert outcome.status is MemoryOperationStatus.MEMORY_NOT_CONFIGURED
     assert outcome.succeeded is False
+    bulk = gateway.delete_all()
+    assert bulk.deleted_count == 0
+    assert bulk.outcome.status is MemoryOperationStatus.MEMORY_NOT_CONFIGURED
+
+
+def test_memory_manager_gateway_deletes_snapshot_with_exact_revisions() -> None:
+    manager = FakeMemoryManager()
+    gateway = MemoryManagerGateway(manager)
+
+    result = gateway.delete_all()
+
+    assert result.deleted_count == 3
+    assert result.outcome.status is MemoryOperationStatus.DELETED_SUCCESSFULLY
+    assert manager.deleted == [(10, 3), (20, 4), (42, 3)]
+
+
+def test_memory_manager_gateway_reports_partial_bulk_delete() -> None:
+    manager = FakeMemoryManager()
+    manager.delete_outcomes[20] = MemoryOperationOutcome(
+        MemoryOperationStatus.MEMORY_REVISION_CONFLICT,
+        memory_id=20,
+    )
+    gateway = MemoryManagerGateway(manager)
+
+    result = gateway.delete_all()
+
+    assert result.deleted_count == 2
+    assert result.outcome.status is MemoryOperationStatus.DELETE_ERROR
+    assert result.outcome.detail == "Could not delete memory IDs 20"
 
 
 def test_memory_manager_gateway_semantically_retrieves_personal_context() -> None:

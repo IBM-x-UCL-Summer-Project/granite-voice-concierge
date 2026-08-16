@@ -47,6 +47,10 @@ from voice_concierge.app.web_features import (
     reminder_to_dict,
     stored_memory_to_dict,
 )
+from voice_concierge.app.web_routine_commands import (
+    RoutineCommandSessionInactiveError,
+    WebRoutineCommandService,
+)
 from voice_concierge.app.web_wake_word import (
     WakeWordSessionInactiveError,
     WebWakeWordService,
@@ -191,6 +195,11 @@ def _completed_conversation_turn(
 
     transcript = response.get("transcript")
     spoken_response = response.get("spoken_response")
+    if response.get("automatic_routine") is True and isinstance(spoken_response, str):
+        return ConversationTurn(
+            user_transcript="",
+            assistant_response=spoken_response,
+        )
     if not isinstance(transcript, Mapping) or not isinstance(spoken_response, str):
         return None
     text = transcript.get("text")
@@ -259,18 +268,23 @@ class PipelineWebServer(ThreadingHTTPServer):
         policy_profile: ReasoningPolicyProfile = STRICT_REASONING_POLICY_PROFILE,
         features: WebFeatureServices | None = None,
         wake_word_service: WebWakeWordService | None = None,
+        routine_command_service: WebRoutineCommandService | None = None,
         warm_up: Callable[[], None] | None = None,
     ) -> None:
         resolved_policy_profile = validate_reasoning_policy_profile(policy_profile)
         self.pipeline = pipeline
         self.features = features or WebFeatureServices()
         self.wake_word_service = wake_word_service
+        self.routine_command_service = routine_command_service
         self.web_directory = web_directory
         self.capabilities = {
             "text_input": True,
             "voice_input": voice_input_enabled,
             "voice_output": voice_output_enabled,
             "wake_word": wake_word_service is not None and voice_input_enabled,
+            "routine_barge_in": (
+                routine_command_service is not None and voice_input_enabled
+            ),
             **self.features.capabilities,
         }
         self.runtime = {
@@ -315,6 +329,7 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
                 HTTPStatus.OK,
                 {
                     "state": app_pipeline_state_to_dict(state),
+                    "routine": self.server.features.routine_snapshot(session_id),
                     "session_history": [
                         conversation_turn_to_dict(turn) for turn in history
                     ],
@@ -358,6 +373,7 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
                                 "content": turn.assistant_response,
                             },
                         )
+                        if message["content"]
                     ],
                 },
                 filename=f"granite-chat-{exported_at.date().isoformat()}.json",
@@ -425,7 +441,10 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
     def log_request(self, code: int | str = "-", size: int | str = "-") -> None:
         """Keep continuous local wake-word frames out of terminal noise."""
 
-        if urlsplit(self.path).path == "/api/wake-word/frame":
+        if urlsplit(self.path).path in {
+            "/api/wake-word/frame",
+            "/api/routine-command/frame",
+        }:
             return
         super().log_request(code, size)
 
@@ -539,19 +558,30 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
         )
         if endpoint == "/api/turn":
             request = app_turn_request_from_dict(trusted_payload)
+            automatic_routine = (
+                trusted_payload.get("automatic_routine") is True
+                and request.transcript.strip().casefold() == "next"
+                and bool(
+                    self.server.features.routine_snapshot(session_id).get("active")
+                )
+            )
             response = self.server.features.route_transcript(
                 self.server.pipeline,
                 session_id,
                 request.transcript,
                 request.state,
                 request.options,
+                record_conversation=not automatic_routine,
             )
             if response is None:
                 response = app_turn_result_to_dict(
                     self.server.pipeline.process_request(request)
                 )
+            elif automatic_routine:
+                response["automatic_routine"] = True
         else:
             response = self._run_audio_turn(trusted_payload, session_id, state)
+        response["routine"] = self.server.features.routine_snapshot(session_id)
         next_state = app_pipeline_state_from_dict(response.get("state"))
         if next_state is None:
             raise RuntimeError("Pipeline response did not contain state.")
@@ -607,6 +637,10 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
             "/api/wake-word/start",
             "/api/wake-word/frame",
             "/api/wake-word/stop",
+            "/api/routine-command/start",
+            "/api/routine-command/frame",
+            "/api/routine-command/reset",
+            "/api/routine-command/stop",
         }
         if path not in known_paths:
             return False
@@ -615,10 +649,15 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
             if path.startswith("/api/wake-word/"):
                 self._handle_wake_word_post(path, payload)
                 return True
+            if path.startswith("/api/routine-command/"):
+                self._handle_routine_command_post(path, payload)
+                return True
             if path == "/api/session/reset":
                 session_id, state = self.server.sessions.reset(
                     self._posted_session_id()
                 )
+                if self.server.routine_command_service is not None:
+                    self.server.routine_command_service.stop(session_id)
                 self.server.features.reset_session(session_id)
                 self._write_json(
                     HTTPStatus.OK,
@@ -646,6 +685,11 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
                 HTTPStatus.CONFLICT,
                 {"error": {"code": "wake_word_inactive", "message": str(exc)}},
             )
+        except RoutineCommandSessionInactiveError as exc:
+            self._write_json(
+                HTTPStatus.CONFLICT,
+                {"error": {"code": "routine_command_inactive", "message": str(exc)}},
+            )
         except Exception:
             LOGGER.exception("web_control_request_failed endpoint=%s", path)
             self._write_json(
@@ -658,6 +702,62 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
                 },
             )
         return True
+
+    def _handle_routine_command_post(
+        self,
+        path: str,
+        payload: Mapping[str, Any],
+    ) -> None:
+        service = self.server.routine_command_service
+        if service is None:
+            self._feature_unavailable(
+                "routine_barge_in",
+                "Hands-free routine controls require local voice I/O.",
+            )
+            return
+
+        posted_session_id = self._posted_session_id()
+        if path == "/api/routine-command/start":
+            session_id = self.server.sessions.ensure(posted_session_id)
+            service.start(session_id)
+            self._write_json(
+                HTTPStatus.OK,
+                {"active": True, "sample_rate": 16000},
+                session_id=session_id,
+            )
+            return
+        if path == "/api/routine-command/stop":
+            self._write_json(
+                HTTPStatus.OK,
+                {"active": not service.stop(posted_session_id)},
+            )
+            return
+        if path == "/api/routine-command/reset":
+            service.reset(posted_session_id)
+            self._write_json(HTTPStatus.OK, {"active": True})
+            return
+
+        encoded = payload.get("pcm_base64")
+        if not isinstance(encoded, str) or not encoded:
+            raise PayloadValidationError("pcm_base64 must be a non-empty string.")
+        try:
+            pcm = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise PayloadValidationError("pcm_base64 must be valid base64.") from exc
+        if len(pcm) > MAX_WAKE_WORD_FRAME_BYTES:
+            raise PayloadValidationError("Routine command audio frame is too large.")
+        try:
+            event = service.process_pcm(posted_session_id, pcm)
+        except ValueError as exc:
+            raise PayloadValidationError(str(exc)) from exc
+        self._write_json(
+            HTTPStatus.OK,
+            {
+                "command": event.command if event is not None else None,
+                "phrase": event.phrase if event is not None else None,
+                "confidence": event.confidence if event is not None else None,
+            },
+        )
 
     def _handle_wake_word_post(
         self,
@@ -897,7 +997,7 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
 
 def build_web_pipeline(
     *,
-    load_memory: bool = False,
+    load_memory: bool = True,
     load_voice_io: bool = False,
     demo: bool = False,
 ) -> VoiceConciergePipeline:
@@ -925,7 +1025,7 @@ def build_web_pipeline(
 
 def build_web_application(
     *,
-    load_memory: bool = False,
+    load_memory: bool = True,
     load_voice_io: bool = False,
     load_reminders: bool = True,
     load_guided_routines: bool = True,
@@ -991,7 +1091,7 @@ def build_web_application(
         from voice_concierge.scheduling.runner import ReminderRunner
 
         reminder_handler = ReminderTurnHandler(build_reminder_service())
-        reminder_notifier = WebReminderNotifier()
+        reminder_notifier = WebReminderNotifier(text_to_speech)
         reminder_runner = ReminderRunner(
             reminder_handler.service,
             reminder_notifier,
@@ -1012,7 +1112,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Serve the pipeline-connected web UI.")
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", default=DEFAULT_PORT, type=int)
-    parser.add_argument("--memory", action="store_true", help="Enable local memory.")
+    memory_group = parser.add_mutually_exclusive_group()
+    memory_group.add_argument(
+        "--memory",
+        dest="memory",
+        action="store_true",
+        help="Enable local memory (the default).",
+    )
+    memory_group.add_argument(
+        "--no-memory",
+        dest="memory",
+        action="store_false",
+        help="Disable local memory and the browser privacy centre.",
+    )
+    parser.set_defaults(memory=True)
     parser.add_argument(
         "--demo",
         action="store_true",
@@ -1091,6 +1204,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         from voice_concierge.voice_input.wake_word_detector import WakeWordDetector
 
         wake_word_service = WebWakeWordService(WakeWordDetector(download_models=False))
+    routine_command_service = None
+    if voice_io_enabled and not args.no_guided_routines:
+        from voice_concierge.command_control.factory import build_vosk_command_spotter
+        from voice_concierge.command_control.stabilizer import StableCommandSpotter
+
+        routine_command_service = WebRoutineCommandService(
+            lambda: StableCommandSpotter(build_vosk_command_spotter())
+        )
     server = PipelineWebServer(
         (args.host, args.port),
         pipeline,
@@ -1100,6 +1221,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         policy_profile=args.policy_profile,
         features=features,
         wake_word_service=wake_word_service,
+        routine_command_service=routine_command_service,
         warm_up=None if args.demo else pipeline.warm_up,
     )
     features.start()

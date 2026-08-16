@@ -154,3 +154,12 @@ class TestVoskPhraseRecognizerRecognize:
         )
 
         assert recognizer.recognize(b"frame") is None
+
+    @pytest.mark.unit
+    def test_reset_discards_partial_audio(self) -> None:
+        fake = _FakeVoskRecognizer(final=False)
+        recognizer = VoskPhraseRecognizer(["yes"], recognizer=fake)
+
+        recognizer.reset()
+
+        assert fake.reset_count == 1
