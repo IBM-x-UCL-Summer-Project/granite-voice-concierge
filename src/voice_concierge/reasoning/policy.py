@@ -665,7 +665,11 @@ def _list_removal_request(
 
 
 def _split_list_items(value: str) -> tuple[str, ...] | None:
-    parts = re.split(r"\s*,\s*|\s+and\s+", value, flags=re.IGNORECASE)
+    parts = re.split(
+        r"\s*,\s*(?:and\s+)?|\s+and\s+",
+        value,
+        flags=re.IGNORECASE,
+    )
     normalized = tuple(part.strip(" .") for part in parts if part.strip(" ."))
     return normalized or None
 

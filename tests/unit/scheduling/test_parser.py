@@ -96,6 +96,24 @@ class TestOneOffReminders:
         assert reminder.kind == "reminder"
         assert reminder.text == "stretch"
 
+    @pytest.mark.parametrize(
+        ("transcript", "subject"),
+        [
+            ("Remind me in 10 minutes to check the oven.", "check the oven"),
+            ("remind me at 5 to check the oven", "check the oven"),
+            ("Set a timer for 10 seconds.", "10 seconds"),
+        ],
+    )
+    def test_subject_supports_capitals_and_a_leading_schedule(
+        self,
+        transcript: str,
+        subject: str,
+    ) -> None:
+        reminder = parse_reminder(transcript, now=NOW)
+
+        assert reminder is not None
+        assert reminder.text == subject
+
     def test_clock_time_later_today(self) -> None:
         reminder = parse_reminder("remind me to call mum at 14:30", now=NOW)
 
@@ -157,6 +175,16 @@ class TestRecurringReminders:
         assert reminder is not None
         assert reminder.schedule.recurrence == "daily"
         assert _local(reminder.due_at).hour == 8
+
+    def test_recurring_schedule_can_precede_the_subject(self) -> None:
+        reminder = parse_reminder(
+            "Remind me every morning to take my pills",
+            now=NOW,
+        )
+
+        assert reminder is not None
+        assert reminder.schedule.recurrence == "daily"
+        assert reminder.text == "take my pills"
 
     def test_every_evening_implies_a_later_time(self) -> None:
         reminder = parse_reminder("remind me to lock up every evening", now=NOW)

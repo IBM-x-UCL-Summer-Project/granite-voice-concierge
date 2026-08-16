@@ -508,6 +508,32 @@ def test_policy_guard_does_not_treat_bread_as_read_request() -> None:
     assert response.metadata["policy_guard"] == "shopping_list_add_confirmation"
 
 
+@pytest.mark.parametrize(
+    "transcript",
+    (
+        "Add milk, bread, and apples to my shopping list.",
+        "Add milk, bread and apples to my shopping list.",
+        "Add milk, bread, apples to my shopping list.",
+    ),
+)
+def test_policy_guard_extracts_three_shopping_items_without_conjunctions(
+    transcript: str,
+) -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(transcript=transcript, mode="shopping"),
+        ReasoningResponse(spoken_response="Okay.", confidence="medium"),
+    )
+
+    assert response.spoken_response == (
+        "I can add milk, bread, and apples to your shopping list. "
+        "Please confirm before I save it."
+    )
+    assert response.proposed_memory_action is not None
+    assert response.proposed_memory_action.list_operation == _add_items(
+        "shopping", "milk", "bread", "apples"
+    )
+
+
 def test_policy_guard_handles_explicit_shopping_list_outside_shopping_mode() -> None:
     response = apply_reasoning_policy_guards(
         ReasoningRequest(

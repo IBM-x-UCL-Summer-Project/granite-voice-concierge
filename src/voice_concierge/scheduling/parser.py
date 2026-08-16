@@ -80,6 +80,23 @@ _LEAD_IN = re.compile(
     r"^(?:please\s+)?(?:can you\s+)?(?:remind me(?:\s+to)?|set a reminder(?:\s+to)?"
     r"|set a timer(?:\s+for)?|reminder(?:\s+to|\s+for)?|wake me(?:\s+up)?"
     r"|let me know(?:\s+to)?)\s*",
+    flags=re.IGNORECASE,
+)
+
+# A schedule may come before the subject ("remind me in ten minutes to call")
+# or after it ("remind me to call in ten minutes"). The schedule parsers accept
+# both arrangements, so subject extraction must do the same.
+_LEADING_SCHEDULE = re.compile(
+    r"^(?:"
+    r"(?:in|for)\s+(?:half\s+(?:an?\s+)?|(?:\d+|[a-z]+(?:\s+five)?)\s+(?:an?\s+)?)"
+    r"(?:seconds?|minutes?|hours?|days?)"
+    r"|(?:at|by)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?"
+    r"|every\s+(?:"
+    r"(?:\d+|[a-z]+)\s+(?:seconds?|minutes?|hours?)"
+    r"|day|morning|evening|night|" + "|".join(WEEKDAY_NAMES) + r")"
+    r"(?:\s+at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?)?"
+    r")\s+to\s+",
+    flags=re.IGNORECASE,
 )
 
 
@@ -242,6 +259,7 @@ def _to_number(token: str) -> int | None:
 def _subject(text: str) -> str:
     """Strip the request wrapper, leaving what the reminder is about."""
     subject = _LEAD_IN.sub("", text.strip(), count=1)
+    subject = _LEADING_SCHEDULE.sub("", subject, count=1)
     subject = re.sub(
         r"\b(?:in|for|at|by)\s+(?:\d+|[a-z]+)(?::\d{2})?\s*"
         r"(?:seconds?|minutes?|hours?|days?|am|pm|a\.m\.|p\.m\.)?\s*$",
