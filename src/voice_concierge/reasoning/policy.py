@@ -5,7 +5,16 @@ from __future__ import annotations
 import re
 from dataclasses import replace
 
-from voice_concierge.reasoning.information_policy import decide_information_policy
+from voice_concierge.reasoning.information_policy import (
+    InformationDisposition,
+    decide_information_policy,
+)
+from voice_concierge.reasoning.profiles import (
+    STRICT_REASONING_POLICY_PROFILE,
+    UAT_REASONING_POLICY_PROFILE,
+    ReasoningPolicyProfile,
+    validate_reasoning_policy_profile,
+)
 from voice_concierge.reasoning.types import (
     SHOPPING_LIST_MEMORY_KEY,
     TASK_LIST_MEMORY_KEY,
@@ -30,14 +39,44 @@ _LIST_ADD_LEAD = re.compile(
     flags=re.IGNORECASE,
 )
 _EVIDENCE_TOKEN = re.compile(r"[a-z0-9]+(?:['’][a-z0-9]+)?", flags=re.IGNORECASE)
+_UAT_RELAXED_EVIDENCE_DISPOSITIONS: frozenset[InformationDisposition] = frozenset(
+    {
+        "missing_user_input_evidence",
+        "invalid_user_input_evidence",
+        "missing_local_context_evidence",
+        "invalid_local_context_evidence",
+        "unexpected_information_evidence",
+    }
+)
+_UAT_RELAXED_NONCURRENT_SOURCE_DISPOSITIONS: frozenset[InformationDisposition] = (
+    frozenset(
+        {
+            "runtime_source_unavailable",
+            "missing_runtime_context_evidence",
+            "invalid_runtime_context_evidence",
+            "live_source_requires_current_freshness",
+        }
+    )
+)
 
 
 def apply_reasoning_policy_guards(
     request: ReasoningRequest,
     response: ReasoningResponse,
+    *,
+    policy_profile: ReasoningPolicyProfile = STRICT_REASONING_POLICY_PROFILE,
 ) -> ReasoningResponse:
     """Apply local policy guards that should not depend on model compliance."""
 
+    resolved_profile = validate_reasoning_policy_profile(policy_profile)
+    if resolved_profile == UAT_REASONING_POLICY_PROFILE:
+        response = replace(
+            response,
+            metadata={
+                **response.metadata,
+                "policy_profile": UAT_REASONING_POLICY_PROFILE,
+            },
+        )
     transcript = request.transcript.strip()
     text = transcript.lower()
     shopping_items = _shopping_items_to_add(
@@ -109,18 +148,30 @@ def apply_reasoning_policy_guards(
     response = _normalize_information_classification(request, response)
     information_decision = decide_information_policy(request, response)
     if not information_decision.allowed:
-        assert information_decision.spoken_response is not None
-        return _replace_response(
-            response,
-            spoken_response=information_decision.spoken_response,
-            needs_confirmation=False,
-            proposed_memory_action=None,
-            confidence="high",
-            guard=information_decision.disposition,
-            information_evidence=(),
-        )
+        relaxed_response = None
+        if resolved_profile == UAT_REASONING_POLICY_PROFILE:
+            relaxed_response = _relax_information_policy(
+                response,
+                information_decision.disposition,
+            )
+        if relaxed_response is None:
+            assert information_decision.spoken_response is not None
+            return _replace_response(
+                response,
+                spoken_response=information_decision.spoken_response,
+                needs_confirmation=False,
+                proposed_memory_action=None,
+                confidence="high",
+                guard=information_decision.disposition,
+                information_evidence=(),
+            )
+        response = relaxed_response
 
-    if information_decision.attribution_prefix is not None:
+    if (
+        information_decision.allowed
+        and information_decision.attribution_prefix is not None
+        and resolved_profile == STRICT_REASONING_POLICY_PROFILE
+    ):
         spoken_response = (
             f"{information_decision.attribution_prefix} "
             f"{response.spoken_response.rstrip()}"
@@ -802,6 +853,44 @@ def _normalize_information_classification(
             "policy_normalization": "non_live_request",
         },
     )
+
+
+def _relax_information_policy(
+    response: ReasoningResponse,
+    disposition: InformationDisposition,
+) -> ReasoningResponse | None:
+    """Soften provenance metadata failures for a controlled UAT runtime.
+
+    Missing local context and every genuinely current/live-data failure remain
+    hard blocks. The relaxed profile only stops response metadata quality from
+    replacing an otherwise useful non-current answer with a generic refusal.
+    """
+
+    if disposition in _UAT_RELAXED_EVIDENCE_DISPOSITIONS:
+        return replace(
+            response,
+            information_evidence=(),
+            metadata={
+                **response.metadata,
+                "policy_relaxation": disposition,
+            },
+        )
+
+    if (
+        disposition in _UAT_RELAXED_NONCURRENT_SOURCE_DISPOSITIONS
+        and response.freshness_requirement == "not_required"
+    ):
+        return replace(
+            response,
+            required_information_source="stable_knowledge",
+            information_evidence=(),
+            metadata={
+                **response.metadata,
+                "policy_relaxation": disposition,
+            },
+        )
+
+    return None
 
 
 def _normalize_identified_memory_evidence(

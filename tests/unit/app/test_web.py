@@ -145,8 +145,35 @@ def test_health_reports_pipeline_capabilities() -> None:
             "guided_routines": False,
             "privacy_centre": False,
         },
-        "runtime": {"model": "smoke model"},
+        "runtime": {"model": "smoke model", "policy_profile": "strict"},
     }
+
+
+def test_web_application_uses_relaxed_uat_policy_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pipeline = build_smoke_pipeline()
+    captured: dict[str, object] = {}
+
+    def fake_build_pipeline(config=None, **_kwargs: object):
+        captured["config"] = config
+        return pipeline
+
+    monkeypatch.setattr(
+        web_module, "build_voice_concierge_pipeline", fake_build_pipeline
+    )
+
+    built_pipeline, features = web_module.build_web_application(
+        load_reminders=False,
+        load_guided_routines=False,
+    )
+
+    try:
+        assert built_pipeline is pipeline
+        assert captured["config"].policy_profile == "uat_relaxed"
+    finally:
+        features.close()
+        pipeline.close()
 
 
 def test_static_ui_disables_browser_cache() -> None:
@@ -157,7 +184,7 @@ def test_static_ui_disables_browser_cache() -> None:
 
     assert cache_control == "no-store"
     assert "./playback-policy.js?v=20260815" in html
-    assert "./app.js?v=20260816-9" in html
+    assert "./app.js?v=20260816-10" in html
     assert "./styles.css?v=20260816-6" in html
 
 

@@ -27,6 +27,7 @@ from voice_concierge.app.adapter import (
 from voice_concierge.app.factory import build_voice_concierge_pipeline
 from voice_concierge.app.memory import MemoryManagerGateway
 from voice_concierge.app.pipeline import VoiceConciergePipeline
+from voice_concierge.app.reasoning import AppReasoningConfig
 from voice_concierge.app.serialization import (
     JsonDict,
     PayloadValidationError,
@@ -54,6 +55,13 @@ from voice_concierge.privacy.errors import PrivacyError
 from voice_concierge.reasoning.models import (
     DEFAULT_MODEL_SELECTION_PATH,
     load_model_selection,
+)
+from voice_concierge.reasoning.profiles import (
+    STRICT_REASONING_POLICY_PROFILE,
+    SUPPORTED_REASONING_POLICY_PROFILES,
+    UAT_REASONING_POLICY_PROFILE,
+    ReasoningPolicyProfile,
+    validate_reasoning_policy_profile,
 )
 from voice_concierge.scheduling.errors import SchedulingError
 
@@ -248,10 +256,12 @@ class PipelineWebServer(ThreadingHTTPServer):
         voice_input_enabled: bool = False,
         voice_output_enabled: bool = False,
         model_name: str = "configured model",
+        policy_profile: ReasoningPolicyProfile = STRICT_REASONING_POLICY_PROFILE,
         features: WebFeatureServices | None = None,
         wake_word_service: WebWakeWordService | None = None,
         warm_up: Callable[[], None] | None = None,
     ) -> None:
+        resolved_policy_profile = validate_reasoning_policy_profile(policy_profile)
         self.pipeline = pipeline
         self.features = features or WebFeatureServices()
         self.wake_word_service = wake_word_service
@@ -263,7 +273,10 @@ class PipelineWebServer(ThreadingHTTPServer):
             "wake_word": wake_word_service is not None and voice_input_enabled,
             **self.features.capabilities,
         }
-        self.runtime = {"model": model_name}
+        self.runtime = {
+            "model": model_name,
+            "policy_profile": resolved_policy_profile,
+        }
         self.sessions = PipelineSessionStore()
         super().__init__(server_address, PipelineRequestHandler)
         self.readiness = StartupReadiness(warm_up)
@@ -917,6 +930,7 @@ def build_web_application(
     load_reminders: bool = True,
     load_guided_routines: bool = True,
     demo: bool = False,
+    policy_profile: ReasoningPolicyProfile = UAT_REASONING_POLICY_PROFILE,
 ) -> tuple[VoiceConciergePipeline, WebFeatureServices]:
     """Build the browser pipeline and the local services it exposes."""
 
@@ -944,6 +958,7 @@ def build_web_application(
         privacy_centre = PrivacyCentre(memory_manager)
 
     pipeline = build_voice_concierge_pipeline(
+        AppReasoningConfig(policy_profile=policy_profile),
         memory=memory_gateway,
         speech_to_text=speech_to_text,
         text_to_speech=text_to_speech,
@@ -957,7 +972,7 @@ def build_web_application(
         from voice_concierge.routines.providers import LLMRoutineProvider
 
         def build_adapter() -> RoutineCommandAdapter:
-            engine = build_reasoning_engine()
+            engine = build_reasoning_engine(policy_profile=policy_profile)
             if memory_manager is not None:
                 return build_routine_adapter(
                     memory_manager=memory_manager,
@@ -1002,6 +1017,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--demo",
         action="store_true",
         help="Use deterministic in-memory adapters for UI review.",
+    )
+    parser.add_argument(
+        "--policy-profile",
+        choices=sorted(SUPPORTED_REASONING_POLICY_PROFILES),
+        default=UAT_REASONING_POLICY_PROFILE,
+        help=(
+            "Reasoning safeguards: uat_relaxed favors natural test responses; "
+            "strict enforces exact provenance metadata."
+        ),
     )
     parser.add_argument(
         "--voice-io",
@@ -1051,6 +1075,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             load_reminders=not args.no_reminders,
             load_guided_routines=not args.no_guided_routines,
             demo=args.demo,
+            policy_profile=args.policy_profile,
         )
     except ModuleNotFoundError as exc:
         if exc.name != "ollama":
@@ -1072,6 +1097,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         voice_input_enabled=voice_io_enabled,
         voice_output_enabled=voice_io_enabled,
         model_name=model_name,
+        policy_profile=args.policy_profile,
         features=features,
         wake_word_service=wake_word_service,
         warm_up=None if args.demo else pipeline.warm_up,
@@ -1080,12 +1106,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"Granite web UI: http://{args.host}:{args.port}")
     LOGGER.info(
         "web_server_started host=%s port=%s memory=%s voice_io=%s "
-        "model=%s reminders=%s guided_routines=%s wake_word=%s",
+        "model=%s policy_profile=%s reminders=%s guided_routines=%s wake_word=%s",
         args.host,
         args.port,
         args.memory,
         voice_io_enabled,
         model_name,
+        args.policy_profile,
         not args.no_reminders and not args.demo,
         not args.no_guided_routines and not args.demo,
         wake_word_enabled,

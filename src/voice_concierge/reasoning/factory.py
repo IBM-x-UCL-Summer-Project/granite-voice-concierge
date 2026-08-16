@@ -28,6 +28,11 @@ from voice_concierge.reasoning.ollama import (
     OllamaModelManagerConfig,
     OllamaReasoningEngine,
 )
+from voice_concierge.reasoning.profiles import (
+    STRICT_REASONING_POLICY_PROFILE,
+    ReasoningPolicyProfile,
+    validate_reasoning_policy_profile,
+)
 from voice_concierge.reasoning.prompting import (
     DEFAULT_PROMPT_VERSION,
     PromptTemplateError,
@@ -40,9 +45,15 @@ def build_reasoning_engine(
     *,
     prompt_version: str = DEFAULT_PROMPT_VERSION,
     timeout_s: float = 120.0,
+    policy_profile: ReasoningPolicyProfile = STRICT_REASONING_POLICY_PROFILE,
     model_manager: ModelManager | None = None,
 ) -> ReasoningEngine:
     """Build the selected local reasoning engine for application code."""
+
+    try:
+        validate_reasoning_policy_profile(policy_profile)
+    except ValueError as exc:
+        raise ReasoningConfigurationError(str(exc)) from exc
 
     try:
         selection = load_model_selection(Path(selection_path))
@@ -68,6 +79,7 @@ def build_reasoning_engine(
         host=selection.host or DEFAULT_OLLAMA_HOST,
         timeout_s=timeout_s,
         prompt_version=prompt_version,
+        policy_profile=policy_profile,
     )
 
     manager = model_manager or OllamaModelManager(

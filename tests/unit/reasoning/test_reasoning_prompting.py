@@ -75,6 +75,30 @@ def test_granite_messages_include_offline_policy() -> None:
     assert "Structured output examples" in system_prompt
 
 
+def test_relaxed_uat_prompt_prioritizes_usefulness_without_claiming_live_access() -> (
+    None
+):
+    messages = build_granite_messages(
+        ReasoningRequest(transcript="Explain why the sky looks blue."),
+        policy_profile="uat_relaxed",
+    )
+
+    system_prompt = messages[0].content
+    assert "UAT behavior profile" in system_prompt
+    assert "direct, natural, useful answer" in system_prompt
+    assert "live internet information is unavailable offline" in system_prompt
+    assert "confirmation, exact-target, privacy" in system_prompt
+
+
+def test_strict_prompt_does_not_include_relaxed_uat_guidance() -> None:
+    messages = build_granite_messages(
+        ReasoningRequest(transcript="Explain why the sky looks blue."),
+        policy_profile="strict",
+    )
+
+    assert "UAT behavior profile" not in messages[0].content
+
+
 def test_granite_messages_include_mode_and_memory_context() -> None:
     request = ReasoningRequest(
         transcript="How do I like you to answer?",

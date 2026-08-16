@@ -97,6 +97,7 @@ def test_factory_reads_custom_selected_model_and_host(tmp_path: Path) -> None:
         path,
         prompt_version="v1",
         timeout_s=7.5,
+        policy_profile="uat_relaxed",
         model_manager=manager,
     )
 
@@ -105,6 +106,7 @@ def test_factory_reads_custom_selected_model_and_host(tmp_path: Path) -> None:
     assert engine.config.host == "http://localhost:9999"
     assert engine.config.timeout_s == 7.5
     assert engine.config.prompt_version == "v1"
+    assert engine.config.policy_profile == "uat_relaxed"
     assert manager.show_calls == ["granite-test:latest"]
     assert manager.pull_calls == []
 
@@ -135,6 +137,21 @@ def test_factory_rejects_invalid_prompt_version(tmp_path: Path) -> None:
         build_reasoning_engine(
             tmp_path / "missing-model-selection.json",
             prompt_version="../bad",
+            model_manager=manager,
+        )
+
+    assert manager.show_calls == []
+
+
+def test_factory_rejects_invalid_policy_profile_before_model_lookup(
+    tmp_path: Path,
+) -> None:
+    manager = RecordingModelManager()
+
+    with pytest.raises(ReasoningConfigurationError, match="policy profile"):
+        build_reasoning_engine(
+            tmp_path / "missing-model-selection.json",
+            policy_profile="unsafe",  # type: ignore[arg-type]
             model_manager=manager,
         )
 

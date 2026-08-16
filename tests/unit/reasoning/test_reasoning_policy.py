@@ -164,6 +164,84 @@ def test_policy_guard_blocks_time_sensitive_info_without_context() -> None:
     assert response.metadata["policy_guard"] == ("external_source_unavailable_offline")
 
 
+def test_relaxed_uat_policy_preserves_noncurrent_answer_with_bad_source_label() -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(transcript="Explain why leaves are green."),
+        ReasoningResponse(
+            spoken_response=(
+                "Leaves look green because chlorophyll reflects green light."
+            ),
+            required_information_source="runtime_live",
+            freshness_requirement="not_required",
+        ),
+        policy_profile="uat_relaxed",
+    )
+
+    assert response.spoken_response.startswith("Leaves look green")
+    assert response.required_information_source == "stable_knowledge"
+    assert response.metadata["policy_profile"] == "uat_relaxed"
+    assert response.metadata["policy_relaxation"] == "runtime_source_unavailable"
+
+
+def test_relaxed_uat_policy_allows_supplied_context_without_exact_evidence() -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(
+            transcript="What drink do I prefer?",
+            memories=(memory_reference("User prefers tea."),),
+        ),
+        ReasoningResponse(
+            spoken_response="You prefer tea.",
+            required_information_source="local_context",
+        ),
+        policy_profile="uat_relaxed",
+    )
+
+    assert response.spoken_response == "You prefer tea."
+    assert response.metadata["policy_relaxation"] == ("missing_local_context_evidence")
+
+
+def test_relaxed_uat_policy_still_blocks_missing_personal_and_live_context() -> None:
+    missing_personal = apply_reasoning_policy_guards(
+        ReasoningRequest(transcript="What drink do I prefer?"),
+        ReasoningResponse(
+            spoken_response="You prefer tea.",
+            required_information_source="local_context",
+        ),
+        policy_profile="uat_relaxed",
+    )
+    current_external = apply_reasoning_policy_guards(
+        ReasoningRequest(transcript="What is happening in the news today?"),
+        ReasoningResponse(
+            spoken_response="Here are today's headlines.",
+            required_information_source="external_live",
+            freshness_requirement="current",
+        ),
+        policy_profile="uat_relaxed",
+    )
+
+    assert missing_personal.spoken_response == (
+        "I do not have the local information needed to answer that."
+    )
+    assert current_external.spoken_response == (
+        "I cannot verify up-to-date information offline."
+    )
+
+
+def test_relaxed_uat_policy_keeps_memory_write_confirmation() -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(transcript="Add milk to my shopping list."),
+        ReasoningResponse(spoken_response="Done."),
+        policy_profile="uat_relaxed",
+    )
+
+    assert response.needs_confirmation is True
+    assert response.proposed_memory_action is not None
+    assert response.proposed_memory_action.list_operation == _add_items(
+        "shopping", "milk"
+    )
+    assert response.metadata["policy_guard"] == "shopping_list_add_confirmation"
+
+
 def test_policy_guard_blocks_time_sensitive_info_with_unrelated_memory() -> None:
     response = apply_reasoning_policy_guards(
         ReasoningRequest(

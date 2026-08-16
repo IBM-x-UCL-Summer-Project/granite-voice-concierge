@@ -14,6 +14,18 @@ python -m voice_concierge.app.web
 
 Then open `http://localhost:4173`.
 
+The web runner defaults to the explicit `uat_relaxed` reasoning profile for
+controlled testing. The UI shows **relaxed UAT** beside the local model so the
+active behavior is visible. This profile prevents imperfect provenance metadata
+from replacing otherwise useful non-current answers with generic verification
+errors. It still blocks unavailable current/live information and retains all
+memory-write, edit, deletion, privacy, confirmation, and exact-target rules.
+Run the stricter fail-closed profile explicitly when needed:
+
+```bash
+python -m voice_concierge.app.web --policy-profile strict
+```
+
 The real pipeline requires the project dependencies, including the Ollama
 Python client. If they have not been installed in this virtual environment,
 run `python -m pip install -e .`. The `--demo` mode does not import or require
@@ -76,8 +88,7 @@ The server keeps an extended temporary display/export history of up to 200
 completed exchanges separately from the six-turn reasoning context window.
 Long conversations therefore remain visible and survive a page reload while
 that local server session is alive, without sending every old turn back through
-the model. The header stays pinned
-while the transcript scrolls.
+the model. The header stays pinned while the transcript scrolls.
 
 For privacy-conscious diagnostic logs in both the terminal and an ignored local
 file:

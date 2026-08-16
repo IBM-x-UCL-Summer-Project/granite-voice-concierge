@@ -37,6 +37,7 @@ python -m voice_concierge.app.live --no-wake-word
 python -m voice_concierge.app.live --device-index <index>
 python -m voice_concierge.app.live --no-memory --no-playback
 python -m voice_concierge.app.live --no-guided-routines
+python -m voice_concierge.app.live --policy-profile strict
 ```
 
 ### Guided routines
@@ -77,6 +78,13 @@ Add `--voice-io` for browser recording/STT, response TTS, and hands-free
 environment has not been installed yet, run
 `python -m pip install -e .` after activating it. See
 [the web UI guide](web/README.md) for details.
+
+The interactive web and live runners default to the `uat_relaxed` reasoning
+profile during controlled testing. It favors useful ordinary answers when the
+model's provenance metadata is imperfect, while retaining offline/live-data
+honesty and all memory, deletion, privacy, confirmation, and exact-target
+controls. Use `--policy-profile strict` to restore fail-closed provenance
+enforcement. Programmatic reasoning construction remains strict by default.
 
 For the complete local browser path with diagnostic logs:
 

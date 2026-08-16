@@ -1336,7 +1336,12 @@ function setConnectionStatus(status, health = null) {
   elements.startupScreen.classList.toggle("is-error", status === "error");
   if (status === "ready") {
     elements.runtimeLabel.textContent = "Local pipeline";
-    if (health?.runtime?.model) elements.runtimeModel.textContent = health.runtime.model;
+    if (health?.runtime?.model) {
+      const policyLabel = health.runtime.policy_profile === "uat_relaxed"
+        ? " · relaxed UAT"
+        : " · strict policy";
+      elements.runtimeModel.textContent = `${health.runtime.model}${policyLabel}`;
+    }
     elements.startupTitle.textContent = "Granite is ready";
     elements.startupMessage.textContent = health?.message || "Local engine is ready.";
     if (!state.settings.setup_complete && !state.setupPrompted) {
@@ -1347,7 +1352,9 @@ function setConnectionStatus(status, health = null) {
     elements.runtimeLabel.textContent = "Starting local engine…";
     elements.startupTitle.textContent = "Starting Granite";
     elements.startupMessage.textContent = health?.message || "Loading local models…";
-    if (health?.runtime?.model) elements.runtimeModel.textContent = health.runtime.model;
+    if (health?.runtime?.model) {
+      elements.runtimeModel.textContent = health.runtime.model;
+    }
   } else if (status === "error") {
     elements.runtimeLabel.textContent = "Engine needs attention";
     elements.runtimeModel.textContent = "check local server";
