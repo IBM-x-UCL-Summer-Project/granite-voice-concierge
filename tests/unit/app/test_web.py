@@ -26,12 +26,25 @@ import pytest
 from voice_concierge.app import web as web_module
 from voice_concierge.app.memory import MemoryManagerGateway
 from voice_concierge.app.pipeline import VoiceConciergePipeline
+from voice_concierge.app.reminders import ReminderTurnHandler
 from voice_concierge.app.serialization import app_pipeline_state_to_dict
 from voice_concierge.app.smoke import SmokeReasoningService, build_smoke_pipeline
 from voice_concierge.app.types import AppPipelineState
 from voice_concierge.app.web import PipelineWebServer
+from voice_concierge.app.web_features import (
+    WebFeatureServices,
+    WebReminderNotifier,
+    WebRoutineSessions,
+)
 from voice_concierge.memory import LocalMemoryConfig, build_memory_manager
+from voice_concierge.privacy.centre import PrivacyCentre
 from voice_concierge.reasoning.types import MemoryAction
+from voice_concierge.routines.adapter import RoutineCommandAdapter
+from voice_concierge.routines.types import Routine, RoutineStep
+from voice_concierge.scheduling.runner import ReminderRunner
+from voice_concierge.scheduling.service import ReminderService
+from voice_concierge.scheduling.store import ReminderStore
+from voice_concierge.scheduling.types import Reminder, Schedule
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 
@@ -41,15 +54,26 @@ class DeterministicEmbeddingService:
         return [1.0, 0.0, 0.0, 0.0]
 
 
+class DeterministicRoutineProvider:
+    def get_routine(self, request: str) -> Routine:
+        return Routine(
+            name="morning stretch",
+            steps=(RoutineStep("Stand comfortably."), RoutineStep("Reach up.")),
+        )
+
+
 @contextmanager
 def running_server(
     pipeline: VoiceConciergePipeline | None = None,
+    *,
+    features: WebFeatureServices | None = None,
 ) -> Iterator[str]:
     resolved_pipeline = pipeline or build_smoke_pipeline()
     server = PipelineWebServer(
         ("127.0.0.1", 0),
         resolved_pipeline,
         model_name="smoke model",
+        features=features,
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -59,6 +83,8 @@ def running_server(
     finally:
         server.shutdown()
         server.server_close()
+        if features is not None:
+            features.close()
         resolved_pipeline.close()
         thread.join(timeout=2)
 
@@ -91,6 +117,9 @@ def test_health_reports_pipeline_capabilities() -> None:
             "voice_input": False,
             "voice_output": False,
             "wake_word": False,
+            "reminders": False,
+            "guided_routines": False,
+            "privacy_centre": False,
         },
         "runtime": {"model": "smoke model"},
     }
@@ -104,8 +133,29 @@ def test_static_ui_disables_browser_cache() -> None:
 
     assert cache_control == "no-store"
     assert "./playback-policy.js?v=20260815" in html
-    assert "./app.js?v=20260815-2" in html
-    assert "./styles.css?v=20260812" in html
+    assert "./app.js?v=20260816" in html
+    assert "./styles.css?v=20260816" in html
+
+
+def test_browser_never_persists_conversation_state() -> None:
+    script = (REPOSITORY_ROOT / "web" / "app.js").read_text(encoding="utf-8")
+
+    assert "localStorage.setItem(LEGACY_PIPELINE_STORAGE_KEY" not in script
+    assert "localStorage.removeItem(LEGACY_PIPELINE_STORAGE_KEY)" in script
+    assert 'connection: "connecting"' in script
+    assert "The local assistant is disconnected. Reconnecting…" in script
+
+
+def test_unknown_api_get_returns_json_404() -> None:
+    with running_server() as base_url:
+        with pytest.raises(HTTPError) as error:
+            read_json(f"{base_url}/api/not-real")
+
+        assert error.value.code == 404
+        assert error.value.headers.get_content_type() == "application/json"
+        response = json.load(error.value)
+
+    assert response == {"error": {"code": "not_found", "message": "Unknown endpoint."}}
 
 
 def test_text_turn_runs_through_serialized_pipeline_contract() -> None:
@@ -184,6 +234,148 @@ def test_web_session_retains_confirmation_when_client_omits_state() -> None:
     assert proposal["state"]["pending_memory_action"] is not None
     assert confirmation["memory_operation"]["succeeded"] is True
     assert confirmation["state"]["pending_memory_action"] is None
+
+
+def test_new_conversation_clears_transient_state_only() -> None:
+    opener = build_opener(HTTPCookieProcessor(CookieJar()))
+    with running_server() as base_url:
+        read_json(
+            f"{base_url}/api/turn",
+            payload={"transcript": "hello"},
+            opener=opener,
+        )
+        reset = read_json(
+            f"{base_url}/api/session/reset",
+            payload={},
+            opener=opener,
+        )
+        next_turn = read_json(
+            f"{base_url}/api/turn",
+            payload={"transcript": "hello again"},
+            opener=opener,
+        )
+
+    assert reset["state"]["conversation_history"] == []
+    assert next_turn["state"]["conversation_history"] == [
+        {
+            "user_transcript": "hello again",
+            "assistant_response": "Fake pipeline response for: hello again",
+        }
+    ]
+
+
+def test_reminders_are_routed_and_managed_through_web_api(tmp_path: Path) -> None:
+    service = ReminderService(ReminderStore(tmp_path / "reminders.sqlite3"))
+    features = WebFeatureServices(
+        reminder_handler=ReminderTurnHandler(service),
+    )
+    opener = build_opener(HTTPCookieProcessor(CookieJar()))
+    with running_server(features=features) as base_url:
+        created = read_json(
+            f"{base_url}/api/turn",
+            payload={"transcript": "remind me in ten minutes to check the oven"},
+            opener=opener,
+        )
+        listed = read_json(f"{base_url}/api/reminders", opener=opener)
+        identifier = listed["reminders"][0]["id"]
+        edited = read_json(
+            f"{base_url}/api/reminders/edit",
+            payload={"id": identifier, "text": "check the bread"},
+            opener=opener,
+        )
+        cancelled = read_json(
+            f"{base_url}/api/reminders/cancel",
+            payload={"id": identifier},
+            opener=opener,
+        )
+
+    assert created["spoken_response"].startswith("I'll remind you")
+    assert edited["reminder"]["text"] == "check the bread"
+    assert cancelled == {"cancelled": True, "id": identifier}
+
+
+def test_guided_routine_keeps_its_place_in_web_session() -> None:
+    features = WebFeatureServices(
+        routine_sessions=WebRoutineSessions(
+            lambda: RoutineCommandAdapter(DeterministicRoutineProvider())
+        )
+    )
+    opener = build_opener(HTTPCookieProcessor(CookieJar()))
+    with running_server(features=features) as base_url:
+        started = read_json(
+            f"{base_url}/api/turn",
+            payload={"transcript": "guide me through a morning stretch"},
+            opener=opener,
+        )
+        advanced = read_json(
+            f"{base_url}/api/turn",
+            payload={"transcript": "next"},
+            opener=opener,
+        )
+
+    assert started["spoken_response"] == "Step 1 of 2. Stand comfortably."
+    assert advanced["spoken_response"] == "Step 2 of 2. Reach up."
+
+
+def test_due_reminder_is_acknowledged_only_when_browser_collects_it(
+    tmp_path: Path,
+) -> None:
+    store = ReminderStore(tmp_path / "reminders.sqlite3")
+    service = ReminderService(store)
+    stored = store.add(Reminder(text="check the oven", schedule=Schedule(1)), now=1)
+    notifier = WebReminderNotifier()
+    runner = ReminderRunner(service, notifier)
+    features = WebFeatureServices(
+        reminder_handler=ReminderTurnHandler(service),
+        reminder_notifier=notifier,
+        reminder_runner=runner,
+    )
+
+    assert runner.check_now() == ()
+    assert service.upcoming() == (stored,)
+    with running_server(features=features) as base_url:
+        delivered = read_json(f"{base_url}/api/reminders/due")
+        repeated = read_json(f"{base_url}/api/reminders/due")
+
+    assert delivered["notifications"][0]["announcement"] == (
+        "Reminder: check the oven."
+    )
+    assert repeated == {"notifications": []}
+
+
+def test_privacy_centre_exposes_edit_and_delete_controls(tmp_path: Path) -> None:
+    manager = build_memory_manager(
+        LocalMemoryConfig(
+            memory_db_path=tmp_path / "memories.sqlite3",
+            vector_db_path=tmp_path / "vectors.sqlite3",
+            embedding_dimension=4,
+        ),
+        embedding_service=DeterministicEmbeddingService(),
+    )
+    stored = manager.store_memory(
+        "User prefers tea.",
+        "short_term",
+        validate=False,
+        auto_classify=False,
+        auto_extract=False,
+    )
+    assert stored.memory_id is not None
+    features = WebFeatureServices(privacy_centre=PrivacyCentre(manager))
+    with running_server(features=features) as base_url:
+        report = read_json(f"{base_url}/api/privacy")
+        edited = read_json(
+            f"{base_url}/api/privacy/memories/edit",
+            payload={"id": stored.memory_id, "content": "User prefers coffee."},
+        )
+        deleted = read_json(
+            f"{base_url}/api/privacy/memories/delete",
+            payload={"id": stored.memory_id},
+        )
+
+    assert report["memory_count"] == 1
+    assert edited["memory"]["content"] == "User prefers coffee."
+    assert deleted == {"deleted": True, "id": stored.memory_id}
+    manager.close()
 
 
 def test_web_worker_thread_can_use_persistent_memory(tmp_path: Path) -> None:
@@ -294,7 +486,7 @@ def test_real_pipeline_reports_how_to_fix_missing_ollama(
     def missing_ollama(**_kwargs: object) -> None:
         raise ModuleNotFoundError("No module named 'ollama'", name="ollama")
 
-    monkeypatch.setattr(web_module, "build_web_pipeline", missing_ollama)
+    monkeypatch.setattr(web_module, "build_web_application", missing_ollama)
 
     with pytest.raises(SystemExit) as error:
         web_module.main([])

@@ -1,5 +1,8 @@
-const STORAGE_KEY = "granite-pipeline-state-v1";
+const LEGACY_PIPELINE_STORAGE_KEY = "granite-pipeline-state-v1";
 const SETTINGS_STORAGE_KEY = "granite-personal-settings-v1";
+const HEALTH_POLL_MILLISECONDS = 5000;
+const DUE_POLL_MILLISECONDS = 5000;
+const REQUEST_TIMEOUT_MILLISECONDS = 12000;
 const SILENT_WAV_URL = "data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQIAAAAAAA==";
 const { shouldAutoPlayResponse: playbackPolicyAllows } = window.GranitePlaybackPolicy;
 
@@ -33,7 +36,7 @@ const defaultState = {
 };
 
 const state = {
-  pipeline: loadState(),
+  pipeline: structuredClone(defaultState),
   settings: loadSettings(),
   settingsDraft: null,
   setupStep: 0,
@@ -43,7 +46,11 @@ const state = {
     voice_input: false,
     voice_output: false,
     wake_word: false,
+    reminders: false,
+    guided_routines: false,
+    privacy_centre: false,
   },
+  connection: "connecting",
   recorder: null,
   playback: null,
   responseAudioElement: null,
@@ -83,34 +90,21 @@ const elements = {
   sensitivityOutput: document.querySelector("#sensitivity-output"),
   previewVoice: document.querySelector("#preview-voice"),
   interactionLabel: document.querySelector("#interaction-label"),
+  localDataButton: document.querySelector("#local-data-button"),
+  localDataDialog: document.querySelector("#local-data-dialog"),
+  localDataClose: document.querySelector("#local-data-close"),
+  memorySummary: document.querySelector("#memory-summary"),
+  memoryList: document.querySelector("#memory-list"),
+  reminderSummary: document.querySelector("#reminder-summary"),
+  reminderList: document.querySelector("#reminder-list"),
+  storageList: document.querySelector("#storage-list"),
+  exportMemories: document.querySelector("#export-memories"),
+  forgetAllMemories: document.querySelector("#forget-all-memories"),
+  cancelAllReminders: document.querySelector("#cancel-all-reminders"),
+  newConversation: document.querySelector("#new-conversation-button"),
 };
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
-
-function loadState() {
-  try {
-    const persisted = window.localStorage.getItem(STORAGE_KEY);
-    if (!persisted) return structuredClone(defaultState);
-    const parsed = JSON.parse(persisted);
-    return {
-      ...structuredClone(defaultState),
-      ...parsed,
-      context: {
-        ...structuredClone(defaultState.context),
-        ...parsed.context,
-        accessibility: {
-          ...defaultState.context.accessibility,
-          ...parsed.context?.accessibility,
-        },
-      },
-      conversation_history: Array.isArray(parsed.conversation_history)
-        ? parsed.conversation_history
-        : [],
-    };
-  } catch {
-    return structuredClone(defaultState);
-  }
-}
 
 function loadSettings() {
   try {
@@ -124,7 +118,6 @@ function loadSettings() {
 }
 
 function saveState() {
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state.pipeline));
   renderState();
 }
 
@@ -371,6 +364,9 @@ function speakText(
 
 function renderState() {
   elements.modeSelect.value = state.pipeline.context.mode;
+  document.querySelectorAll("[data-capability]").forEach((element) => {
+    element.hidden = !state.capabilities[element.dataset.capability];
+  });
 }
 
 function setText(selector, value) {
@@ -436,8 +432,8 @@ function appendConfirmation(kind) {
   const isMode = kind === "mode";
   card.innerHTML = `
     <div>
-      <strong>${isMode ? "Mode change requires confirmation" : "Memory write requires confirmation"}</strong>
-      <span>${isMode ? "Driving mode changes response policy." : "No memory is written until you approve."}</span>
+      <strong>${isMode ? "Mode change requires confirmation" : "Memory change requires confirmation"}</strong>
+      <span>${isMode ? "Driving mode changes response policy." : "No memory is changed until you approve."}</span>
     </div>
     <div class="confirmation-actions">
       <button type="button" data-confirm="cancel">Cancel</button>
@@ -446,12 +442,27 @@ function appendConfirmation(kind) {
   elements.conversation.appendChild(card);
 }
 
-async function requestJson(path, payload) {
-  const response = await fetch(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+async function requestJson(path, payload = null, { method = "POST" } = {}) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MILLISECONDS);
+  let response;
+  try {
+    response = await fetch(path, {
+      method,
+      cache: "no-store",
+      credentials: "same-origin",
+      headers: payload === null ? {} : { "Content-Type": "application/json" },
+      body: payload === null ? undefined : JSON.stringify(payload),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    setConnectionStatus("offline");
+    throw new Error(error.name === "AbortError"
+      ? "The local assistant did not respond. Reconnecting…"
+      : "The local assistant is disconnected. Reconnecting…");
+  } finally {
+    window.clearTimeout(timeout);
+  }
   let body = null;
   try {
     body = await response.json();
@@ -459,9 +470,14 @@ async function requestJson(path, payload) {
     throw new Error("The local pipeline returned an unreadable response.");
   }
   if (!response.ok) {
-    throw new Error(body?.error?.message || `Pipeline request failed (${response.status}).`);
+    throw new Error(body?.error?.message || `Local request failed (${response.status}).`);
   }
+  setConnectionStatus("ready");
   return body;
+}
+
+function getJson(path) {
+  return requestJson(path, null, { method: "GET" });
 }
 
 function turnOptions() {
@@ -487,8 +503,11 @@ function requestAudioTurn(wavBase64) {
 }
 
 function confirmationKind(response) {
-  if (response.context.needs_confirmation) return "mode";
+  if (response.context?.needs_confirmation || response.state?.context?.pending_mode) {
+    return "mode";
+  }
   if (response.reasoning?.proposed_memory_action?.requires_confirmation) return "memory";
+  if (response.state?.pending_memory_action) return "memory";
   return null;
 }
 
@@ -745,12 +764,17 @@ function autoSizeInput() {
 function updateSendState() {
   elements.send.disabled = state.running
     || Boolean(state.recorder)
+    || state.connection !== "ready"
     || !state.capabilities.text_input
     || !elements.input.value.trim();
   elements.modeSelect.disabled = state.running
     || Boolean(state.recorder)
+    || state.connection !== "ready"
     || !state.capabilities.text_input;
-  elements.microphoneButton.disabled = state.running || !state.capabilities.voice_input;
+  elements.microphoneButton.disabled = state.running
+    || state.connection !== "ready"
+    || !state.capabilities.voice_input;
+  elements.newConversation.disabled = state.running || state.connection !== "ready";
 }
 
 function renderConversationHistory(response = null) {
@@ -793,15 +817,30 @@ function restoreConversationHistory() {
   renderConversationHistory();
 }
 
-async function connectPipeline() {
-  try {
-    const response = await fetch("/api/health", { cache: "no-store" });
-    if (!response.ok) throw new Error("not ready");
-    const health = await response.json();
-    state.capabilities = { ...state.capabilities, ...health.capabilities };
+function setConnectionStatus(status, health = null) {
+  const previous = state.connection;
+  state.connection = status;
+  elements.runtimeDot.classList.toggle("is-offline", status === "offline");
+  elements.runtimeDot.classList.toggle("is-connecting", status === "connecting");
+  if (status === "ready") {
     elements.runtimeLabel.textContent = "Local pipeline";
-    elements.runtimeModel.textContent = health.runtime?.model || "configured model";
-    elements.runtimeDot.classList.remove("is-offline");
+    if (health?.runtime?.model) elements.runtimeModel.textContent = health.runtime.model;
+  } else if (status === "connecting") {
+    elements.runtimeLabel.textContent = "Reconnecting…";
+  } else {
+    elements.runtimeLabel.textContent = "Assistant disconnected";
+    elements.runtimeModel.textContent = "retrying locally";
+  }
+  if (previous === "offline" && status === "ready") showToast("Local assistant reconnected");
+  updateSendState();
+}
+
+async function connectPipeline({ silent = false } = {}) {
+  if (!silent && state.connection !== "offline") setConnectionStatus("connecting");
+  try {
+    const health = await getJson("/api/health");
+    state.capabilities = { ...state.capabilities, ...health.capabilities };
+    setConnectionStatus("ready", health);
     elements.interactionLabel.textContent = state.capabilities.voice_input
       ? "Transcript or voice input"
       : "Transcript input · voice I/O disabled";
@@ -814,18 +853,211 @@ async function connectPipeline() {
     elements.microphoneButton.title = state.capabilities.voice_input
       ? "Start voice input"
       : "Run the server with --voice-io to enable voice input";
+    renderState();
   } catch {
     state.capabilities = {
       text_input: false,
       voice_input: false,
       voice_output: false,
       wake_word: false,
+      reminders: false,
+      guided_routines: false,
+      privacy_centre: false,
     };
-    elements.runtimeLabel.textContent = "Pipeline offline";
-    elements.runtimeModel.textContent = "unavailable";
-    elements.runtimeDot.classList.add("is-offline");
+    setConnectionStatus("offline");
   }
-  updateSendState();
+}
+
+async function startNewConversation() {
+  if (state.running) return;
+  elements.newConversation.disabled = true;
+  try {
+    const response = await requestJson("/api/session/reset", {});
+    state.pipeline = response.state || structuredClone(defaultState);
+    stopPlayback();
+    renderConversationHistory();
+    saveState();
+    showToast("Started a new private conversation");
+  } catch (error) {
+    appendPipelineError(error.message);
+  } finally {
+    updateSendState();
+  }
+}
+
+async function openLocalData() {
+  if (!elements.localDataDialog.open) elements.localDataDialog.showModal();
+  await refreshLocalData();
+}
+
+async function refreshLocalData() {
+  const privacyRequest = state.capabilities.privacy_centre
+    ? getJson("/api/privacy")
+    : Promise.resolve(null);
+  const reminderRequest = state.capabilities.reminders
+    ? getJson("/api/reminders")
+    : Promise.resolve(null);
+  const [privacy, reminders] = await Promise.allSettled([privacyRequest, reminderRequest]);
+
+  if (privacy.status === "fulfilled" && privacy.value) {
+    renderMemories(privacy.value);
+    renderStorage(privacy.value.locations || []);
+  } else {
+    const message = state.capabilities.privacy_centre
+      ? privacy.reason?.message || "Saved memories could not be loaded."
+      : "Memory is disabled. Restart the server with --memory to save and review memories.";
+    elements.memorySummary.textContent = message;
+    elements.memoryList.innerHTML = `<p class="data-empty">${escapeHtml(message)}</p>`;
+    elements.storageList.innerHTML = '<p class="data-empty">No persistent memory storage is active.</p>';
+    elements.exportMemories.disabled = true;
+    elements.forgetAllMemories.disabled = true;
+  }
+
+  if (reminders.status === "fulfilled" && reminders.value) {
+    renderReminders(reminders.value.reminders || []);
+  } else {
+    const message = state.capabilities.reminders
+      ? reminders.reason?.message || "Reminders could not be loaded."
+      : "Reminders are disabled for this run.";
+    elements.reminderSummary.textContent = message;
+    elements.reminderList.innerHTML = `<p class="data-empty">${escapeHtml(message)}</p>`;
+    elements.cancelAllReminders.disabled = true;
+  }
+}
+
+function renderMemories(report) {
+  const memories = Array.isArray(report.memories) ? report.memories : [];
+  elements.memorySummary.textContent = memories.length === 1
+    ? "1 memory is saved on this device."
+    : `${memories.length} memories are saved on this device.`;
+  elements.exportMemories.disabled = false;
+  elements.forgetAllMemories.disabled = memories.length === 0;
+  if (!memories.length) {
+    elements.memoryList.innerHTML = '<p class="data-empty">No memories are saved.</p>';
+    return;
+  }
+  elements.memoryList.innerHTML = memories.map((memory) => `
+    <article class="data-item" data-memory-id="${memory.id}">
+      <div class="data-item-main">
+        <div>
+          <p class="data-item-content">${escapeHtml(memory.content)}</p>
+          <p class="data-item-meta">${escapeHtml(memory.layer_description || memory.layer)} · ${escapeHtml(memory.created || "Saved locally")}</p>
+        </div>
+        <div class="data-item-actions">
+          <button type="button" data-memory-action="edit">Edit</button>
+          <button class="delete-action" type="button" data-memory-action="delete">Delete</button>
+        </div>
+      </div>
+    </article>`).join("");
+}
+
+function renderReminders(reminders) {
+  elements.reminderSummary.textContent = reminders.length === 1
+    ? "1 reminder is scheduled."
+    : `${reminders.length} reminders are scheduled.`;
+  elements.cancelAllReminders.disabled = reminders.length === 0;
+  if (!reminders.length) {
+    elements.reminderList.innerHTML = '<p class="data-empty">No reminders are scheduled.</p>';
+    return;
+  }
+  elements.reminderList.innerHTML = reminders.map((reminder) => `
+    <article class="data-item" data-reminder-id="${reminder.id}" data-reminder-text="${escapeHtml(reminder.text)}">
+      <div class="data-item-main">
+        <div>
+          <p class="data-item-content">${escapeHtml(reminder.text)}</p>
+          <p class="data-item-meta">${escapeHtml(reminder.due)}${reminder.recurrence !== "once" ? ` · Repeats ${escapeHtml(reminder.recurrence)}` : ""}</p>
+        </div>
+        <div class="data-item-actions">
+          <button type="button" data-reminder-action="edit">Edit text</button>
+          <button type="button" data-reminder-action="snooze">Snooze 10 min</button>
+          <button class="delete-action" type="button" data-reminder-action="cancel">Cancel</button>
+        </div>
+      </div>
+    </article>`).join("");
+}
+
+function renderStorage(locations) {
+  if (!locations.length) {
+    elements.storageList.innerHTML = '<p class="data-empty">No persistent memory storage is active.</p>';
+    return;
+  }
+  elements.storageList.innerHTML = locations.map((location) => `
+    <div class="storage-item">
+      <strong>${escapeHtml(location.name)}</strong><span>${escapeHtml(location.size)}</span>
+      <code>${escapeHtml(location.path)}</code>
+    </div>`).join("");
+}
+
+async function handleMemoryAction(button) {
+  const item = button.closest("[data-memory-id]");
+  const identifier = Number(item.dataset.memoryId);
+  const action = button.dataset.memoryAction;
+  if (action === "edit") {
+    const current = item.querySelector(".data-item-content").textContent;
+    const content = window.prompt("Correct this saved memory:", current);
+    if (content === null || !content.trim() || content.trim() === current) return;
+    await requestJson("/api/privacy/memories/edit", { id: identifier, content });
+    showToast("Memory updated");
+  } else {
+    if (!window.confirm("Delete this saved memory? This cannot be undone.")) return;
+    await requestJson("/api/privacy/memories/delete", { id: identifier });
+    showToast("Memory deleted");
+  }
+  await refreshLocalData();
+}
+
+async function handleReminderAction(button) {
+  const item = button.closest("[data-reminder-id]");
+  const identifier = Number(item.dataset.reminderId);
+  const action = button.dataset.reminderAction;
+  if (action === "edit") {
+    const text = window.prompt("Change the reminder text:", item.dataset.reminderText);
+    if (text === null || !text.trim() || text.trim() === item.dataset.reminderText) return;
+    await requestJson("/api/reminders/edit", { id: identifier, text });
+    showToast("Reminder updated");
+  } else if (action === "snooze") {
+    await requestJson("/api/reminders/snooze", { id: identifier, seconds: 600 });
+    showToast("Reminder snoozed for 10 minutes");
+  } else {
+    if (!window.confirm("Cancel this reminder?")) return;
+    await requestJson("/api/reminders/cancel", { id: identifier });
+    showToast("Reminder cancelled");
+  }
+  await refreshLocalData();
+}
+
+async function exportMemories() {
+  try {
+    const data = await getJson("/api/privacy/export");
+    const url = URL.createObjectURL(new Blob(
+      [JSON.stringify(data, null, 2)],
+      { type: "application/json" },
+    ));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `granite-memories-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    showToast("Memory export downloaded");
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+async function pollDueReminders() {
+  if (state.connection !== "ready" || !state.capabilities.reminders) return;
+  try {
+    const result = await getJson("/api/reminders/due");
+    for (const reminder of result.notifications || []) {
+      appendMessage("assistant", reminder.announcement);
+      speakText(reminder.announcement);
+    }
+    if ((result.notifications || []).length && elements.localDataDialog.open) {
+      await refreshLocalData();
+    }
+  } catch {
+    // Connection state and retry messaging are handled by requestJson.
+  }
 }
 
 function showToast(message) {
@@ -896,6 +1128,45 @@ elements.themeButton.addEventListener("click", () => {
   window.localStorage.setItem("granite-theme", next);
 });
 
+elements.newConversation.addEventListener("click", startNewConversation);
+elements.localDataButton.addEventListener("click", openLocalData);
+elements.localDataClose.addEventListener("click", () => elements.localDataDialog.close());
+elements.localDataDialog.addEventListener("click", async (event) => {
+  const memoryAction = event.target.closest("[data-memory-action]");
+  const reminderAction = event.target.closest("[data-reminder-action]");
+  if (!memoryAction && !reminderAction) return;
+  try {
+    if (memoryAction) await handleMemoryAction(memoryAction);
+    else await handleReminderAction(reminderAction);
+  } catch (error) {
+    showToast(error.message);
+  }
+});
+elements.exportMemories.addEventListener("click", exportMemories);
+elements.forgetAllMemories.addEventListener("click", async () => {
+  if (!window.confirm("Forget every saved memory? This cannot be undone.")) return;
+  try {
+    const result = await requestJson("/api/privacy/memories/forget-all", {
+      confirmation: "DELETE",
+    });
+    showToast(`${result.deleted} ${result.deleted === 1 ? "memory" : "memories"} deleted`);
+    await refreshLocalData();
+  } catch (error) {
+    showToast(error.message);
+  }
+});
+elements.cancelAllReminders.addEventListener("click", async () => {
+  if (!window.confirm("Cancel every scheduled reminder and timer?")) return;
+  try {
+    const result = await requestJson("/api/reminders/cancel-all", {
+      confirmation: "DELETE",
+    });
+    showToast(`${result.cancelled} ${result.cancelled === 1 ? "reminder" : "reminders"} cancelled`);
+    await refreshLocalData();
+  } catch (error) {
+    showToast(error.message);
+  }
+});
 elements.settingsButton.addEventListener("click", openSetup);
 elements.setupClose.addEventListener("click", closeSetup);
 elements.setupSkip.addEventListener("click", closeSetup);
@@ -927,9 +1198,12 @@ elements.setupDialog.addEventListener("cancel", () => {
 });
 
 document.documentElement.dataset.theme = window.localStorage.getItem("granite-theme") || "light";
+window.localStorage.removeItem(LEGACY_PIPELINE_STORAGE_KEY);
 applyPersonalSettings();
 restoreConversationHistory();
 connectPipeline();
+window.setInterval(() => connectPipeline({ silent: true }), HEALTH_POLL_MILLISECONDS);
+window.setInterval(pollDueReminders, DUE_POLL_MILLISECONDS);
 if (!state.settings.setup_complete) {
   window.setTimeout(openSetup, 180);
 }

@@ -83,8 +83,12 @@ python -m voice_concierge.app.web --voice-io --memory \
 ```
 
 The browser supports push-to-talk capture and automatic Piper response
-playback. Continuous wake-word listening remains available through the live
-runner.
+playback. Reminder and guided-routine requests are routed to their local
+services, due reminders appear in the open browser, and **Local data** exposes
+memory review/edit/delete/export plus reminder edit/snooze/cancel controls.
+**New conversation** clears only transient conversation context; approved
+memories and scheduled reminders remain. Continuous wake-word listening remains
+available through the live runner.
 
 ## Reminders and timers
 

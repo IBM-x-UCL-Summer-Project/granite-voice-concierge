@@ -257,6 +257,53 @@ class TestCancelling:
 
 
 @pytest.mark.unit
+class TestEditing:
+    def test_edit_changes_text_and_due_time_without_losing_recurrence(
+        self, service
+    ) -> None:
+        active, _ = service
+        reminder = active.create_from_speech("remind me to stretch every 20 minutes")
+        assert reminder is not None and reminder.identifier is not None
+
+        updated = active.edit(
+            reminder.identifier,
+            text="drink water",
+            due_at=NOW + 3_600,
+        )
+
+        assert updated.text == "drink water"
+        assert updated.due_at == NOW + 3_600
+        assert updated.schedule.recurrence == "interval"
+        assert active.upcoming() == (updated,)
+
+    def test_snooze_moves_the_next_occurrence_from_now(self, service) -> None:
+        active, clock = service
+        reminder = active.create_from_speech("remind me to stretch in 10 minutes")
+        assert reminder is not None and reminder.identifier is not None
+        clock.advance(300)
+
+        snoozed = active.snooze(reminder.identifier, 900)
+
+        assert snoozed.due_at == NOW + 1_200
+
+    def test_edit_rejects_missing_and_blank_reminders(self, service) -> None:
+        active, _ = service
+
+        with pytest.raises(SchedulingError, match="No pending reminder"):
+            active.edit(999, text="drink water")
+        reminder = active.create_from_speech("remind me to stretch in 10 minutes")
+        assert reminder is not None and reminder.identifier is not None
+        with pytest.raises(SchedulingError, match="needs something"):
+            active.edit(reminder.identifier, text="   ")
+
+    def test_snooze_requires_a_positive_duration(self, service) -> None:
+        active, _ = service
+
+        with pytest.raises(SchedulingError, match="positive"):
+            active.snooze(1, 0)
+
+
+@pytest.mark.unit
 class TestDelivery:
     def test_due_reminders_are_announced_and_acknowledged(self, service) -> None:
         active, clock = service

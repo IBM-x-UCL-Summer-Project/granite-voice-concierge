@@ -44,6 +44,18 @@ Persistent local memory remains opt-in:
 python -m voice_concierge.app.web --voice-io --memory
 ```
 
+Reminders and guided routines are enabled by default for the real pipeline.
+Use `--no-reminders` or `--no-guided-routines` to disable either service. The
+same chat composer accepts reminder and routine requests. Due reminders are
+acknowledged only when an open browser polls and receives them, so closing the
+browser does not silently consume a due reminder.
+
+The **Local data** panel lists scheduled reminders and, when `--memory` is
+enabled, saved memories and their local storage locations. Memories can be
+edited, deleted, exported, or forgotten together; reminders can be edited,
+snoozed, or cancelled. Destructive bulk actions require an explicit browser
+confirmation and a separate API confirmation token.
+
 For privacy-conscious diagnostic logs in both the terminal and an ignored local
 file:
 
@@ -67,9 +79,10 @@ python -m voice_concierge.app.web --demo
 The server exposes same-origin `POST /api/turn` and `POST /api/audio` endpoints.
 Both paths run through `VoiceConciergePipeline`, return the same serialized turn
 result, and use complete pipeline state held by the server for the browser's
-HTTP-only session. The browser caches response state for rendering but never
-supplies authoritative context, history, confirmation, or memory actions. It
-does not apply response-shaping or error fallback rules itself.
+HTTP-only session. The browser keeps response state in memory only for rendering
+and never writes conversation history to browser storage or supplies
+authoritative context, confirmation, or memory actions. It does not apply
+response-shaping or error fallback rules itself.
 
 Text turns send:
 
@@ -91,7 +104,22 @@ safety limit.
 The server ignores any posted `state` field for backwards compatibility. This
 prevents browser storage or a manually crafted request from manufacturing a
 pending memory mutation and then confirming it. Session state is intentionally
-in-process and is cleared when the local server restarts.
+in-process and is cleared when the local server restarts. **New conversation**
+calls `POST /api/session/reset` to clear it immediately without deleting saved
+memories or reminders.
+
+Additional same-origin endpoints support the connected local features:
+
+- `GET /api/health`, `/api/privacy`, `/api/privacy/export`, `/api/reminders`,
+  and `/api/reminders/due`;
+- memory edit/delete/forget-all under `POST /api/privacy/memories/...`;
+- reminder create/edit/snooze/cancel/cancel-all under
+  `POST /api/reminders/...`.
+
+Unknown `/api/` routes return JSON errors for both GET and POST requests. The
+browser checks health every five seconds, disables turn controls while
+disconnected, shows a reconnecting state, and restores them when the local
+server returns.
 
 Audio turns send a browser-recorded mono PCM WAV as `wav_base64`; the backend
 decodes it and calls `pipeline.process_audio(...)`. Playback stays browser-
@@ -112,4 +140,6 @@ On the first visit, the UI opens a four-step setup for:
 The browser asks for microphone permission only when **Find devices** is
 selected. Preferences are saved under `granite-personal-settings-v1` in browser
 local storage and restored on later visits. The **Personalise** control in the
-header reopens the setup at any time.
+header reopens the setup at any time. These device preferences and the theme are
+the only application values stored in browser local storage; transcripts and
+conversation state are not persisted there.
