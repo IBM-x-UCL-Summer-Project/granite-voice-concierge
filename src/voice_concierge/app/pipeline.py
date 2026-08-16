@@ -234,10 +234,76 @@ class VoiceConciergePipeline:
                 options=options,
             )
 
-        return self._process_app_transcript(
-            _to_app_transcript(transcript_result),
+        return self.process_transcript_result(
+            transcript_result,
             current_state,
-            options=options,
+            synthesize=synthesize,
+            play=play,
+            response_length=response_length,
+        )
+
+    def process_transcript_result(
+        self,
+        transcript: TranscriptResult,
+        state: AppPipelineState | None = None,
+        *,
+        synthesize: bool = False,
+        play: bool = False,
+        response_length: Verbosity | None = None,
+    ) -> AppTurnResult:
+        """Process an already-transcribed audio turn without loading STT again."""
+
+        current_state = self._with_response_length(
+            self._bounded_state(state or AppPipelineState()),
+            response_length,
+        )
+        return self._process_app_transcript(
+            _to_app_transcript(transcript),
+            current_state,
+            options=AppTurnOptions(
+                synthesize=synthesize,
+                play=play,
+                response_length=response_length,
+            ),
+        )
+
+    def process_local_response(
+        self,
+        transcript: str,
+        spoken_response: str,
+        state: AppPipelineState | None = None,
+        *,
+        synthesize: bool = False,
+        play: bool = False,
+        response_length: Verbosity | None = None,
+    ) -> AppTurnResult:
+        """Record a deterministic local-feature response in the normal turn shape."""
+
+        current_state = self._with_response_length(
+            self._bounded_state(state or AppPipelineState()),
+            response_length,
+        )
+        app_transcript = AppTranscript(text=transcript.strip())
+        context_decision = _decision_for_state(current_state.context)
+        next_state = replace(
+            current_state,
+            last_spoken_response=spoken_response,
+            conversation_history=self._record_conversation(
+                current_state,
+                app_transcript,
+                spoken_response,
+            ),
+        )
+        return self._finalize_result(
+            state=next_state,
+            spoken_response=spoken_response,
+            context_decision=context_decision,
+            transcript=app_transcript,
+            options=AppTurnOptions(
+                synthesize=synthesize,
+                play=play,
+                response_length=response_length,
+            ),
         )
 
     def _process_app_transcript(
@@ -451,12 +517,7 @@ class VoiceConciergePipeline:
             outcome=outcome,
         )
         already_stored = outcome.status is MemoryOperationStatus.DUPLICATE_FOUND
-        if outcome.succeeded:
-            spoken_response = _MEMORY_SAVED_RESPONSE
-        elif already_stored:
-            spoken_response = _MEMORY_ALREADY_SAVED_RESPONSE
-        else:
-            spoken_response = _MEMORY_FAILED_RESPONSE
+        spoken_response = _memory_operation_response(pending_action, outcome)
         errors: tuple[AppTurnError, ...] = (
             () if outcome.succeeded or already_stored else ("memory_action_failed",)
         )
@@ -653,6 +714,50 @@ def _to_app_transcript(transcript: TranscriptResult) -> AppTranscript:
 
 def _normalize(text: str) -> str:
     return " ".join(text.strip().split())
+
+
+def _memory_operation_response(
+    action: MemoryAction,
+    outcome: MemoryOperationOutcome,
+) -> str:
+    """Describe the operation that actually ran instead of calling every write save."""
+
+    list_operation = action.list_operation
+    if outcome.status is MemoryOperationStatus.DUPLICATE_FOUND:
+        return _MEMORY_ALREADY_SAVED_RESPONSE
+    if not outcome.succeeded:
+        if action.action == "delete":
+            return "I couldn't delete that memory yet."
+        if list_operation is not None:
+            return f"I couldn't change your {list_operation.list_name} list yet."
+        if action.action == "update":
+            return "I couldn't update that memory yet."
+        return _MEMORY_FAILED_RESPONSE
+
+    if list_operation is not None:
+        label = f"{list_operation.list_name} list"
+        items = _spoken_items(list_operation.items)
+        if outcome.status is MemoryOperationStatus.NO_CHANGES:
+            if list_operation.operation == "remove_items":
+                return f"I couldn't find {items} on your {label}."
+            return f"Your {label} already contains {items}."
+        if list_operation.operation == "remove_items":
+            return f"I've removed {items} from your {label}."
+        return f"I've added {items} to your {label}."
+
+    if action.action == "delete":
+        return "I've deleted that memory."
+    if action.action == "update":
+        return "I've updated that memory."
+    return _MEMORY_SAVED_RESPONSE
+
+
+def _spoken_items(items: tuple[str, ...]) -> str:
+    if len(items) == 1:
+        return items[0]
+    if len(items) == 2:
+        return f"{items[0]} and {items[1]}"
+    return f"{', '.join(items[:-1])}, and {items[-1]}"
 
 
 def _memory_action_scope(

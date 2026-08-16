@@ -25,7 +25,7 @@ from voice_concierge.memory_contracts import (
 Confidence = Literal["low", "medium", "high"]
 MemoryActionKind = Literal["store", "delete", "update"]
 StructuredListName = Literal["shopping", "task"]
-StructuredListOperationKind = Literal["add_items"]
+StructuredListOperationKind = Literal["add_items", "remove_items"]
 InformationSource = Literal[
     "none",
     "user_input",
@@ -229,7 +229,7 @@ class StructuredListOperation:
     def __post_init__(self) -> None:
         if self.list_name not in {"shopping", "task"}:
             raise ValueError(f"Unsupported structured list: {self.list_name!r}.")
-        if self.operation != "add_items":
+        if self.operation not in {"add_items", "remove_items"}:
             raise ValueError(
                 f"Unsupported structured-list operation: {self.operation!r}."
             )

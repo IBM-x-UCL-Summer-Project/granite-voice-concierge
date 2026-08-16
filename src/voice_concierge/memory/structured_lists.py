@@ -11,6 +11,8 @@ from voice_concierge.memory_contracts import StructuredListName
 def create_structured_list(mutation: StructuredListMutation) -> str:
     """Render the first persisted value for a typed list operation."""
 
+    if mutation.operation != "add_items":
+        raise ValueError("A structured list can only be created by adding items.")
     return _render(_list_label(mutation), mutation.items)
 
 
@@ -23,6 +25,13 @@ def apply_structured_list_operation(
     existing_items = parse_structured_list(existing_content, mutation)
     if existing_items is None:
         return None
+
+    if mutation.operation == "remove_items":
+        removed = {item.casefold() for item in mutation.items}
+        remaining = tuple(
+            item for item in existing_items if item.casefold() not in removed
+        )
+        return _render(_list_label(mutation), remaining)
 
     combined = list(existing_items)
     seen = {item.casefold() for item in existing_items}
@@ -47,6 +56,8 @@ def parse_structured_list(
 
     item_text = normalized[len(prefix) :].strip().removesuffix(".")
     if not item_text:
+        return ()
+    if item_text.casefold() == "empty":
         return ()
     items = tuple(item.strip() for item in item_text.split(",") if item.strip())
     if not items:
@@ -104,7 +115,8 @@ def _split_legacy_items(value: str) -> tuple[str, ...] | None:
 
 
 def _render(label: str, items: tuple[str, ...]) -> str:
-    return f"{label}: {', '.join(items)}."
+    rendered_items = ", ".join(items) if items else "empty"
+    return f"{label}: {rendered_items}."
 
 
 def _list_label(mutation: StructuredListMutation) -> str:

@@ -23,6 +23,14 @@ def _shopping_add(*items: str) -> StructuredListMutation:
     )
 
 
+def _shopping_remove(*items: str) -> StructuredListMutation:
+    return StructuredListMutation(
+        list_name="shopping",
+        items=items,
+        operation="remove_items",
+    )
+
+
 def test_create_structured_list_renders_canonical_content() -> None:
     operation = _shopping_add("milk", "bread")
 
@@ -45,6 +53,30 @@ def test_apply_structured_list_operation_rejects_wrong_list_content() -> None:
     operation = _shopping_add("milk")
 
     assert apply_structured_list_operation("Task list: call Mum.", operation) is None
+
+
+def test_remove_items_preserves_the_rest_of_the_list() -> None:
+    assert (
+        apply_structured_list_operation(
+            "Shopping list: milk, wholemeal bread, eggs.",
+            _shopping_remove("Wholemeal bread"),
+        )
+        == "Shopping list: milk, eggs."
+    )
+
+
+def test_removing_the_last_item_keeps_an_empty_canonical_list() -> None:
+    operation = _shopping_remove("milk")
+
+    updated = apply_structured_list_operation("Shopping list: milk.", operation)
+
+    assert updated == "Shopping list: empty."
+    assert parse_structured_list(updated, operation) == ()
+
+
+def test_remove_operation_cannot_create_a_missing_list() -> None:
+    with pytest.raises(ValueError, match="only be created by adding"):
+        create_structured_list(_shopping_remove("milk"))
 
 
 def test_parse_structured_list_supports_an_empty_canonical_list() -> None:

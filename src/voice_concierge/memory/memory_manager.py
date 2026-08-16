@@ -738,6 +738,8 @@ class MemoryManager:
             and target.memory_id is None
             and target.expected_revision is None
         ):
+            if mutation.operation == "remove_items":
+                return MemoryOperationOutcome(MemoryOperationStatus.MEMORY_NOT_FOUND)
             return self.store_memory(
                 content=create_structured_list(mutation),
                 layer="feedback",

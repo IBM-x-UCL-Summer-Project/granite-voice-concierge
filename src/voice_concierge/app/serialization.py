@@ -426,7 +426,7 @@ def _structured_list_operation_from_dict(
             operation=_required_literal(
                 operation_payload,
                 "operation",
-                {"add_items"},
+                {"add_items", "remove_items"},
                 "structured-list operation",
             ),
             items=tuple(items),

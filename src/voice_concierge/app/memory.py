@@ -270,6 +270,7 @@ def _memory_command_from_action(
             mutation=StructuredListMutation(
                 list_name=action.list_operation.list_name,
                 items=action.list_operation.items,
+                operation=action.list_operation.operation,
             ),
         )
 

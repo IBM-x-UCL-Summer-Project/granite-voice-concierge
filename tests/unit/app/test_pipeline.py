@@ -527,6 +527,69 @@ def test_pending_memory_confirmation_applies_and_clears_action() -> None:
     assert memory.apply_calls == [{"action": action, "scope": "personal_relevant"}]
 
 
+@pytest.mark.parametrize(
+    ("action", "status", "expected"),
+    (
+        (
+            MemoryAction(
+                action="update",
+                content="User prefers peppermint tea.",
+                rationale="User corrected a memory.",
+                target=MemoryTarget(memory_id=4, expected_revision=2),
+            ),
+            MemoryOperationStatus.UPDATED_SUCCESSFULLY,
+            "I've updated that memory.",
+        ),
+        (
+            MemoryAction(
+                action="delete",
+                content="User prefers tea.",
+                rationale="User asked to forget it.",
+                target=MemoryTarget(memory_id=4, expected_revision=2),
+            ),
+            MemoryOperationStatus.DELETED_SUCCESSFULLY,
+            "I've deleted that memory.",
+        ),
+        (
+            MemoryAction(
+                action="update",
+                content=None,
+                rationale="User removed a list item.",
+                target=MemoryTarget(
+                    memory_id=9,
+                    memory_key="list:shopping",
+                    expected_revision=3,
+                ),
+                list_operation=StructuredListOperation(
+                    list_name="shopping",
+                    operation="remove_items",
+                    items=("bread",),
+                ),
+            ),
+            MemoryOperationStatus.UPDATED_SUCCESSFULLY,
+            "I've removed bread from your shopping list.",
+        ),
+    ),
+)
+def test_confirmation_copy_names_the_completed_operation(
+    action, status, expected
+) -> None:
+    state = AppPipelineState(
+        pending_memory_action=action,
+        pending_memory_scope=(
+            "list_relevant"
+            if action.list_operation is not None
+            else "personal_relevant"
+        ),
+    )
+    memory = FakeMemory(apply_result=MemoryOperationOutcome(status))
+    pipeline = VoiceConciergePipeline(FakeReasoning(), memory=memory)
+
+    result = pipeline.process_transcript("yes", state)
+
+    assert result.spoken_response == expected
+
+
 def test_duplicate_confirmation_is_an_idempotent_completed_request() -> None:
     action = MemoryAction(
         action="store",

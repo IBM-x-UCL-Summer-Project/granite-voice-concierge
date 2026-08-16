@@ -28,6 +28,17 @@ def _add_items(
     )
 
 
+def _remove_items(
+    list_name: str,
+    *items: str,
+) -> StructuredListOperation:
+    return StructuredListOperation(
+        list_name=list_name,
+        operation="remove_items",
+        items=items,
+    )
+
+
 def test_policy_guard_adds_accessibility_preference_action() -> None:
     response = apply_reasoning_policy_guards(
         ReasoningRequest(transcript="Keep answers short."),
@@ -516,6 +527,208 @@ def test_policy_guard_handles_explicit_shopping_list_outside_shopping_mode() -> 
         memory_key="list:shopping"
     )
     assert response.metadata["policy_guard"] == "shopping_list_add_confirmation"
+
+
+def test_policy_guard_turns_item_removal_into_a_typed_list_update() -> None:
+    shopping_list = memory_reference(
+        "Shopping list: milk, wholemeal bread.",
+        memory_id=41,
+        revision=3,
+        layer="feedback",
+        memory_key="list:shopping",
+        topic="shopping",
+    )
+
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(
+            transcript="Remove wholemeal bread from my shopping list.",
+            memories=(shopping_list,),
+        ),
+        ReasoningResponse(
+            spoken_response="I can delete that memory.",
+            needs_confirmation=True,
+            proposed_memory_action=MemoryAction(
+                action="delete",
+                content="shopping list",
+                rationale="Model proposed deleting the whole record.",
+                target=shopping_list.mutation_target(),
+            ),
+        ),
+    )
+
+    assert response.spoken_response == (
+        "I can remove wholemeal bread from your shopping list. Please confirm "
+        "before I change it."
+    )
+    assert response.proposed_memory_action == MemoryAction(
+        action="update",
+        content=None,
+        rationale="User asked to remove items from the shopping list.",
+        target=shopping_list.mutation_target(),
+        list_operation=_remove_items("shopping", "wholemeal bread"),
+    )
+
+
+def test_policy_guard_does_not_offer_item_removal_without_a_saved_list() -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(
+            transcript="Remove milk from my shopping list.",
+        ),
+        ReasoningResponse(spoken_response="Done."),
+    )
+
+    assert response.spoken_response == "I do not have a saved shopping list yet."
+    assert response.proposed_memory_action is None
+    assert response.needs_confirmation is False
+
+
+def test_policy_guard_honours_explicit_do_not_save_language() -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(
+            transcript=(
+                "For this conversation only, my neighbour is called Alice. "
+                "Do not save this."
+            ),
+        ),
+        ReasoningResponse(
+            spoken_response="I can save that.",
+            needs_confirmation=True,
+            proposed_memory_action=MemoryAction(
+                action="store",
+                content="The user's neighbour is called Alice.",
+                rationale="Model proposed persistence.",
+            ),
+            required_information_source="user_input",
+            information_evidence=(user_input_evidence("my neighbour is called Alice"),),
+        ),
+    )
+
+    assert response.spoken_response == (
+        "Understood. I'll use that only in this conversation and won't save it "
+        "to memory."
+    )
+    assert response.needs_confirmation is False
+    assert response.proposed_memory_action is None
+    assert response.metadata["policy_guard"] == "explicit_do_not_save"
+
+
+def test_policy_guard_targets_the_retrieved_memory_for_a_correction() -> None:
+    saved = memory_reference(
+        "My preferred evening drink is chamomile tea.",
+        memory_id=77,
+        revision=2,
+        layer="profile",
+    )
+
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(
+            transcript=(
+                "Actually, my preferred evening drink is peppermint tea, "
+                "not chamomile tea."
+            ),
+            memories=(saved,),
+        ),
+        ReasoningResponse(spoken_response="Peppermint tea."),
+    )
+
+    assert response.spoken_response == (
+        "I can update that saved memory. Please confirm before I change it."
+    )
+    assert response.proposed_memory_action == MemoryAction(
+        action="update",
+        content=("my preferred evening drink is peppermint tea, not chamomile tea"),
+        rationale="User explicitly corrected a previously saved memory.",
+        target=saved.mutation_target(),
+    )
+
+
+def test_policy_guard_refuses_ambiguous_memory_correction() -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(
+            transcript="Actually I prefer coffee, not tea.",
+            memories=(
+                memory_reference("I prefer tea.", memory_id=7),
+                memory_reference("I drink coffee in the morning.", memory_id=8),
+            ),
+        ),
+        ReasoningResponse(
+            spoken_response="I'll update that.",
+            proposed_memory_action=MemoryAction(
+                action="update",
+                content="I prefer coffee.",
+                rationale="Ambiguous model-selected target.",
+                target=MemoryTarget(memory_id=7),
+            ),
+        ),
+    )
+
+    assert response.proposed_memory_action is None
+    assert response.needs_confirmation is False
+    assert response.metadata["policy_guard"] == "stable_memory_target_required"
+
+
+def test_policy_guard_does_not_treat_plain_actually_as_memory_correction() -> None:
+    original = ReasoningResponse(spoken_response="Pasta sounds good.")
+
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(
+            transcript="Actually, let's have pasta tonight.",
+            memories=(memory_reference("I like soup.", memory_id=7),),
+        ),
+        original,
+    )
+
+    assert response is original
+
+
+def test_policy_guard_repairs_live_label_with_exact_conversation_evidence() -> None:
+    summary = "Previous turn: User transcript: The blue mug is in the cupboard."
+    original = ReasoningResponse(
+        spoken_response="The blue mug is in the cupboard.",
+        required_information_source="runtime_live",
+        information_evidence=(
+            InformationEvidence(
+                source="conversation_summary",
+                quote="The blue mug is in the cupboard.",
+            ),
+        ),
+        freshness_requirement="current",
+    )
+
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(
+            transcript="Where is the blue mug?",
+            conversation_summary=summary,
+        ),
+        original,
+    )
+
+    assert response.spoken_response == "The blue mug is in the cupboard."
+    assert response.required_information_source == "local_context"
+    assert response.freshness_requirement == "not_required"
+    assert response.metadata["policy_normalization"] == "non_live_request"
+
+
+def test_policy_guard_attaches_exact_summary_to_local_context_response() -> None:
+    summary = "User: My delivery is delayed.\nAssistant: That sounds frustrating."
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(
+            transcript="What did I just tell you?",
+            conversation_summary=summary,
+        ),
+        ReasoningResponse(
+            spoken_response="You said your delivery is delayed.",
+            required_information_source="local_context",
+        ),
+    )
+
+    assert response.spoken_response == "You said your delivery is delayed."
+    assert response.information_evidence == (
+        InformationEvidence(source="conversation_summary", quote=summary),
+    )
+    assert response.metadata["policy_normalization"] == (
+        "conversation_evidence_attached"
+    )
 
 
 def test_policy_guard_accepts_the_list_shorthand_in_shopping_mode() -> None:

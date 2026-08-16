@@ -177,7 +177,7 @@ class _StructuredListOperation(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
 
     list_name: Literal["shopping", "task"]
-    operation: Literal["add_items"]
+    operation: Literal["add_items", "remove_items"]
     items: tuple[str, ...] = Field(min_length=1)
 
     @field_validator("items")
