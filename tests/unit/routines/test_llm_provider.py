@@ -27,6 +27,29 @@ def test_malformed_output_returns_none() -> None:
 
 
 @pytest.mark.unit
+def test_splits_numbered_steps_flattened_onto_one_line() -> None:
+    engine = _fake(
+        "1. Crack the eggs. 2. Whisk them together. 3. Cook them gently."
+    )
+
+    routine = LLMRoutineProvider(engine).get_routine("make scrambled eggs")
+
+    assert routine is not None
+    assert [step.text for step in routine.steps] == [
+        "Crack the eggs.",
+        "Whisk them together.",
+        "Cook them gently.",
+    ]
+
+
+@pytest.mark.unit
+def test_nonsequential_numbered_output_is_rejected() -> None:
+    engine = _fake("1. First step. 3. A disconnected fragment.")
+
+    assert LLMRoutineProvider(engine).get_routine("make tea") is None
+
+
+@pytest.mark.unit
 def test_raised_backend_error_becomes_routine_error() -> None:
     class _Boom:
         def generate(self, request):

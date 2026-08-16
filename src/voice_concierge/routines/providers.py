@@ -51,23 +51,37 @@ def provider_candidates(provider: RoutineProvider, request: str) -> tuple[Routin
     return (routine,) if routine is not None else ()
 
 
-#: A numbered step line: "1. text", "2) text", tolerant of leading space.
-_STEP_LINE = re.compile(r"^\s*\d+[.)]\s+(.+?)\s*$")
+#: A numbered step marker. Models usually place one marker on each line, but
+#: smaller local models sometimes flatten the whole list onto one line.
+_STEP_MARKER = re.compile(r"(?:^|(?<=\s))(\d+)[.)]\s+")
 
 #: Default word budget for a recipe (the reasoning default of 60 is too short).
 DEFAULT_ROUTINE_MAX_WORDS: int = 400
 
 
 def parse_numbered_steps(name: str, text: str) -> Routine | None:
-    """Parse a numbered list into a Routine, or None if no steps are found."""
-    steps = [
-        RoutineStep(match.group(1))
-        for line in text.splitlines()
-        if (match := _STEP_LINE.match(line))
-    ]
-    if not steps:
+    """Parse a numbered list into a Routine, including flattened model output."""
+
+    matches = tuple(_STEP_MARKER.finditer(text))
+    if not matches:
         return None
-    return Routine(name=name, steps=tuple(steps))
+
+    numbers = tuple(int(match.group(1)) for match in matches)
+    if numbers != tuple(range(numbers[0], numbers[0] + len(numbers))):
+        return None
+
+    step_texts = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        content = text[match.end() : end].strip()
+        if content:
+            step_texts.append(content)
+    if not step_texts:
+        return None
+    return Routine(
+        name=name,
+        steps=tuple(RoutineStep(content) for content in step_texts),
+    )
 
 
 class LLMRoutineProvider:
