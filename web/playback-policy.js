@@ -16,5 +16,21 @@
     return interactionMode === "voice_first" || interactionMode === "wake_word";
   }
 
-  root.GranitePlaybackPolicy = Object.freeze({ shouldAutoPlayResponse });
+  function isPlaybackBargeInCommand(command) {
+    return command === "stop" || command === "pause" || command === "resume";
+  }
+
+  function shouldListenForVoiceCommands({
+    capabilityEnabled,
+    routineActive,
+    playbackActive,
+  }) {
+    return Boolean(capabilityEnabled && (routineActive || playbackActive));
+  }
+
+  root.GranitePlaybackPolicy = Object.freeze({
+    isPlaybackBargeInCommand,
+    shouldAutoPlayResponse,
+    shouldListenForVoiceCommands,
+  });
 }(globalThis));

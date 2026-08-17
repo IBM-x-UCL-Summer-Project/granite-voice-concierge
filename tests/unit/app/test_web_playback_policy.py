@@ -58,3 +58,84 @@ process.stdout.write(JSON.stringify(result));
 
     assert completed.returncode == 0, completed.stderr
     assert json.loads(completed.stdout) is expected
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    (
+        ("stop", True),
+        ("pause", True),
+        ("resume", True),
+        ("continue", False),
+        ("next", False),
+        (None, False),
+    ),
+)
+def test_global_barge_in_only_accepts_playback_commands(
+    command: str | None,
+    expected: bool,
+) -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required to execute the browser policy.")
+    script = """
+require(process.argv[1]);
+const command = JSON.parse(process.argv[2]);
+const result = globalThis.GranitePlaybackPolicy.isPlaybackBargeInCommand(command);
+process.stdout.write(JSON.stringify(result));
+"""
+
+    completed = subprocess.run(
+        [node, "-e", script, str(POLICY_PATH), json.dumps(command)],
+        cwd=REPOSITORY_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) is expected
+
+
+@pytest.mark.parametrize(
+    ("values", "expected"),
+    (
+        ({"capabilityEnabled": True, "routineActive": True}, True),
+        ({"capabilityEnabled": True, "playbackActive": True}, True),
+        ({"capabilityEnabled": True}, False),
+        (
+            {
+                "capabilityEnabled": False,
+                "routineActive": True,
+                "playbackActive": True,
+            },
+            False,
+        ),
+    ),
+)
+def test_voice_command_listener_lifecycle(
+    values: dict[str, object],
+    expected: bool,
+) -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required to execute the browser policy.")
+    script = """
+require(process.argv[1]);
+const input = JSON.parse(process.argv[2]);
+const result = globalThis.GranitePlaybackPolicy.shouldListenForVoiceCommands(input);
+process.stdout.write(JSON.stringify(result));
+"""
+
+    completed = subprocess.run(
+        [node, "-e", script, str(POLICY_PATH), json.dumps(values)],
+        cwd=REPOSITORY_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) is expected

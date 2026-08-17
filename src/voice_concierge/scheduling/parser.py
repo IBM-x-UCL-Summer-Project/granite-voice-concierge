@@ -30,7 +30,16 @@ REMINDER_TRIGGERS: tuple[str, ...] = (
 )
 
 _SCHEDULE_REQUEST = re.compile(
-    r"\b(?:set|start)\s+(?:a|the)\s+(?:timer|reminder)\b",
+    r"\b(?:set|start)\s+(?:(?:a|the)\s+)?(?:timer|reminder)\b",
+    flags=re.IGNORECASE,
+)
+
+# Whisper can turn the short phrase "set a timer" into "it says a timer".
+# Only repair that leading phrase when the rest still contains an explicit
+# duration, which keeps an ordinary sentence such as "it says a timer is on"
+# out of the scheduling fast path.
+_MISHEARD_TIMER_REQUEST = re.compile(
+    r"^(?:please\s+)?it\s+(?:says|said|sets)\s+(?=(?:a|the)\s+timer\b)",
     flags=re.IGNORECASE,
 )
 
@@ -83,8 +92,8 @@ _TIMER_WORDS = re.compile(r"\b(timer|alarm)\b")
 #: Words stripped from the front of the remembered text once parsed.
 _LEAD_IN = re.compile(
     r"^(?:please\s+)?(?:can you\s+)?(?:remind me(?:\s+to)?"
-    r"|(?:set|start)\s+(?:a|the)\s+timer(?:\s+for)?"
-    r"|(?:set|start)\s+(?:a|the)\s+reminder(?:\s+to|\s+for)?"
+    r"|(?:set|start)\s+(?:(?:a|the)\s+)?timer(?:\s+for)?"
+    r"|(?:set|start)\s+(?:(?:a|the)\s+)?reminder(?:\s+to|\s+for)?"
     r"|reminder(?:\s+to|\s+for)?|wake me(?:\s+up)?"
     r"|let me know(?:\s+to)?)\s*",
     flags=re.IGNORECASE,
@@ -109,9 +118,10 @@ _LEADING_SCHEDULE = re.compile(
 
 def is_reminder_request(transcript: str) -> bool:
     """True when the transcript is asking for a reminder or timer."""
-    lowered = transcript.casefold()
+    normalized = _normalize_spoken_request(transcript)
+    lowered = normalized.casefold()
     return any(trigger in lowered for trigger in REMINDER_TRIGGERS) or bool(
-        _SCHEDULE_REQUEST.search(transcript)
+        _SCHEDULE_REQUEST.search(normalized)
     )
 
 
@@ -140,7 +150,7 @@ def parse_reminder(transcript: str, *, now: int) -> Reminder | None:
     `now` is passed in rather than read from the clock so that "in ten minutes"
     is a pure function of its inputs and can be tested exactly.
     """
-    text = transcript.strip()
+    text = _normalize_spoken_request(transcript)
     if not text:
         return None
     lowered = text.casefold()
@@ -155,6 +165,15 @@ def parse_reminder(transcript: str, *, now: int) -> Reminder | None:
         return None  # no time found: the caller asks rather than guessing
     kind = "timer" if _TIMER_WORDS.search(lowered) else "reminder"
     return Reminder(text=_subject(text), schedule=schedule, kind=kind)
+
+
+def _normalize_spoken_request(transcript: str) -> str:
+    """Repair a narrowly scoped speech-recognition error in timer requests."""
+
+    text = transcript.strip()
+    if _MISHEARD_TIMER_REQUEST.search(text) and parse_duration(text) is not None:
+        return _MISHEARD_TIMER_REQUEST.sub("set ", text, count=1)
+    return text
 
 
 def _parse_relative(text: str, now: int) -> Schedule | None:

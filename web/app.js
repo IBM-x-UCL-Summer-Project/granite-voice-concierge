@@ -5,11 +5,15 @@ const DUE_POLL_MILLISECONDS = 5000;
 const REQUEST_TIMEOUT_MILLISECONDS = 130000;
 const WAKE_WORD_REQUEST_TIMEOUT_MILLISECONDS = 5000;
 const WAKE_WORD_FRAME_SAMPLES = 3200;
-const ROUTINE_COMMAND_FRAME_SAMPLES = 3200;
+const VOICE_COMMAND_FRAME_SAMPLES = 3200;
 const WAKE_COMMAND_START_TIMEOUT_MILLISECONDS = 7000;
 const WAKE_COMMAND_ARM_DELAY_MILLISECONDS = 350;
 const SILENT_WAV_URL = "data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQIAAAAAAA==";
-const { shouldAutoPlayResponse: playbackPolicyAllows } = window.GranitePlaybackPolicy;
+const {
+  isPlaybackBargeInCommand,
+  shouldAutoPlayResponse: playbackPolicyAllows,
+  shouldListenForVoiceCommands,
+} = window.GranitePlaybackPolicy;
 const {
   prepareWakeCapture,
   speechCanStart,
@@ -66,6 +70,7 @@ const state = {
     reminders: false,
     guided_routines: false,
     routine_barge_in: false,
+    playback_barge_in: false,
     privacy_centre: false,
   },
   connection: "connecting",
@@ -93,18 +98,19 @@ const state = {
     awaiting_choice: false,
     awaiting_confirmation: false,
     auto_advance_seconds: 6,
+    autoTimer: null,
+    confirmationTimer: null,
+    confirmationReady: false,
+    autoGeneration: 0,
+  },
+  voiceCommands: {
     serverActive: false,
     sendingFrame: false,
     frameChunks: [],
     frameSampleCount: 0,
     audio: null,
-    autoTimer: null,
-    confirmationTimer: null,
-    confirmationReady: false,
     generation: 0,
-    autoGeneration: 0,
     starting: false,
-    playbackPaused: false,
   },
   playback: null,
   responseAudioElement: null,
@@ -519,19 +525,45 @@ function effectiveSpeechRate(settings, includePipelinePace = true) {
   return Number(settings.speech_rate) * pipelineFactor;
 }
 
-function speakText(
+async function speakText(
   text,
   settings = state.settings,
   includePipelinePace = settings === state.settings,
+  button = null,
 ) {
   if (!("speechSynthesis" in window)) {
     showToast("Voice preview is unavailable in this browser");
     return;
   }
-  stopPlayback();
+  stopPlayback({ preserveVoiceCommands: true });
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.rate = effectiveSpeechRate(settings, includePipelinePace);
   utterance.volume = Number(settings.volume) / 100;
+  let resolveCompletion;
+  const completion = new Promise((resolve) => {
+    resolveCompletion = resolve;
+  });
+  const playback = {
+    kind: "speech",
+    utterance,
+    button,
+    completion,
+    resolveCompletion,
+    paused: false,
+  };
+  state.playback = playback;
+  if (button) {
+    button.classList.add("is-playing");
+    button.setAttribute("aria-label", "Stop assistant response");
+    button.lastChild.textContent = " Stop response";
+  }
+  utterance.onend = () => {
+    if (state.playback === playback) stopPlayback();
+  };
+  utterance.onerror = () => {
+    if (state.playback === playback) stopPlayback();
+  };
+  await startVoiceCommandListening();
   window.speechSynthesis.speak(utterance);
 }
 
@@ -737,20 +769,68 @@ function confirmationKind(response) {
   return null;
 }
 
-function stopPlayback() {
-  window.speechSynthesis?.cancel();
-  if (!state.playback) return;
+function stopPlayback({ preserveVoiceCommands = false } = {}) {
   const playback = state.playback;
+  if (!playback) {
+    window.speechSynthesis?.cancel();
+    return;
+  }
   state.playback = null;
-  state.routine.playbackPaused = false;
-  playback.audio.onended = null;
-  playback.audio.onerror = null;
-  playback.audio.pause();
-  playback.audio.currentTime = 0;
+  if (playback.kind === "speech") {
+    playback.utterance.onend = null;
+    playback.utterance.onerror = null;
+    window.speechSynthesis?.cancel();
+  } else {
+    playback.audio.onended = null;
+    playback.audio.onerror = null;
+    playback.audio.pause();
+    playback.audio.currentTime = 0;
+    URL.revokeObjectURL(playback.url);
+  }
   playback.button?.classList.remove("is-playing");
-  if (playback.button) playback.button.lastChild.textContent = " Play response";
-  URL.revokeObjectURL(playback.url);
+  if (playback.button) {
+    playback.button.setAttribute("aria-label", "Play assistant response");
+    playback.button.lastChild.textContent = state.capabilities.voice_output
+      ? " Play response"
+      : " Play browser voice";
+  }
   playback.resolveCompletion?.();
+  if (!preserveVoiceCommands) syncVoiceCommandListening();
+}
+
+function pausePlayback() {
+  const playback = state.playback;
+  if (!playback || playback.paused) return false;
+  if (playback.kind === "speech") window.speechSynthesis.pause();
+  else playback.audio.pause();
+  playback.paused = true;
+  if (playback.button) {
+    playback.button.setAttribute("aria-label", "Resume assistant response");
+    playback.button.lastChild.textContent = " Resume response";
+  }
+  return true;
+}
+
+async function resumePlayback() {
+  const playback = state.playback;
+  if (!playback || !playback.paused) return false;
+  if (playback.kind === "speech") {
+    window.speechSynthesis.resume();
+  } else {
+    try {
+      await playback.audio.play();
+    } catch {
+      stopPlayback();
+      showToast("Playback could not resume; choose Play response to retry");
+      return false;
+    }
+  }
+  playback.paused = false;
+  if (playback.button) {
+    playback.button.setAttribute("aria-label", "Stop assistant response");
+    playback.button.lastChild.textContent = " Stop response";
+  }
+  return true;
 }
 
 function unlockResponsePlayback() {
@@ -777,16 +857,20 @@ function unlockResponsePlayback() {
 
 async function playResponse(button) {
   if (state.playback?.button === button) {
+    if (state.playback.paused) {
+      await resumePlayback();
+      return;
+    }
     stopPlayback();
     return;
   }
-  stopPlayback();
+  stopPlayback({ preserveVoiceCommands: true });
   const audioPayload = button.responseAudio;
   if (!audioPayload?.wav_base64) {
     showToast(state.capabilities.voice_output
       ? "Piper audio is unavailable for this response; using the browser voice"
       : "Using the browser voice; start the server with --voice-io for Piper");
-    speakText(button.fallbackText || "");
+    await speakText(button.fallbackText || "", state.settings, true, button);
     return;
   }
 
@@ -810,12 +894,27 @@ async function playResponse(button) {
   const completion = new Promise((resolve) => {
     resolveCompletion = resolve;
   });
-  state.playback = { audio, button, url, completion, resolveCompletion };
+  const playback = {
+    kind: "audio",
+    audio,
+    button,
+    url,
+    completion,
+    resolveCompletion,
+    paused: false,
+  };
+  state.playback = playback;
   button.classList.add("is-playing");
+  button.setAttribute("aria-label", "Stop assistant response");
   button.lastChild.textContent = " Stop response";
-  audio.onended = stopPlayback;
-  audio.onerror = stopPlayback;
+  audio.onended = () => {
+    if (state.playback === playback) stopPlayback();
+  };
+  audio.onerror = () => {
+    if (state.playback === playback) stopPlayback();
+  };
   try {
+    await startVoiceCommandListening();
     await audio.play();
   } catch {
     stopPlayback();
@@ -971,14 +1070,28 @@ function encodePcmBase64(samples) {
   return window.btoa(binary);
 }
 
-function resetRoutineCommandFrameBuffer() {
-  state.routine.frameChunks = [];
-  state.routine.frameSampleCount = 0;
+function voiceCommandCapabilityEnabled() {
+  return Boolean(
+    state.capabilities.playback_barge_in || state.capabilities.routine_barge_in,
+  );
 }
 
-function tearDownRoutineCommandAudio() {
-  const audio = state.routine.audio;
-  state.routine.audio = null;
+function voiceCommandContextActive() {
+  return shouldListenForVoiceCommands({
+    capabilityEnabled: voiceCommandCapabilityEnabled(),
+    routineActive: state.routine.active,
+    playbackActive: Boolean(state.playback),
+  });
+}
+
+function resetVoiceCommandFrameBuffer() {
+  state.voiceCommands.frameChunks = [];
+  state.voiceCommands.frameSampleCount = 0;
+}
+
+function tearDownVoiceCommandAudio() {
+  const audio = state.voiceCommands.audio;
+  state.voiceCommands.audio = null;
   if (!audio) return;
   audio.processor.onaudioprocess = null;
   for (const node of [audio.processor, audio.source, audio.silentGain]) {
@@ -993,13 +1106,12 @@ function tearDownRoutineCommandAudio() {
   if (closing?.catch) closing.catch(() => {});
 }
 
-async function startRoutineCommandListening() {
-  if (!state.routine.active
-      || state.routine.serverActive
-      || state.routine.starting
-      || !state.capabilities.routine_barge_in) return;
-  state.routine.starting = true;
-  const generation = state.routine.generation;
+async function startVoiceCommandListening() {
+  if (!voiceCommandContextActive()
+      || state.voiceCommands.serverActive
+      || state.voiceCommands.starting) return;
+  state.voiceCommands.starting = true;
+  const generation = state.voiceCommands.generation;
   try {
     await requestJson(
       "/api/routine-command/start",
@@ -1009,13 +1121,14 @@ async function startRoutineCommandListening() {
         timeoutMilliseconds: WAKE_WORD_REQUEST_TIMEOUT_MILLISECONDS,
       },
     );
-    state.routine.serverActive = true;
-    resetRoutineCommandFrameBuffer();
-    if (!state.routine.active || generation !== state.routine.generation) {
-      stopRoutineCommandListening();
+    state.voiceCommands.serverActive = true;
+    resetVoiceCommandFrameBuffer();
+    if (!voiceCommandContextActive()
+        || generation !== state.voiceCommands.generation) {
+      stopVoiceCommandListening();
       return;
     }
-    if (state.wakeWord.active || state.routine.audio) return;
+    if (state.wakeWord.active || state.voiceCommands.audio) return;
 
     const selectedDevice = state.settings.microphone_id === "default"
       ? {}
@@ -1028,8 +1141,11 @@ async function startRoutineCommandListening() {
         autoGainControl: true,
       },
     });
-    if (!state.routine.active || state.wakeWord.active) {
+    if (!voiceCommandContextActive()
+        || generation !== state.voiceCommands.generation
+        || state.wakeWord.active) {
       stream.getTracks().forEach((track) => track.stop());
+      if (!voiceCommandContextActive()) stopVoiceCommandListening();
       return;
     }
     const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -1042,7 +1158,7 @@ async function startRoutineCommandListening() {
     source.connect(processor);
     processor.connect(silentGain);
     silentGain.connect(context.destination);
-    state.routine.audio = {
+    state.voiceCommands.audio = {
       stream,
       context,
       source,
@@ -1056,27 +1172,27 @@ async function startRoutineCommandListening() {
         context.sampleRate,
         16000,
       );
-      enqueueRoutineCommandFrame(samples);
+      enqueueVoiceCommandFrame(samples);
     };
   } catch (error) {
-    state.routine.serverActive = false;
-    tearDownRoutineCommandAudio();
+    state.voiceCommands.serverActive = false;
+    tearDownVoiceCommandAudio();
     showToast(error.name === "NotAllowedError"
-      ? "Microphone access is needed for hands-free routine controls"
-      : "Hands-free routine controls are unavailable; typed controls still work");
+      ? "Microphone access is needed for hands-free playback controls"
+      : "Hands-free playback controls are unavailable");
   } finally {
-    state.routine.starting = false;
+    state.voiceCommands.starting = false;
   }
 }
 
-function stopRoutineCommandListening() {
-  state.routine.generation += 1;
-  state.routine.sendingFrame = false;
-  state.routine.playbackPaused = false;
-  resetRoutineCommandFrameBuffer();
-  tearDownRoutineCommandAudio();
-  if (!state.routine.serverActive) return;
-  state.routine.serverActive = false;
+function stopVoiceCommandListening() {
+  const wasServerActive = state.voiceCommands.serverActive;
+  state.voiceCommands.generation += 1;
+  state.voiceCommands.sendingFrame = false;
+  resetVoiceCommandFrameBuffer();
+  tearDownVoiceCommandAudio();
+  state.voiceCommands.serverActive = false;
+  if (!wasServerActive) return;
   requestJson(
     "/api/routine-command/stop",
     {},
@@ -1089,28 +1205,33 @@ function stopRoutineCommandListening() {
   });
 }
 
-function enqueueRoutineCommandFrame(samples) {
-  if (!state.routine.active || !state.routine.serverActive) return;
+function syncVoiceCommandListening() {
+  if (voiceCommandContextActive()) startVoiceCommandListening();
+  else stopVoiceCommandListening();
+}
+
+function enqueueVoiceCommandFrame(samples) {
+  if (!voiceCommandContextActive() || !state.voiceCommands.serverActive) return;
   if (state.routine.awaiting_confirmation
       && !state.routine.confirmationReady
       && !state.playback) return;
-  state.routine.frameChunks.push(samples);
-  state.routine.frameSampleCount += samples.length;
-  flushRoutineCommandFrame();
+  state.voiceCommands.frameChunks.push(samples);
+  state.voiceCommands.frameSampleCount += samples.length;
+  flushVoiceCommandFrame();
 }
 
-async function flushRoutineCommandFrame() {
-  if (!state.routine.active
-      || !state.routine.serverActive
-      || state.routine.sendingFrame
-      || state.routine.frameSampleCount < ROUTINE_COMMAND_FRAME_SAMPLES) return;
-  const samples = mergeAudioChunks(state.routine.frameChunks);
-  const generation = state.routine.generation;
-  const frame = samples.slice(0, ROUTINE_COMMAND_FRAME_SAMPLES);
-  const remainder = samples.slice(ROUTINE_COMMAND_FRAME_SAMPLES);
-  state.routine.frameChunks = remainder.length ? [remainder] : [];
-  state.routine.frameSampleCount = remainder.length;
-  state.routine.sendingFrame = true;
+async function flushVoiceCommandFrame() {
+  if (!voiceCommandContextActive()
+      || !state.voiceCommands.serverActive
+      || state.voiceCommands.sendingFrame
+      || state.voiceCommands.frameSampleCount < VOICE_COMMAND_FRAME_SAMPLES) return;
+  const samples = mergeAudioChunks(state.voiceCommands.frameChunks);
+  const generation = state.voiceCommands.generation;
+  const frame = samples.slice(0, VOICE_COMMAND_FRAME_SAMPLES);
+  const remainder = samples.slice(VOICE_COMMAND_FRAME_SAMPLES);
+  state.voiceCommands.frameChunks = remainder.length ? [remainder] : [];
+  state.voiceCommands.frameSampleCount = remainder.length;
+  state.voiceCommands.sendingFrame = true;
   try {
     const result = await requestJson(
       "/api/routine-command/frame",
@@ -1121,21 +1242,35 @@ async function flushRoutineCommandFrame() {
       },
     );
     if (result.command
-        && state.routine.active
-        && generation === state.routine.generation) {
-      await handleRoutineVoiceCommand(result.command);
+        && voiceCommandContextActive()
+        && generation === state.voiceCommands.generation) {
+      if (state.routine.active) await handleRoutineVoiceCommand(result.command);
+      else await handlePlaybackVoiceCommand(result.command);
     }
   } catch {
-    if (generation === state.routine.generation) {
-      state.routine.serverActive = false;
-      tearDownRoutineCommandAudio();
-      showToast("Hands-free routine controls stopped; typed controls still work");
+    if (generation === state.voiceCommands.generation) {
+      state.voiceCommands.serverActive = false;
+      tearDownVoiceCommandAudio();
+      showToast("Hands-free playback controls stopped");
     }
   } finally {
-    if (generation === state.routine.generation) {
-      state.routine.sendingFrame = false;
-      flushRoutineCommandFrame();
+    if (generation === state.voiceCommands.generation) {
+      state.voiceCommands.sendingFrame = false;
+      flushVoiceCommandFrame();
     }
+  }
+}
+
+async function handlePlaybackVoiceCommand(command) {
+  if (!state.playback || !isPlaybackBargeInCommand(command)) return;
+  resetVoiceCommandFrameBuffer();
+  if (command === "stop") {
+    stopPlayback();
+    showToast("Response stopped");
+  } else if (command === "pause") {
+    if (pausePlayback()) showToast("Response paused — say Continue to resume");
+  } else if (await resumePlayback()) {
+    showToast("Response resumed");
   }
 }
 
@@ -1147,7 +1282,7 @@ async function handleRoutineVoiceCommand(command) {
   } else if (["yes", "no"].includes(command)) {
     return;
   }
-  resetRoutineCommandFrameBuffer();
+  resetVoiceCommandFrameBuffer();
   cancelRoutineAutoAdvance();
   stopPlayback();
   const deadline = performance.now() + 1500;
@@ -1193,7 +1328,7 @@ function syncRoutineState(routine) {
     showToast(`Routine speech rate ${state.settings.speech_rate.toFixed(1)}×`);
   }
   if (state.routine.active) {
-    startRoutineCommandListening();
+    syncVoiceCommandListening();
     if (state.wakeWord.active) {
       setWakeWordView("routine", {
         title: "Guided routine",
@@ -1203,8 +1338,8 @@ function syncRoutineState(routine) {
         detail: "Routine control words work without saying the wake word.",
       });
     }
-  } else if (previousActive || state.routine.serverActive) {
-    stopRoutineCommandListening();
+  } else if (previousActive || state.voiceCommands.serverActive) {
+    syncVoiceCommandListening();
     if (state.wakeWord.active) {
       resumeWakeWordListening("Routine finished. Listening for “Hey Jarvis”.");
     }
@@ -1242,7 +1377,7 @@ function armRoutineConfirmationWindow() {
     state.routine.confirmationTimer = window.setTimeout(async () => {
       state.routine.confirmationTimer = null;
       if (generation !== state.routine.autoGeneration) return;
-      resetRoutineCommandFrameBuffer();
+      resetVoiceCommandFrameBuffer();
       try {
         await requestJson(
           "/api/routine-command/reset",
@@ -1352,7 +1487,7 @@ async function startWakeWordMode() {
       sourceRate: context.sampleRate,
     };
     state.wakeWord.active = true;
-    if (state.routine.active) tearDownRoutineCommandAudio();
+    tearDownVoiceCommandAudio();
     state.wakeWord.noiseFloor = 0.004;
     processor.onaudioprocess = handleWakeWordAudio;
     await requestJson(
@@ -1393,9 +1528,9 @@ function stopWakeWordMode() {
   state.wakeWord.commandChunks = [];
   if (elements.wakeWordScreen.open) elements.wakeWordScreen.close();
   tearDownWakeWordAudio();
-  if (state.routine.active) {
-    state.routine.serverActive = false;
-    startRoutineCommandListening();
+  if (voiceCommandContextActive()) {
+    state.voiceCommands.serverActive = false;
+    startVoiceCommandListening();
   }
   if (wasActive) {
     requestJson(
@@ -1420,8 +1555,11 @@ function handleWakeWordAudio(event) {
     state.wakeWord.audio.sourceRate,
     16000,
   );
-  if (state.routine.active) enqueueRoutineCommandFrame(samples);
-  if (state.wakeWord.phase === "waiting") enqueueWakeWordFrame(samples);
+  const commandControlActive = voiceCommandContextActive();
+  if (commandControlActive) enqueueVoiceCommandFrame(samples);
+  if (state.wakeWord.phase === "waiting" && !commandControlActive) {
+    enqueueWakeWordFrame(samples);
+  }
   else if (state.wakeWord.phase === "listening") collectWakeCommand(samples);
 }
 
@@ -1954,6 +2092,7 @@ async function connectPipeline({ silent = false } = {}) {
       reminders: false,
       guided_routines: false,
       routine_barge_in: false,
+      playback_barge_in: false,
       privacy_centre: false,
     };
     setConnectionStatus("offline");
@@ -2461,5 +2600,5 @@ window.setInterval(() => connectPipeline({ silent: true }), HEALTH_POLL_MILLISEC
 window.setInterval(pollDueReminders, DUE_POLL_MILLISECONDS);
 window.addEventListener("pagehide", () => {
   tearDownWakeWordAudio();
-  tearDownRoutineCommandAudio();
+  tearDownVoiceCommandAudio();
 });

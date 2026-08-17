@@ -332,6 +332,9 @@ class PipelineWebServer(ThreadingHTTPServer):
             "routine_barge_in": (
                 routine_command_service is not None and voice_input_enabled
             ),
+            "playback_barge_in": (
+                routine_command_service is not None and voice_input_enabled
+            ),
             **self.features.capabilities,
         }
         self.runtime = {
@@ -798,8 +801,8 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
         service = self.server.routine_command_service
         if service is None:
             self._feature_unavailable(
-                "routine_barge_in",
-                "Hands-free routine controls require local voice I/O.",
+                "playback_barge_in",
+                "Hands-free playback controls require local voice I/O.",
             )
             return
 

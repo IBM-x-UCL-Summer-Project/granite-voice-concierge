@@ -150,6 +150,7 @@ def test_health_reports_pipeline_capabilities() -> None:
             "voice_output": False,
             "wake_word": False,
             "routine_barge_in": False,
+            "playback_barge_in": False,
             "reminders": False,
             "guided_routines": False,
             "privacy_centre": False,
@@ -193,9 +194,9 @@ def test_static_ui_disables_browser_cache() -> None:
             cache_control = response.headers.get("Cache-Control")
 
     assert cache_control == "no-store"
-    assert "./playback-policy.js?v=20260815" in html
+    assert "./playback-policy.js?v=20260817" in html
     assert "./wake-capture-policy.js?v=20260817" in html
-    assert "./app.js?v=20260817-4" in html
+    assert "./app.js?v=20260817-5" in html
     assert "./styles.css?v=20260817-4" in html
 
 
@@ -246,6 +247,17 @@ def test_browser_exposes_waiting_wake_mode_and_private_chat_export() -> None:
     )
     assert 'link.href = "/api/session/export"' in script
     assert "localStorage.setItem(LEGACY_PIPELINE_STORAGE_KEY" not in script
+
+
+def test_browser_applies_stop_pause_and_resume_to_every_spoken_response() -> None:
+    script = (REPOSITORY_ROOT / "web" / "app.js").read_text(encoding="utf-8")
+
+    assert "async function handlePlaybackVoiceCommand(command)" in script
+    assert 'command === "stop"' in script
+    assert 'command === "pause"' in script
+    assert "await resumePlayback()" in script
+    assert "playbackActive: Boolean(state.playback)" in script
+    assert "if (commandControlActive) enqueueVoiceCommandFrame(samples)" in script
 
 
 def test_startup_warmup_exposes_loading_before_ready() -> None:
@@ -392,7 +404,7 @@ def test_browser_routine_command_api_returns_local_spotter_event() -> None:
     assert started == {"active": True, "sample_rate": 16000}
     assert result == {"command": "next", "phrase": "next", "confidence": 0.9}
     assert reset == {"active": True}
-    assert spotter.reset_count == 1
+    assert spotter.reset_count == 2
     assert stopped == {"active": False}
 
 
@@ -617,6 +629,33 @@ def test_natural_timer_wording_is_stored_and_visible_in_local_data(
         listed = read_json(f"{base_url}/api/reminders", opener=opener)
 
     assert created["spoken_response"] == "Timer set for 5 minutes."
+    assert len(listed["reminders"]) == 1
+    assert listed["reminders"][0]["kind"] == "timer"
+
+
+def test_misheard_timer_request_is_stored_instead_of_reaching_reasoning(
+    tmp_path: Path,
+) -> None:
+    service = ReminderService(ReminderStore(tmp_path / "reminders.sqlite3"))
+    features = WebFeatureServices(
+        reminder_handler=ReminderTurnHandler(service),
+    )
+    opener = build_opener(HTTPCookieProcessor(CookieJar()))
+    with running_server(features=features) as base_url:
+        created = read_json(
+            f"{base_url}/api/turn",
+            payload={"transcript": "It says a timer for three minutes."},
+            opener=opener,
+        )
+        checked = read_json(
+            f"{base_url}/api/turn",
+            payload={"transcript": "Do I have a timer set?"},
+            opener=opener,
+        )
+        listed = read_json(f"{base_url}/api/reminders", opener=opener)
+
+    assert created["spoken_response"] == "Timer set for 3 minutes."
+    assert checked["spoken_response"].startswith("You have one: three minutes,")
     assert len(listed["reminders"]) == 1
     assert listed["reminders"][0]["kind"] == "timer"
 

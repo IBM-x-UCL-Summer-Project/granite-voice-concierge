@@ -36,7 +36,7 @@ def test_active_session_receives_spotted_command() -> None:
     assert spotter.frames == [b"\0\0"]
 
 
-def test_new_session_replaces_old_routine_command_stream() -> None:
+def test_new_session_reuses_warm_spotter_but_rejects_old_session() -> None:
     built: list[FakeSpotter] = []
 
     def factory() -> FakeSpotter:
@@ -51,7 +51,8 @@ def test_new_session_replaces_old_routine_command_stream() -> None:
     with pytest.raises(RoutineCommandSessionInactiveError):
         service.process_pcm("session-a", b"\0\0")
 
-    assert len(built) == 2
+    assert len(built) == 1
+    assert built[0].reset_count == 1
     assert service.stop("session-a") is False
     assert service.stop("session-b") is True
 
