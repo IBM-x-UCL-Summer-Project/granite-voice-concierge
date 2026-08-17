@@ -77,6 +77,7 @@ const state = {
     voiceDetected: false,
     followUp: false,
     noiseFloor: 0.004,
+    timing: null,
   },
   routine: {
     active: false,
@@ -1415,6 +1416,7 @@ async function flushWakeWordFrame() {
   state.wakeWord.frameChunks = remainder.length ? [remainder] : [];
   state.wakeWord.frameSampleCount = remainder.length;
   state.wakeWord.sendingFrame = true;
+  const frameSentAt = performance.now();
   try {
     const result = await requestJson(
       "/api/wake-word/frame",
@@ -1424,9 +1426,21 @@ async function flushWakeWordFrame() {
         timeoutMilliseconds: WAKE_WORD_REQUEST_TIMEOUT_MILLISECONDS,
       },
     );
+    const detectionReceivedAt = performance.now();
     if (result.detected
         && state.wakeWord.active
-        && generation === state.wakeWord.generation) beginWakeCommand();
+        && generation === state.wakeWord.generation) {
+      const bufferedAudioMs = state.wakeWord.frameSampleCount / 16;
+      beginWakeCommand({
+        timing: {
+          detectedAt: detectionReceivedAt,
+          frameSentAt,
+          wakeFrameMs: frame.length / 16,
+          wakeRoundTripMs: detectionReceivedAt - frameSentAt,
+          bufferedAudioMs,
+        },
+      });
+    }
   } catch (error) {
     if (state.wakeWord.active && generation === state.wakeWord.generation) {
       state.wakeWord.active = false;
@@ -1445,13 +1459,32 @@ async function flushWakeWordFrame() {
   }
 }
 
-function beginWakeCommand({ followUp = false } = {}) {
+function reportWakeTiming(event, metrics = {}) {
+  const payload = { event };
+  for (const [name, value] of Object.entries(metrics)) {
+    if (Number.isFinite(value) && value >= 0) payload[name] = value;
+  }
+  console.debug("Granite wake timing", payload);
+  requestJson(
+    "/api/diagnostics/wake-timing",
+    payload,
+    {
+      updateConnection: false,
+      timeoutMilliseconds: WAKE_WORD_REQUEST_TIMEOUT_MILLISECONDS,
+    },
+  ).catch(() => {
+    // Timing diagnostics must never interfere with wake-word capture.
+  });
+}
+
+function beginWakeCommand({ followUp = false, timing = null } = {}) {
   resetWakeWordFrameBuffer();
   state.wakeWord.commandChunks = [];
   state.wakeWord.commandStartedAt = performance.now();
   state.wakeWord.lastVoiceAt = state.wakeWord.commandStartedAt;
   state.wakeWord.voiceDetected = false;
   state.wakeWord.followUp = followUp;
+  state.wakeWord.timing = timing;
   setWakeWordView("listening", {
     title: followUp ? "Anything else?" : "I’m listening",
     status: followUp ? "Listening for a follow-up" : "Speak your request",
@@ -1459,6 +1492,14 @@ function beginWakeCommand({ followUp = false } = {}) {
       ? `Speak within ${state.settings.wake_follow_up_seconds} seconds, or cancel to return to the wake phrase.`
       : "Pause when you are finished, or press Send now. Granite responds locally.",
   });
+  if (timing) {
+    reportWakeTiming("command_capture_started", {
+      wake_frame_ms: timing.wakeFrameMs,
+      wake_round_trip_ms: timing.wakeRoundTripMs,
+      buffered_audio_ms: timing.bufferedAudioMs,
+      detection_to_capture_ms: state.wakeWord.commandStartedAt - timing.detectedAt,
+    });
+  }
 }
 
 function collectWakeCommand(samples) {
@@ -1467,6 +1508,12 @@ function collectWakeCommand(samples) {
   const rms = rootMeanSquare(samples);
   const speechThreshold = Math.max(0.012, state.wakeWord.noiseFloor * 3);
   if (rms >= speechThreshold) {
+    if (!state.wakeWord.voiceDetected && state.wakeWord.timing) {
+      reportWakeTiming("speech_started", {
+        wake_to_speech_ms: now - state.wakeWord.timing.detectedAt,
+        capture_elapsed_ms: now - state.wakeWord.commandStartedAt,
+      });
+    }
     state.wakeWord.voiceDetected = true;
     state.wakeWord.lastVoiceAt = now;
   }
@@ -1505,6 +1552,16 @@ async function finishWakeCommand({ force = false } = {}) {
     return;
   }
 
+  const timing = state.wakeWord.timing;
+  if (timing) {
+    const sampleCount = chunks.reduce((total, chunk) => total + chunk.length, 0);
+    reportWakeTiming("command_finished", {
+      capture_elapsed_ms: performance.now() - state.wakeWord.commandStartedAt,
+      captured_audio_ms: sampleCount / 16,
+      end_pause_target_ms: state.settings.wake_end_pause_seconds * 1000,
+    });
+  }
+
   setWakeWordView("thinking", {
     title: "Working on that",
     status: "Transcribing and thinking locally…",
@@ -1529,6 +1586,7 @@ function resumeWakeWordListening(status) {
   if (!state.wakeWord.active) return;
   state.wakeWord.commandChunks = [];
   state.wakeWord.followUp = false;
+  state.wakeWord.timing = null;
   resetWakeWordFrameBuffer();
   setWakeWordView("waiting", {
     title: "Say “Hey Jarvis”",

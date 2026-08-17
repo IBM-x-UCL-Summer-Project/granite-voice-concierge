@@ -166,6 +166,7 @@ Additional same-origin endpoints support the connected local features:
 - wake-word start/frame/stop under `POST /api/wake-word/...`;
 - guided-routine command start/frame/reset/stop under
   `POST /api/routine-command/...`;
+- privacy-safe browser wake timing under `POST /api/diagnostics/wake-timing`;
 - temporary state/display-history restoration under `GET /api/session`.
 
 Unknown `/api/` routes return JSON errors for both GET and POST requests. The
@@ -186,6 +187,23 @@ controlled so the selected output device, pace, volume, replay, and stop control
 remain responsive without asking the server to use its own speakers. The
 pipeline's persisted `context.accessibility.speech_pace` is applied as the base
 playback pace, with the personal device setting acting as a local multiplier.
+
+### Wake-word timing diagnostics
+
+The browser reports timing values only—never audio or transcript text—to the
+Web process when a wake phrase starts request capture. Run the server with
+debug logging to measure the browser/server handoff:
+
+```bash
+.venv/bin/python -m voice_concierge.app.web --voice-io \
+  --log-level DEBUG --log-file .local/logs/web-debug.log
+```
+
+Then look for `web_wake_detection` and `web_wake_timing`. The useful values are
+`server_processing_ms` (local wake model time), `wake_round_trip_ms` (complete
+browser-to-server round trip), `detection_to_capture_ms` (UI transition time),
+and `buffered_audio_ms` (audio received while detection was in flight). The
+browser console shows the same client timing events as `Granite wake timing`.
 
 ## Guided personal setup
 

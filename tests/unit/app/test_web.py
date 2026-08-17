@@ -193,7 +193,7 @@ def test_static_ui_disables_browser_cache() -> None:
 
     assert cache_control == "no-store"
     assert "./playback-policy.js?v=20260815" in html
-    assert "./app.js?v=20260816-12" in html
+    assert "./app.js?v=20260817-1" in html
     assert "./styles.css?v=20260816-6" in html
 
 
@@ -259,30 +259,33 @@ def test_startup_warmup_exposes_loading_before_ready() -> None:
     assert ready["status"] == "ready"
 
 
-def test_browser_wake_word_api_keeps_detector_on_session() -> None:
+def test_browser_wake_word_api_keeps_detector_on_session(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     detector = FakeWakeWordDetector()
     service = WebWakeWordService(detector)
     opener = build_opener(HTTPCookieProcessor(CookieJar()))
-    with running_server(
-        wake_word_service=service,
-        voice_input_enabled=True,
-    ) as base_url:
-        started = read_json(
-            f"{base_url}/api/wake-word/start",
-            payload={"sensitivity": 60},
-            opener=opener,
-        )
-        detector.detect = True
-        frame = read_json(
-            f"{base_url}/api/wake-word/frame",
-            payload={"pcm_base64": "AAAAAA=="},
-            opener=opener,
-        )
-        stopped = read_json(
-            f"{base_url}/api/wake-word/stop",
-            payload={},
-            opener=opener,
-        )
+    with caplog.at_level(logging.DEBUG, logger="voice_concierge.web"):
+        with running_server(
+            wake_word_service=service,
+            voice_input_enabled=True,
+        ) as base_url:
+            started = read_json(
+                f"{base_url}/api/wake-word/start",
+                payload={"sensitivity": 60},
+                opener=opener,
+            )
+            detector.detect = True
+            frame = read_json(
+                f"{base_url}/api/wake-word/frame",
+                payload={"pcm_base64": "AAAAAA=="},
+                opener=opener,
+            )
+            stopped = read_json(
+                f"{base_url}/api/wake-word/stop",
+                payload={},
+                opener=opener,
+            )
 
     assert started["active"] is True
     assert started["confidence_threshold"] == 0.3
@@ -292,6 +295,43 @@ def test_browser_wake_word_api_keeps_detector_on_session() -> None:
         "confidence": 0.8,
     }
     assert stopped == {"active": False}
+    assert "web_wake_detection server_processing_ms=" in caplog.text
+
+
+def test_browser_wake_timing_diagnostics_log_durations_without_content(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.DEBUG, logger="voice_concierge.web"):
+        with running_server() as base_url:
+            response = read_json(
+                f"{base_url}/api/diagnostics/wake-timing",
+                payload={
+                    "event": "command_capture_started",
+                    "wake_round_trip_ms": 83.27,
+                    "buffered_audio_ms": 96,
+                    "transcript": "this value must never be logged",
+                },
+            )
+
+    assert response == {"recorded": True}
+    assert "web_wake_timing event=command_capture_started" in caplog.text
+    assert "buffered_audio_ms=96.0" in caplog.text
+    assert "wake_round_trip_ms=83.3" in caplog.text
+    assert "this value must never be logged" not in caplog.text
+
+
+def test_browser_wake_timing_rejects_invalid_duration() -> None:
+    with running_server() as base_url:
+        with pytest.raises(HTTPError) as error:
+            read_json(
+                f"{base_url}/api/diagnostics/wake-timing",
+                payload={
+                    "event": "speech_started",
+                    "wake_to_speech_ms": -1,
+                },
+            )
+
+    assert error.value.code == 400
 
 
 def test_browser_routine_command_api_returns_local_spotter_event() -> None:

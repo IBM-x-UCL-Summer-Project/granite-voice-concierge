@@ -7,6 +7,7 @@ import base64
 import binascii
 import json
 import logging
+import math
 import secrets
 import time
 from collections import OrderedDict
@@ -75,6 +76,21 @@ MAX_REQUEST_BYTES = 16 * 1024 * 1024
 MAX_WEB_SESSIONS = 32
 MAX_WEB_SESSION_HISTORY = 200
 MAX_WAKE_WORD_FRAME_BYTES = 64 * 1024
+WAKE_TIMING_EVENTS = frozenset(
+    {"wake_detected", "command_capture_started", "speech_started", "command_finished"}
+)
+WAKE_TIMING_METRICS = frozenset(
+    {
+        "wake_frame_ms",
+        "wake_round_trip_ms",
+        "buffered_audio_ms",
+        "detection_to_capture_ms",
+        "wake_to_speech_ms",
+        "capture_elapsed_ms",
+        "captured_audio_ms",
+        "end_pause_target_ms",
+    }
+)
 SESSION_COOKIE_NAME = "granite_session"
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_WEB_DIRECTORY = REPOSITORY_ROOT / "web"
@@ -444,6 +460,7 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
         if urlsplit(self.path).path in {
             "/api/wake-word/frame",
             "/api/routine-command/frame",
+            "/api/diagnostics/wake-timing",
         }:
             return
         super().log_request(code, size)
@@ -641,11 +658,15 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
             "/api/routine-command/frame",
             "/api/routine-command/reset",
             "/api/routine-command/stop",
+            "/api/diagnostics/wake-timing",
         }
         if path not in known_paths:
             return False
         try:
             payload = self._read_json_body()
+            if path == "/api/diagnostics/wake-timing":
+                self._handle_wake_timing_post(payload)
+                return True
             if path.startswith("/api/wake-word/"):
                 self._handle_wake_word_post(path, payload)
                 return True
@@ -702,6 +723,36 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
                 },
             )
         return True
+
+    def _handle_wake_timing_post(self, payload: Mapping[str, Any]) -> None:
+        """Write privacy-safe browser wake/VAD timings at DEBUG level."""
+
+        event = payload.get("event")
+        if not isinstance(event, str) or event not in WAKE_TIMING_EVENTS:
+            raise PayloadValidationError("event is not a supported wake timing event.")
+        metrics: dict[str, float] = {}
+        for name in sorted(WAKE_TIMING_METRICS):
+            value = payload.get(name)
+            if value is None:
+                continue
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value < 0
+                or value > 300_000
+            ):
+                raise PayloadValidationError(
+                    f"{name} must be a finite duration between 0 and 300000 ms."
+                )
+            metrics[name] = round(float(value), 1)
+        diagnostic = " ".join(f"{name}={value:.1f}" for name, value in metrics.items())
+        LOGGER.debug(
+            "web_wake_timing event=%s%s",
+            event,
+            f" {diagnostic}" if diagnostic else "",
+        )
+        self._write_json(HTTPStatus.OK, {"recorded": True})
 
     def _handle_routine_command_post(
         self,
@@ -807,10 +858,18 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
             raise PayloadValidationError("pcm_base64 must be valid base64.") from exc
         if len(pcm) > MAX_WAKE_WORD_FRAME_BYTES:
             raise PayloadValidationError("Wake-word audio frame is too large.")
+        processing_started_at = time.monotonic()
         try:
             result = service.process_pcm(posted_session_id, pcm)
         except ValueError as exc:
             raise PayloadValidationError(str(exc)) from exc
+        processing_ms = (time.monotonic() - processing_started_at) * 1000
+        if result.detected:
+            LOGGER.debug(
+                "web_wake_detection server_processing_ms=%.1f confidence=%.3f",
+                processing_ms,
+                result.confidence or 0.0,
+            )
         self._write_json(
             HTTPStatus.OK,
             {
