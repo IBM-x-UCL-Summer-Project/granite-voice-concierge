@@ -56,6 +56,26 @@ from voice_concierge.scheduling.types import Reminder, Schedule
 from voice_concierge.voice_input.wake_word_detector import WakeWordPrediction
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+WEB_APPLICATION_SCRIPTS = (
+    "app-context.js",
+    "settings.js",
+    "conversation.js",
+    "api-client.js",
+    "playback.js",
+    "voice-input.js",
+    "voice-commands.js",
+    "wake-word.js",
+    "session.js",
+    "local-data.js",
+    "app.js",
+)
+
+
+def read_web_application_scripts() -> str:
+    return "\n".join(
+        (REPOSITORY_ROOT / "web" / name).read_text(encoding="utf-8")
+        for name in WEB_APPLICATION_SCRIPTS
+    )
 
 
 class DeterministicEmbeddingService:
@@ -196,12 +216,14 @@ def test_static_ui_disables_browser_cache() -> None:
     assert cache_control == "no-store"
     assert "./playback-policy.js?v=20260817" in html
     assert "./wake-capture-policy.js?v=20260817" in html
-    assert "./app.js?v=20260817-5" in html
+    for name in WEB_APPLICATION_SCRIPTS:
+        assert f'./{name}?v=20260817-' in html
+    assert "./app.js?v=20260817-6" in html
     assert "./styles.css?v=20260817-4" in html
 
 
 def test_browser_never_persists_conversation_state() -> None:
-    script = (REPOSITORY_ROOT / "web" / "app.js").read_text(encoding="utf-8")
+    script = read_web_application_scripts()
 
     assert "localStorage.setItem(LEGACY_PIPELINE_STORAGE_KEY" not in script
     assert "localStorage.removeItem(LEGACY_PIPELINE_STORAGE_KEY)" in script
@@ -211,7 +233,7 @@ def test_browser_never_persists_conversation_state() -> None:
 
 def test_local_data_actions_use_an_application_owned_dialog() -> None:
     html = (REPOSITORY_ROOT / "web" / "index.html").read_text(encoding="utf-8")
-    script = (REPOSITORY_ROOT / "web" / "app.js").read_text(encoding="utf-8")
+    script = read_web_application_scripts()
 
     assert 'id="action-dialog"' in html
     assert 'id="action-input"' in html
@@ -222,7 +244,7 @@ def test_local_data_actions_use_an_application_owned_dialog() -> None:
 
 def test_browser_exposes_waiting_wake_mode_and_private_chat_export() -> None:
     html = (REPOSITORY_ROOT / "web" / "index.html").read_text(encoding="utf-8")
-    script = (REPOSITORY_ROOT / "web" / "app.js").read_text(encoding="utf-8")
+    script = read_web_application_scripts()
 
     assert 'id="wake-word-screen"' in html
     assert 'id="wake-push-button"' in html
@@ -250,7 +272,7 @@ def test_browser_exposes_waiting_wake_mode_and_private_chat_export() -> None:
 
 
 def test_browser_applies_stop_pause_and_resume_to_every_spoken_response() -> None:
-    script = (REPOSITORY_ROOT / "web" / "app.js").read_text(encoding="utf-8")
+    script = read_web_application_scripts()
 
     assert "async function handlePlaybackVoiceCommand(command)" in script
     assert 'command === "stop"' in script
@@ -258,6 +280,13 @@ def test_browser_applies_stop_pause_and_resume_to_every_spoken_response() -> Non
     assert "await resumePlayback()" in script
     assert "playbackActive: Boolean(state.playback)" in script
     assert "if (commandControlActive) enqueueVoiceCommandFrame(samples)" in script
+
+
+def test_browser_entry_point_is_not_a_monolith() -> None:
+    entry_point = (REPOSITORY_ROOT / "web" / "app.js").read_text(encoding="utf-8")
+
+    assert len(entry_point.splitlines()) < 300
+    assert len(WEB_APPLICATION_SCRIPTS) >= 10
 
 
 def test_startup_warmup_exposes_loading_before_ready() -> None:
