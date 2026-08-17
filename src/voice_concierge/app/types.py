@@ -94,6 +94,8 @@ class ConversationTurn:
 
     user_transcript: str
     assistant_response: str
+    user_sent_at: str | None = None
+    assistant_received_at: str | None = None
 
 
 @dataclass(frozen=True)

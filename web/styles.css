@@ -232,7 +232,7 @@ h3 { font-size: 17px; }
 .message-body { min-width: 0; }
 .message-meta { display: flex; gap: 9px; align-items: center; margin: 1px 0 7px; font-size: 11px; }
 .message-user .message-meta { justify-content: flex-end; }
-.message-meta span { color: var(--quiet); }
+.message-meta span, .message-meta time { color: var(--quiet); }
 .bubble { padding: 15px 17px; border-radius: 4px 16px 16px 16px; background: var(--paper-strong); border: 1px solid var(--line); box-shadow: 0 7px 22px rgba(54, 50, 38, 0.04); font-size: 14px; line-height: 1.65; }
 .message-user .bubble { border-radius: 16px 4px 16px 16px; background: var(--ink); color: var(--paper-strong); border-color: var(--ink); }
 .message-pending .bubble { display: inline-flex; align-items: center; gap: 9px; color: var(--muted); }
@@ -307,6 +307,8 @@ h3 { font-size: 17px; }
 .wake-settings-panel label:first-child { margin-top: 0; }
 .wake-settings-panel output { color: #f7f7ef; font-weight: 700; }
 .wake-settings-panel input { width: 100%; margin: 8px 0 2px; accent-color: #c3ff68; }
+.wake-settings-panel .wake-quick-switch { margin-top: 16px; padding-top: 14px; align-items: center; border-top: 1px solid rgba(255,255,255,0.12); }
+.wake-settings-panel .wake-quick-switch input { width: 16px; height: 16px; margin: 0; }
 .wake-conversation-panel { z-index: 2; position: absolute; inset: 0 auto 0 0; width: clamp(330px, 36vw, 470px); padding: 92px 28px 30px; display: flex; flex-direction: column; border-right: 1px solid rgba(255,255,255,0.13); background: rgba(8,12,9,0.58); backdrop-filter: blur(18px); transform: translateX(-101%); opacity: 0; pointer-events: none; transition: transform 220ms ease, opacity 180ms ease; }
 .wake-word-screen.show-conversation .wake-conversation-panel { transform: translateX(0); opacity: 1; pointer-events: auto; }
 .wake-conversation-panel header { padding: 0 4px 18px; border-bottom: 1px solid rgba(255,255,255,0.12); }
@@ -315,10 +317,11 @@ h3 { font-size: 17px; }
 .wake-conversation-list { min-height: 0; padding: 5px 4px 24px; overflow-y: auto; scrollbar-color: rgba(255,255,255,0.25) transparent; }
 .wake-conversation-empty { margin: 24px 0; color: rgba(255,255,255,0.5); font-size: 11px; line-height: 1.6; }
 .wake-transcript-turn { margin-top: 20px; }
-.wake-transcript-turn strong { display: block; margin-bottom: 6px; color: rgba(255,255,255,0.52); font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; }
+.wake-transcript-turn strong { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 6px; color: rgba(255,255,255,0.52); font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; }
+.wake-transcript-turn strong time { color: rgba(255,255,255,0.38); font-weight: 400; letter-spacing: 0; }
 .wake-transcript-turn p { margin: 0; padding: 11px 13px; border: 1px solid rgba(255,255,255,0.12); border-radius: 4px 14px 14px; background: rgba(255,255,255,0.07); font-size: 12px; line-height: 1.55; }
 .wake-transcript-turn.is-user { margin-left: 28px; }
-.wake-transcript-turn.is-user strong { text-align: right; }
+.wake-transcript-turn.is-user strong { flex-direction: row-reverse; text-align: right; }
 .wake-transcript-turn.is-user p { border-radius: 14px 4px 14px 14px; background: rgba(195,255,104,0.13); }
 .wake-word-stage { z-index: 1; position: relative; min-height: calc(100vh - 76px); padding: 86px 24px 60px; display: flex; align-items: center; flex-direction: column; justify-content: center; text-align: center; transition: margin-left 220ms ease; }
 .wake-word-screen.show-conversation .wake-word-stage { margin-left: clamp(330px, 36vw, 470px); }

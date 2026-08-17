@@ -8,7 +8,7 @@
       content="Granite Voice Concierge local conversation interface"
     />
     <title>Granite Voice Concierge</title>
-    <link rel="stylesheet" href="./styles.css?v=20260817-3" />
+    <link rel="stylesheet" href="./styles.css?v=20260817-4" />
   </head>
   <body>
     <div class="app-shell">
@@ -175,6 +175,10 @@
               <input id="wake-quick-pause" type="range" min="0.8" max="3" value="1.8" step="0.2" />
               <label for="wake-quick-follow-up"><span>Follow-up listening</span><output id="wake-quick-follow-up-output" for="wake-quick-follow-up">7 sec</output></label>
               <input id="wake-quick-follow-up" type="range" min="3" max="15" value="7" step="1" />
+              <label class="wake-quick-switch" for="wake-quick-auto-follow-up">
+                <span>Listen automatically after each response</span>
+                <input id="wake-quick-auto-follow-up" type="checkbox" checked />
+              </label>
               <label for="wake-quick-maximum"><span>Maximum request</span><output id="wake-quick-maximum-output" for="wake-quick-maximum">20 sec</output></label>
               <input id="wake-quick-maximum" type="range" min="8" max="30" value="20" step="1" />
             </div>
@@ -330,6 +334,10 @@
                   <input id="wake-maximum-request" name="wake_max_request_seconds" type="range" min="8" max="30" value="20" step="1" />
                 </label>
               </div>
+              <label class="switch-setting" for="wake-auto-follow-up">
+                <span><strong>Automatic follow-up listening</strong><small>After Granite replies in wake mode, briefly listen for another request without requiring “Hey Jarvis”.</small></span>
+                <span class="switch-control"><input id="wake-auto-follow-up" name="wake_auto_follow_up" type="checkbox" checked /><span aria-hidden="true"></span></span>
+              </label>
               <fieldset class="preference-group interaction-options">
                 <legend>Preferred interaction</legend>
                 <label class="choice-card" id="wake-word-choice">
@@ -454,6 +462,6 @@
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
     <script src="./playback-policy.js?v=20260815"></script>
     <script src="./wake-capture-policy.js?v=20260817"></script>
-    <script src="./app.js?v=20260817-3"></script>
+    <script src="./app.js?v=20260817-4"></script>
   </body>
 </html>

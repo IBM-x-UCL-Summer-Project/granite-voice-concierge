@@ -27,6 +27,7 @@ const defaultSettings = {
   wake_end_pause_seconds: 1.8,
   wake_follow_up_seconds: 7,
   wake_max_request_seconds: 20,
+  wake_auto_follow_up: true,
   wake_show_conversation: false,
   interaction_mode: "voice_first",
   speak_confirmations: true,
@@ -142,6 +143,7 @@ const elements = {
   wakeQuickPauseOutput: document.querySelector("#wake-quick-pause-output"),
   wakeQuickFollowUp: document.querySelector("#wake-quick-follow-up"),
   wakeQuickFollowUpOutput: document.querySelector("#wake-quick-follow-up-output"),
+  wakeQuickAutoFollowUp: document.querySelector("#wake-quick-auto-follow-up"),
   wakeQuickMaximum: document.querySelector("#wake-quick-maximum"),
   wakeQuickMaximumOutput: document.querySelector("#wake-quick-maximum-output"),
   startupScreen: document.querySelector("#startup-screen"),
@@ -170,6 +172,7 @@ const elements = {
   wakeEndPauseOutput: document.querySelector("#wake-end-pause-output"),
   wakeFollowUp: document.querySelector("#wake-follow-up"),
   wakeFollowUpOutput: document.querySelector("#wake-follow-up-output"),
+  wakeAutoFollowUp: document.querySelector("#wake-auto-follow-up"),
   wakeMaximumRequest: document.querySelector("#wake-maximum-request"),
   wakeMaximumRequestOutput: document.querySelector("#wake-maximum-request-output"),
   previewVoice: document.querySelector("#preview-voice"),
@@ -287,6 +290,7 @@ function populateSetupForm(settings) {
   elements.wakeEndPause.value = settings.wake_end_pause_seconds;
   elements.wakeFollowUp.value = settings.wake_follow_up_seconds;
   elements.wakeMaximumRequest.value = settings.wake_max_request_seconds;
+  elements.wakeAutoFollowUp.checked = settings.wake_auto_follow_up;
   const interaction = elements.setupForm.querySelector(
     `[name="interaction_mode"][value="${settings.interaction_mode}"]`,
   );
@@ -324,6 +328,7 @@ function collectSettingsDraft() {
     wake_end_pause_seconds: Number(elements.wakeEndPause.value),
     wake_follow_up_seconds: Number(elements.wakeFollowUp.value),
     wake_max_request_seconds: Number(elements.wakeMaximumRequest.value),
+    wake_auto_follow_up: elements.wakeAutoFollowUp.checked,
     interaction_mode: checkedInteraction?.value || "voice_first",
     speak_confirmations: elements.setupForm.elements.speak_confirmations.checked,
   };
@@ -387,6 +392,7 @@ function populateWakeQuickSettings(settings) {
   elements.wakeQuickPause.value = settings.wake_end_pause_seconds;
   elements.wakeQuickFollowUp.value = settings.wake_follow_up_seconds;
   elements.wakeQuickMaximum.value = settings.wake_max_request_seconds;
+  elements.wakeQuickAutoFollowUp.checked = settings.wake_auto_follow_up;
   updateWakeQuickOutputs();
 }
 
@@ -405,12 +411,14 @@ async function saveWakeQuickSettings() {
     wake_end_pause_seconds: Number(elements.wakeQuickPause.value),
     wake_follow_up_seconds: Number(elements.wakeQuickFollowUp.value),
     wake_max_request_seconds: Number(elements.wakeQuickMaximum.value),
+    wake_auto_follow_up: elements.wakeQuickAutoFollowUp.checked,
   };
   window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(state.settings));
   elements.wakeSensitivity.value = state.settings.wake_word_sensitivity;
   elements.wakeEndPause.value = state.settings.wake_end_pause_seconds;
   elements.wakeFollowUp.value = state.settings.wake_follow_up_seconds;
   elements.wakeMaximumRequest.value = state.settings.wake_max_request_seconds;
+  elements.wakeAutoFollowUp.checked = state.settings.wake_auto_follow_up;
   updateWakeQuickOutputs();
   updateRangeOutputs();
   if (state.wakeWord.active
@@ -555,7 +563,7 @@ function appendMessage(role, text, options = {}) {
   article.innerHTML = `
     <div class="avatar" aria-hidden="true">${isAssistant ? "G" : "Y"}</div>
     <div class="message-body">
-      <div class="message-meta"><strong>${isAssistant ? "Granite" : "You"}</strong><span>Now</span></div>
+      <div class="message-meta"><strong>${isAssistant ? "Granite" : "You"}</strong>${messageTimeMarkup(options.timestamp)}</div>
       <div class="bubble">${escapeHtml(text)}</div>
       ${isAssistant ? `
         <button class="speak-button" type="button" aria-label="Play assistant response">
@@ -607,6 +615,24 @@ function appendPendingMessage(label) {
     </div>`;
   elements.conversation.appendChild(article);
   article.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function messageTime(timestamp) {
+  if (!timestamp) return "Now";
+  const moment = new Date(timestamp);
+  if (Number.isNaN(moment.getTime())) return "Now";
+  return new Intl.DateTimeFormat([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(moment);
+}
+
+function messageTimeMarkup(timestamp) {
+  if (!timestamp) return "<span>Now</span>";
+  const moment = new Date(timestamp);
+  if (Number.isNaN(moment.getTime())) return "<span>Now</span>";
+  const iso = moment.toISOString();
+  return `<time datetime="${escapeHtml(iso)}" title="${escapeHtml(moment.toLocaleString())}">${escapeHtml(messageTime(iso))}</time>`;
 }
 
 function removePendingMessage() {
@@ -1602,8 +1628,13 @@ async function finishWakeCommand({ force = false } = {}) {
         status: "Routine controls are listening",
         detail: "Say Pause, Continue, Next, Back, Repeat, Slower, Faster, or Stop.",
       });
-    } else if (response) beginWakeCommand({ followUp: true });
-    else resumeWakeWordListening("I couldn’t complete that. Listening for “Hey Jarvis”.");
+    } else if (response && state.settings.wake_auto_follow_up) {
+      beginWakeCommand({ followUp: true });
+    } else if (response) {
+      resumeWakeWordListening("Response complete. Listening for “Hey Jarvis”.");
+    } else {
+      resumeWakeWordListening("I couldn’t complete that. Listening for “Hey Jarvis”.");
+    }
   }
 }
 
@@ -1714,7 +1745,9 @@ function renderConversationHistory(response = null) {
     .querySelectorAll(":scope > :not(.date-rule):not([data-welcome])")
     .forEach((node) => node.remove());
   state.sessionHistory.forEach((turn) => {
-    if (turn.user_transcript) appendMessage("user", turn.user_transcript);
+    if (turn.user_transcript) {
+      appendMessage("user", turn.user_transcript, { timestamp: turn.user_sent_at });
+    }
     const isCurrent = response
       && turn === state.sessionHistory.at(-1)
       && turn.assistant_response === response.spoken_response;
@@ -1722,7 +1755,8 @@ function renderConversationHistory(response = null) {
       confirmation: confirmationKind(response),
       errors: response.errors,
       audio: response.audio,
-    } : {});
+      timestamp: turn.assistant_received_at,
+    } : { timestamp: turn.assistant_received_at });
     if (isCurrent) currentSpeakButton = speakButton;
   });
   const responseWasRecorded = response
@@ -1747,12 +1781,17 @@ function renderConversationHistory(response = null) {
   return currentSpeakButton;
 }
 
-function appendWakeTranscriptTurn(role, text) {
+function appendWakeTranscriptTurn(role, text, timestamp) {
   if (!text) return;
   const turn = document.createElement("article");
   turn.className = `wake-transcript-turn ${role === "user" ? "is-user" : "is-assistant"}`;
   const speaker = document.createElement("strong");
-  speaker.textContent = role === "user" ? "You" : "Granite";
+  const speakerLabel = document.createElement("span");
+  speakerLabel.textContent = role === "user" ? "You" : "Granite";
+  const time = document.createElement("time");
+  time.textContent = messageTime(timestamp);
+  if (timestamp) time.dateTime = timestamp;
+  speaker.append(speakerLabel, time);
   const content = document.createElement("p");
   content.textContent = text;
   turn.append(speaker, content);
@@ -1776,8 +1815,12 @@ function renderWakeConversation() {
     return;
   }
   for (const turn of state.sessionHistory) {
-    appendWakeTranscriptTurn("user", turn.user_transcript);
-    appendWakeTranscriptTurn("assistant", turn.assistant_response);
+    appendWakeTranscriptTurn("user", turn.user_transcript, turn.user_sent_at);
+    appendWakeTranscriptTurn(
+      "assistant",
+      turn.assistant_response,
+      turn.assistant_received_at,
+    );
   }
   elements.wakeConversationList.scrollTop = elements.wakeConversationList.scrollHeight;
 }
@@ -2299,6 +2342,7 @@ for (const control of [
   control.addEventListener("input", updateWakeQuickOutputs);
   control.addEventListener("change", saveWakeQuickSettings);
 }
+elements.wakeQuickAutoFollowUp.addEventListener("change", saveWakeQuickSettings);
 elements.wakeWordCloseForm.addEventListener("submit", (event) => {
   event.preventDefault();
   stopWakeWordMode();

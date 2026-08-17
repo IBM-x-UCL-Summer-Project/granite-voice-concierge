@@ -12,6 +12,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from datetime import datetime
 from http.cookiejar import CookieJar
 from pathlib import Path
 from urllib.error import HTTPError
@@ -194,8 +195,8 @@ def test_static_ui_disables_browser_cache() -> None:
     assert cache_control == "no-store"
     assert "./playback-policy.js?v=20260815" in html
     assert "./wake-capture-policy.js?v=20260817" in html
-    assert "./app.js?v=20260817-3" in html
-    assert "./styles.css?v=20260817-3" in html
+    assert "./app.js?v=20260817-4" in html
+    assert "./styles.css?v=20260817-4" in html
 
 
 def test_browser_never_persists_conversation_state() -> None:
@@ -226,12 +227,15 @@ def test_browser_exposes_waiting_wake_mode_and_private_chat_export() -> None:
     assert 'id="wake-push-button"' in html
     assert 'id="wake-quick-pause"' in html
     assert 'id="wake-quick-follow-up"' in html
+    assert 'id="wake-quick-auto-follow-up"' in html
+    assert 'id="wake-auto-follow-up"' in html
     assert 'id="wake-conversation-toggle"' in html
     assert 'id="wake-conversation-panel"' in html
     assert 'id="startup-screen"' in html
     assert 'id="export-chat-button"' in html
     assert "Transcribing and thinking locally" in script
     assert "beginWakeCommand({ followUp: true })" in script
+    assert "response && state.settings.wake_auto_follow_up" in script
     assert "WAKE_COMMAND_ARM_DELAY_MILLISECONDS" in script
     assert "preRollChunks" in script
     assert "state.wakeWord.commandChunks = capture.retainedChunks" in script
@@ -440,15 +444,23 @@ def test_chat_export_downloads_transient_text_without_audio() -> None:
     assert disposition is not None
     assert disposition.startswith('attachment; filename="granite-chat-')
     assert exported["format"] == "granite-chat"
+    assert exported["version"] == 2
     assert exported["privacy"] == {
         "session_scope": "temporary",
         "persisted_by_application": False,
         "audio_included": False,
     }
-    assert exported["messages"] == [
+    assert [
+        {"role": message["role"], "content": message["content"]}
+        for message in exported["messages"]
+    ] == [
         {"role": "user", "content": "hello"},
         {"role": "assistant", "content": "Fake pipeline response for: hello"},
     ]
+    sent_at, received_at = (
+        datetime.fromisoformat(message["timestamp"]) for message in exported["messages"]
+    )
+    assert sent_at <= received_at
 
 
 def test_web_session_keeps_full_display_history_beyond_reasoning_window() -> None:
@@ -635,7 +647,12 @@ def test_guided_routine_keeps_its_place_in_web_session() -> None:
     assert advanced["session_history"][-1] == {
         "user_transcript": "",
         "assistant_response": "Step 2 of 2. Reach up.",
+        "user_sent_at": None,
+        "assistant_received_at": advanced["session_history"][-1][
+            "assistant_received_at"
+        ],
     }
+    datetime.fromisoformat(advanced["session_history"][-1]["assistant_received_at"])
 
 
 def test_active_routine_does_not_hijack_ordinary_or_safety_questions() -> None:

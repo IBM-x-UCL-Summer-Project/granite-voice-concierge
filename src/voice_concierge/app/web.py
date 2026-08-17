@@ -37,7 +37,6 @@ from voice_concierge.app.serialization import (
     app_turn_options_from_dict,
     app_turn_request_from_dict,
     app_turn_result_to_dict,
-    conversation_turn_to_dict,
 )
 from voice_concierge.app.types import AppPipelineState, ConversationTurn
 from voice_concierge.app.web_features import (
@@ -102,13 +101,23 @@ SessionTurn = Callable[
 ]
 
 
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
 class PipelineSessionStore:
     """Keep authoritative pipeline state inside the local web process."""
 
-    def __init__(self, *, max_sessions: int = MAX_WEB_SESSIONS) -> None:
+    def __init__(
+        self,
+        *,
+        max_sessions: int = MAX_WEB_SESSIONS,
+        clock: Callable[[], datetime] = _utc_now,
+    ) -> None:
         if max_sessions <= 0:
             raise ValueError("max_sessions must be positive.")
         self._max_sessions = max_sessions
+        self._clock = clock
         self._states: OrderedDict[str, AppPipelineState] = OrderedDict()
         self._histories: OrderedDict[str, tuple[ConversationTurn, ...]] = OrderedDict()
         self._lock = RLock()
@@ -123,15 +132,20 @@ class PipelineSessionStore:
         with self._lock:
             resolved_id = self._resolve_id(session_id)
             current_state = self._states.get(resolved_id)
+            user_sent_at = self._clock().astimezone(UTC).isoformat()
             response, next_state = turn(resolved_id, current_state)
             history = self._histories.get(resolved_id, ())
-            completed_turn = _completed_conversation_turn(response)
+            completed_turn = _completed_conversation_turn(
+                response,
+                user_sent_at=user_sent_at,
+                assistant_received_at=self._clock().astimezone(UTC).isoformat(),
+            )
             if completed_turn is not None:
                 history = (*history, completed_turn)[-MAX_WEB_SESSION_HISTORY:]
             self._states[resolved_id] = next_state
             self._histories[resolved_id] = history
             response["session_history"] = [
-                conversation_turn_to_dict(item) for item in history
+                _session_turn_to_dict(item) for item in history
             ]
             self._touch_and_evict(resolved_id)
             return resolved_id, response
@@ -206,6 +220,9 @@ class PipelineSessionStore:
 
 def _completed_conversation_turn(
     response: Mapping[str, Any],
+    *,
+    user_sent_at: str,
+    assistant_received_at: str,
 ) -> ConversationTurn | None:
     """Extract the completed exchange already validated by the app boundary."""
 
@@ -215,6 +232,7 @@ def _completed_conversation_turn(
         return ConversationTurn(
             user_transcript="",
             assistant_response=spoken_response,
+            assistant_received_at=assistant_received_at,
         )
     if not isinstance(transcript, Mapping) or not isinstance(spoken_response, str):
         return None
@@ -224,7 +242,20 @@ def _completed_conversation_turn(
     return ConversationTurn(
         user_transcript=" ".join(text.strip().split()),
         assistant_response=spoken_response,
+        user_sent_at=user_sent_at,
+        assistant_received_at=assistant_received_at,
     )
+
+
+def _session_turn_to_dict(turn: ConversationTurn) -> JsonDict:
+    """Serialize display history with ephemeral send/receive timestamps."""
+
+    return {
+        "user_transcript": turn.user_transcript,
+        "assistant_response": turn.assistant_response,
+        "user_sent_at": turn.user_sent_at,
+        "assistant_received_at": turn.assistant_received_at,
+    }
 
 
 class StartupReadiness:
@@ -347,7 +378,7 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
                     "state": app_pipeline_state_to_dict(state),
                     "routine": self.server.features.routine_snapshot(session_id),
                     "session_history": [
-                        conversation_turn_to_dict(turn) for turn in history
+                        _session_turn_to_dict(turn) for turn in history
                     ],
                 },
                 session_id=session_id,
@@ -371,7 +402,7 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
             self._write_json_download(
                 {
                     "format": "granite-chat",
-                    "version": 1,
+                    "version": 2,
                     "exported_at": exported_at.isoformat(),
                     "privacy": {
                         "session_scope": "temporary",
@@ -383,10 +414,15 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
                         message
                         for turn in history
                         for message in (
-                            {"role": "user", "content": turn.user_transcript},
+                            {
+                                "role": "user",
+                                "content": turn.user_transcript,
+                                "timestamp": turn.user_sent_at,
+                            },
                             {
                                 "role": "assistant",
                                 "content": turn.assistant_response,
+                                "timestamp": turn.assistant_received_at,
                             },
                         )
                         if message["content"]
