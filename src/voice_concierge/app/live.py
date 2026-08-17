@@ -65,6 +65,7 @@ class LiveAppConfig:
     vad_max_wait_s: int = DEFAULT_MAX_WAIT_S
     guided_routines: bool = True
     reminders: bool = True
+    one_breath: bool = False
 
     def __post_init__(self) -> None:
         if self.wake_word_threshold < 0:
@@ -163,7 +164,14 @@ def run_live_app(
 
     runner = _start_reminder_runner(runtime_config, pipeline, get_reminders, stdout)
     try:
-        if runtime_config.use_wake_word:
+        if runtime_config.use_wake_word and runtime_config.one_breath:
+            _run_one_breath_loop(
+                build_one_breath_capturer(runtime_config),
+                on_utterance=handle_audio,
+                one_shot=runtime_config.one_shot,
+                stdout=stdout,
+            )
+        elif runtime_config.use_wake_word:
             listener = wake_word_listener or build_wake_word_listener(runtime_config)
             _run_wake_word_loop(
                 listener,
@@ -201,8 +209,17 @@ def build_live_app_pipeline(config: LiveAppConfig) -> VoiceConciergePipeline:
 
     text_to_speech = build_text_to_speech() if config.synthesize else None
     audio_player = SoundDevicePlayer() if config.play else None
+
+    speech_to_text = build_speech_to_text()
+    if config.one_breath:
+        # The retained audio carries the wake phrase, so take it back off the
+        # transcript before anything tries to match on the whole utterance.
+        from voice_concierge.app.one_breath import WakePhraseStrippingSpeechToText
+
+        speech_to_text = WakePhraseStrippingSpeechToText(speech_to_text)
+
     return build_voice_concierge_pipeline(
-        speech_to_text=build_speech_to_text(),
+        speech_to_text=speech_to_text,
         text_to_speech=text_to_speech,
         audio_player=audio_player,
         load_memory=config.load_memory,
@@ -418,6 +435,57 @@ def build_utterance_capturer(config: LiveAppConfig) -> UtteranceCapturer:
     )
 
 
+def build_one_breath_capturer(config: LiveAppConfig):  # pragma: no cover - devices
+    """Build a capturer that holds one stream across both capture stages.
+
+    Keeping the device open is what lets a whole sentence spoken in one breath
+    survive: the separate wake-word and VAD components each own a stream, and
+    the handoff between them costs exactly the words after the wake phrase.
+    """
+    # Local
+    from voice_concierge.voice_input.one_breath import OneBreathCapturer
+    from voice_concierge.voice_input.one_breath_models import (
+        OpenWakeWordSpotter,
+        SileroSpeechGate,
+    )
+
+    source = PyAudioSource(
+        rate=DEFAULT_RATE,
+        frames_per_buffer=DEFAULT_WAKE_WORD_CHUNK,
+        input_device_index=config.device_index,
+    )
+    source.open()
+    return OneBreathCapturer(
+        audio_source=source,
+        spotter=OpenWakeWordSpotter(
+            model_name=config.wake_word_model,
+            confidence_threshold=config.wake_word_threshold,
+            download_models=config.download_wake_models,
+        ),
+        speech_gate=SileroSpeechGate(rate=DEFAULT_RATE),
+        chunk=DEFAULT_WAKE_WORD_CHUNK,
+        rate=DEFAULT_RATE,
+        utterance_timeout_s=float(config.vad_max_wait_s),
+    )
+
+
+def _run_one_breath_loop(
+    capturer,
+    *,
+    on_utterance: Callable[[CapturedAudio], None],
+    one_shot: bool,
+    stdout: TextIO,
+) -> None:
+    print(
+        "Live app started. Say the wake phrase and your request together.",
+        file=stdout,
+    )
+    while True:
+        capturer.capture_utterance(on_utterance_captured=on_utterance)
+        if one_shot:
+            break
+
+
 def _run_wake_word_loop(
     listener: WakeWordListener,
     capturer: UtteranceCapturer,
@@ -533,6 +601,14 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Answer step-by-step requests normally instead of guiding them.",
     )
+    parser.add_argument(
+        "--one-breath",
+        action="store_true",
+        help=(
+            "Hold one microphone stream across wake word and capture, so the "
+            "wake phrase and request can be said in a single sentence."
+        ),
+    )
     return parser
 
 
@@ -552,6 +628,7 @@ def _config_from_args(args: argparse.Namespace) -> LiveAppConfig:
         vad_max_wait_s=args.vad_max_wait_s,
         guided_routines=not args.no_guided_routines,
         reminders=not args.no_reminders,
+        one_breath=args.one_breath,
     )
 
 
