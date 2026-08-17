@@ -71,6 +71,7 @@ class TestRecognisingRequests:
         [
             "remind me to stretch in ten minutes",
             "set a timer for five minutes",
+            "set the timer for five minutes",
             "what reminders do i have",
             "cancel all reminders",
         ],
@@ -95,6 +96,14 @@ class TestSettingByVoice:
         said = active.run("remind me to stretch in 10 minutes")
 
         assert "10 minutes" in said
+        assert len(service.upcoming()) == 1
+
+    def test_setting_the_timer_uses_the_reminder_store(self, handler) -> None:
+        active, service = handler
+
+        said = active.run("set the timer for 5 minutes")
+
+        assert said == "Timer set for 5 minutes."
         assert len(service.upcoming()) == 1
 
     def test_a_request_without_a_time_asks_for_one(self, handler) -> None:

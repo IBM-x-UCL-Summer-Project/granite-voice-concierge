@@ -296,6 +296,8 @@ h3 { font-size: 17px; }
 .wake-word-close { z-index: 3; position: absolute; top: 28px; left: 30px; min-height: 38px; padding: 0 13px; display: inline-flex; align-items: center; gap: 7px; border: 1px solid rgba(255,255,255,0.18); border-radius: 999px; background: rgba(255,255,255,0.06); color: inherit; font-size: 10px; cursor: pointer; }
 .wake-word-close:hover { background: rgba(255,255,255,0.12); }
 .wake-word-close svg { width: 15px; height: 15px; }
+.wake-conversation-toggle { z-index: 4; position: absolute; top: 28px; left: 164px; min-height: 38px; padding: 0 13px; border: 1px solid rgba(255,255,255,0.18); border-radius: 999px; background: rgba(255,255,255,0.06); color: inherit; font-size: 10px; cursor: pointer; }
+.wake-conversation-toggle:hover, .wake-conversation-toggle[aria-pressed="true"] { background: rgba(195,255,104,0.14); border-color: rgba(195,255,104,0.42); }
 .wake-settings { z-index: 4; position: absolute; top: 28px; right: 30px; color: inherit; font-size: 10px; }
 .wake-settings summary { min-height: 38px; padding: 0 13px; display: flex; align-items: center; border: 1px solid rgba(255,255,255,0.18); border-radius: 999px; background: rgba(255,255,255,0.06); cursor: pointer; list-style: none; }
 .wake-settings summary::-webkit-details-marker { display: none; }
@@ -305,7 +307,21 @@ h3 { font-size: 17px; }
 .wake-settings-panel label:first-child { margin-top: 0; }
 .wake-settings-panel output { color: #f7f7ef; font-weight: 700; }
 .wake-settings-panel input { width: 100%; margin: 8px 0 2px; accent-color: #c3ff68; }
-.wake-word-stage { z-index: 1; position: relative; min-height: calc(100vh - 76px); padding: 86px 24px 60px; display: flex; align-items: center; flex-direction: column; justify-content: center; text-align: center; }
+.wake-conversation-panel { z-index: 2; position: absolute; inset: 0 auto 0 0; width: clamp(330px, 36vw, 470px); padding: 92px 28px 30px; display: flex; flex-direction: column; border-right: 1px solid rgba(255,255,255,0.13); background: rgba(8,12,9,0.58); backdrop-filter: blur(18px); transform: translateX(-101%); opacity: 0; pointer-events: none; transition: transform 220ms ease, opacity 180ms ease; }
+.wake-word-screen.show-conversation .wake-conversation-panel { transform: translateX(0); opacity: 1; pointer-events: auto; }
+.wake-conversation-panel header { padding: 0 4px 18px; border-bottom: 1px solid rgba(255,255,255,0.12); }
+.wake-conversation-panel h2 { font-size: 25px; }
+.wake-conversation-panel .eyebrow { color: rgba(255,255,255,0.46); }
+.wake-conversation-list { min-height: 0; padding: 5px 4px 24px; overflow-y: auto; scrollbar-color: rgba(255,255,255,0.25) transparent; }
+.wake-conversation-empty { margin: 24px 0; color: rgba(255,255,255,0.5); font-size: 11px; line-height: 1.6; }
+.wake-transcript-turn { margin-top: 20px; }
+.wake-transcript-turn strong { display: block; margin-bottom: 6px; color: rgba(255,255,255,0.52); font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; }
+.wake-transcript-turn p { margin: 0; padding: 11px 13px; border: 1px solid rgba(255,255,255,0.12); border-radius: 4px 14px 14px; background: rgba(255,255,255,0.07); font-size: 12px; line-height: 1.55; }
+.wake-transcript-turn.is-user { margin-left: 28px; }
+.wake-transcript-turn.is-user strong { text-align: right; }
+.wake-transcript-turn.is-user p { border-radius: 14px 4px 14px 14px; background: rgba(195,255,104,0.13); }
+.wake-word-stage { z-index: 1; position: relative; min-height: calc(100vh - 76px); padding: 86px 24px 60px; display: flex; align-items: center; flex-direction: column; justify-content: center; text-align: center; transition: margin-left 220ms ease; }
+.wake-word-screen.show-conversation .wake-word-stage { margin-left: clamp(330px, 36vw, 470px); }
 .wake-word-stage .eyebrow { color: rgba(255,255,255,0.48); }
 .wake-word-stage h1 { max-width: 760px; font-size: clamp(38px, 7vw, 76px); }
 .wake-orb { width: clamp(160px, 24vw, 250px); aspect-ratio: 1; margin: clamp(38px, 7vh, 70px) 0 34px; display: flex; align-items: center; justify-content: center; gap: 9px; border: 1px solid rgba(202,255,111,0.32); border-radius: 50%; background: radial-gradient(circle, rgba(186,255,72,0.32), rgba(70,153,130,0.13) 48%, rgba(255,255,255,0.02) 70%); box-shadow: 0 0 100px rgba(150,255,83,0.16), inset 0 0 70px rgba(183,255,84,0.09); }
@@ -564,6 +580,11 @@ h3 { font-size: 17px; }
   .setup-footer { min-height: 66px; padding: 13px 20px; }
   .topbar-actions .settings-button span { display: none; }
   .topbar-actions .settings-button { width: 38px; padding: 0; justify-content: center; }
+  .wake-word-close { top: 18px; left: 18px; }
+  .wake-conversation-toggle { top: 18px; left: auto; right: 18px; }
+  .wake-settings { top: 66px; right: 18px; }
+  .wake-conversation-panel { width: 100%; padding: 82px 18px 24px; }
+  .wake-word-screen.show-conversation .wake-word-stage { visibility: hidden; margin-left: 0; }
   .data-dialog { width: calc(100% - 16px); max-height: calc(100% - 16px); border-radius: 18px; }
   .data-header { padding: 23px 20px 18px; }
   .data-content { padding: 0 20px 20px; }

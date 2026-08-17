@@ -27,6 +27,7 @@ const defaultSettings = {
   wake_end_pause_seconds: 1.8,
   wake_follow_up_seconds: 7,
   wake_max_request_seconds: 20,
+  wake_show_conversation: false,
   interaction_mode: "voice_first",
   speak_confirmations: true,
 };
@@ -129,6 +130,9 @@ const elements = {
   wakeWordTitle: document.querySelector("#wake-word-title"),
   wakeWordStatus: document.querySelector("#wake-word-status"),
   wakeWordDetail: document.querySelector("#wake-word-detail"),
+  wakeConversationToggle: document.querySelector("#wake-conversation-toggle"),
+  wakeConversationPanel: document.querySelector("#wake-conversation-panel"),
+  wakeConversationList: document.querySelector("#wake-conversation-list"),
   wakePushButton: document.querySelector("#wake-push-button"),
   wakePushLabel: document.querySelector("#wake-push-label"),
   wakeCancelButton: document.querySelector("#wake-cancel-button"),
@@ -1110,20 +1114,6 @@ async function flushRoutineCommandFrame() {
 }
 
 async function handleRoutineVoiceCommand(command) {
-  const playback = state.playback;
-  if (command === "pause" && playback?.audio && !playback.audio.paused) {
-    playback.audio.pause();
-    state.routine.playbackPaused = true;
-    cancelRoutineAutoAdvance();
-    showToast("Routine speech paused — say Continue to resume");
-    return;
-  }
-  if (command === "resume" && state.routine.playbackPaused && playback?.audio) {
-    state.routine.playbackPaused = false;
-    await playback.audio.play();
-    showToast("Routine speech resumed");
-    return;
-  }
   if (state.routine.awaiting_confirmation) {
     if (!state.routine.confirmationReady || !["yes", "no"].includes(command)) {
       return;
@@ -1131,8 +1121,19 @@ async function handleRoutineVoiceCommand(command) {
   } else if (["yes", "no"].includes(command)) {
     return;
   }
+  resetRoutineCommandFrameBuffer();
+  cancelRoutineAutoAdvance();
   stopPlayback();
-  await runTurn(command, { routineControl: true });
+  const deadline = performance.now() + 1500;
+  while (state.running && performance.now() < deadline) await delay(20);
+  if (state.running) {
+    showToast("Routine control is still processing; please try again");
+    return;
+  }
+  await runTurn(command, {
+    routineControl: true,
+    suppressPlayback: command === "pause",
+  });
 }
 
 function cancelRoutineAutoAdvance() {
@@ -1623,7 +1624,10 @@ function waitForResponsePlayback() {
   return state.playback?.completion || Promise.resolve();
 }
 
-async function runTurn(input, { routineControl = false, automatic = false } = {}) {
+async function runTurn(
+  input,
+  { routineControl = false, automatic = false, suppressPlayback = false } = {},
+) {
   if (state.running) return;
   const isAudio = typeof input === "object" && input.kind === "audio";
   const transcript = isAudio ? "" : String(input || "").trim();
@@ -1659,7 +1663,9 @@ async function runTurn(input, { routineControl = false, automatic = false } = {}
     saveState();
 
     const currentSpeakButton = renderConversationHistory(response);
-    if (currentSpeakButton && shouldAutoPlayResponse(response, isAudio)) {
+    if (!suppressPlayback
+        && currentSpeakButton
+        && shouldAutoPlayResponse(response, isAudio)) {
       await playResponse(currentSpeakButton);
     }
     scheduleRoutineAutoAdvance();
@@ -1737,7 +1743,43 @@ function renderConversationHistory(response = null) {
     else if (state.pipeline.pending_memory_action) appendConfirmation("memory");
   }
   updateSendState();
+  renderWakeConversation();
   return currentSpeakButton;
+}
+
+function appendWakeTranscriptTurn(role, text) {
+  if (!text) return;
+  const turn = document.createElement("article");
+  turn.className = `wake-transcript-turn ${role === "user" ? "is-user" : "is-assistant"}`;
+  const speaker = document.createElement("strong");
+  speaker.textContent = role === "user" ? "You" : "Granite";
+  const content = document.createElement("p");
+  content.textContent = text;
+  turn.append(speaker, content);
+  elements.wakeConversationList.appendChild(turn);
+}
+
+function renderWakeConversation() {
+  const visible = Boolean(state.settings.wake_show_conversation);
+  elements.wakeWordScreen.classList.toggle("show-conversation", visible);
+  elements.wakeConversationToggle.setAttribute("aria-pressed", String(visible));
+  elements.wakeConversationToggle.textContent = visible
+    ? "Hide conversation"
+    : "Show conversation";
+  elements.wakeConversationPanel.setAttribute("aria-hidden", String(!visible));
+  elements.wakeConversationList.replaceChildren();
+  if (!state.sessionHistory.length) {
+    const empty = document.createElement("p");
+    empty.className = "wake-conversation-empty";
+    empty.textContent = "Your current conversation will appear here while wake mode stays active.";
+    elements.wakeConversationList.appendChild(empty);
+    return;
+  }
+  for (const turn of state.sessionHistory) {
+    appendWakeTranscriptTurn("user", turn.user_transcript);
+    appendWakeTranscriptTurn("assistant", turn.assistant_response);
+  }
+  elements.wakeConversationList.scrollTop = elements.wakeConversationList.scrollHeight;
 }
 
 function restoreConversationHistory() {
@@ -2236,6 +2278,11 @@ elements.themeButton.addEventListener("click", () => {
 elements.newConversation.addEventListener("click", startNewConversation);
 elements.exportChat.addEventListener("click", exportChat);
 elements.wakeWordButton.addEventListener("click", startWakeWordMode);
+elements.wakeConversationToggle.addEventListener("click", () => {
+  state.settings.wake_show_conversation = !state.settings.wake_show_conversation;
+  window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(state.settings));
+  renderWakeConversation();
+});
 elements.wakePushButton.addEventListener("click", () => {
   if (state.wakeWord.phase === "waiting") beginWakeCommand();
   else if (state.wakeWord.phase === "listening") finishWakeCommand({ force: true });

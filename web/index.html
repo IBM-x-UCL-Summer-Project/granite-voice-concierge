@@ -8,7 +8,7 @@
       content="Granite Voice Concierge local conversation interface"
     />
     <title>Granite Voice Concierge</title>
-    <link rel="stylesheet" href="./styles.css?v=20260816-6" />
+    <link rel="stylesheet" href="./styles.css?v=20260817-3" />
   </head>
   <body>
     <div class="app-shell">
@@ -157,6 +157,15 @@
               Conversation
             </button>
           </form>
+          <button
+            class="wake-conversation-toggle"
+            id="wake-conversation-toggle"
+            type="button"
+            aria-controls="wake-conversation-panel"
+            aria-pressed="false"
+          >
+            Show conversation
+          </button>
           <details class="wake-settings">
             <summary>Wake settings</summary>
             <div class="wake-settings-panel">
@@ -170,6 +179,18 @@
               <input id="wake-quick-maximum" type="range" min="8" max="30" value="20" step="1" />
             </div>
           </details>
+          <aside
+            class="wake-conversation-panel"
+            id="wake-conversation-panel"
+            aria-label="Current conversation"
+            aria-hidden="true"
+          >
+            <header>
+              <p class="eyebrow">Current session</p>
+              <h2>Conversation</h2>
+            </header>
+            <div class="wake-conversation-list" id="wake-conversation-list"></div>
+          </aside>
           <div class="wake-word-stage">
             <p class="eyebrow">Hands-free · processed locally</p>
             <h1 id="wake-word-title">Say “Hey Jarvis”</h1>
@@ -433,6 +454,6 @@
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
     <script src="./playback-policy.js?v=20260815"></script>
     <script src="./wake-capture-policy.js?v=20260817"></script>
-    <script src="./app.js?v=20260817-2"></script>
+    <script src="./app.js?v=20260817-3"></script>
   </body>
 </html>

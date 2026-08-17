@@ -28,6 +28,8 @@ class TestRecognisingRequests:
         [
             "remind me to take my pills",
             "set a timer for ten minutes",
+            "set the timer for five minutes",
+            "start a timer for two minutes",
             "set a reminder for tomorrow",
             "wake me at seven",
             "let me know in five minutes",
@@ -47,6 +49,9 @@ class TestRecognisingRequests:
     )
     def test_other_requests_are_not_reminders(self, transcript: str) -> None:
         assert is_reminder_request(transcript) is False
+
+    def test_resetting_something_is_not_mistaken_for_setting_a_timer(self) -> None:
+        assert is_reminder_request("reset the timer display") is False
 
 
 @pytest.mark.unit
@@ -88,6 +93,17 @@ class TestOneOffReminders:
         assert reminder is not None
         assert reminder.kind == "timer"
         assert "timer" in reminder.announcement.lower()
+
+    @pytest.mark.parametrize(
+        "transcript",
+        ["set the timer for 5 minutes", "start a timer for five minutes"],
+    )
+    def test_natural_timer_variants_are_parsed(self, transcript: str) -> None:
+        reminder = parse_reminder(transcript, now=NOW)
+
+        assert reminder is not None
+        assert reminder.kind == "timer"
+        assert reminder.due_at == NOW + 300
 
     def test_a_reminder_is_not_a_timer(self) -> None:
         reminder = parse_reminder("remind me to stretch in 5 minutes", now=NOW)

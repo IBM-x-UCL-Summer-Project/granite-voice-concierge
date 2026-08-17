@@ -194,8 +194,8 @@ def test_static_ui_disables_browser_cache() -> None:
     assert cache_control == "no-store"
     assert "./playback-policy.js?v=20260815" in html
     assert "./wake-capture-policy.js?v=20260817" in html
-    assert "./app.js?v=20260817-2" in html
-    assert "./styles.css?v=20260816-6" in html
+    assert "./app.js?v=20260817-3" in html
+    assert "./styles.css?v=20260817-3" in html
 
 
 def test_browser_never_persists_conversation_state() -> None:
@@ -226,6 +226,8 @@ def test_browser_exposes_waiting_wake_mode_and_private_chat_export() -> None:
     assert 'id="wake-push-button"' in html
     assert 'id="wake-quick-pause"' in html
     assert 'id="wake-quick-follow-up"' in html
+    assert 'id="wake-conversation-toggle"' in html
+    assert 'id="wake-conversation-panel"' in html
     assert 'id="startup-screen"' in html
     assert 'id="export-chat-button"' in html
     assert "Transcribing and thinking locally" in script
@@ -233,6 +235,11 @@ def test_browser_exposes_waiting_wake_mode_and_private_chat_export() -> None:
     assert "WAKE_COMMAND_ARM_DELAY_MILLISECONDS" in script
     assert "preRollChunks" in script
     assert "state.wakeWord.commandChunks = capture.retainedChunks" in script
+    assert "renderWakeConversation();" in script
+    assert 'suppressPlayback: command === "pause"' in script
+    assert (
+        "playback.audio.pause();\n    state.routine.playbackPaused = true" not in script
+    )
     assert 'link.href = "/api/session/export"' in script
     assert "localStorage.setItem(LEGACY_PIPELINE_STORAGE_KEY" not in script
 
@@ -579,6 +586,27 @@ def test_reminders_are_routed_and_managed_through_web_api(tmp_path: Path) -> Non
     assert created["spoken_response"].startswith("I'll remind you")
     assert edited["reminder"]["text"] == "check the bread"
     assert cancelled == {"cancelled": True, "id": identifier}
+
+
+def test_natural_timer_wording_is_stored_and_visible_in_local_data(
+    tmp_path: Path,
+) -> None:
+    service = ReminderService(ReminderStore(tmp_path / "reminders.sqlite3"))
+    features = WebFeatureServices(
+        reminder_handler=ReminderTurnHandler(service),
+    )
+    opener = build_opener(HTTPCookieProcessor(CookieJar()))
+    with running_server(features=features) as base_url:
+        created = read_json(
+            f"{base_url}/api/turn",
+            payload={"transcript": "Set the timer for 5 minutes."},
+            opener=opener,
+        )
+        listed = read_json(f"{base_url}/api/reminders", opener=opener)
+
+    assert created["spoken_response"] == "Timer set for 5 minutes."
+    assert len(listed["reminders"]) == 1
+    assert listed["reminders"][0]["kind"] == "timer"
 
 
 def test_guided_routine_keeps_its_place_in_web_session() -> None:

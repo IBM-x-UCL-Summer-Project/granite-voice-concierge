@@ -23,6 +23,15 @@ class _FakeClock:
         self.now += seconds
 
 
+class _ResettableSpotter(FakeCommandSpotter):
+    def __init__(self, events) -> None:
+        super().__init__(events)
+        self.reset_count = 0
+
+    def reset(self) -> None:
+        self.reset_count += 1
+
+
 def _event(command: str) -> CommandEvent:
     return CommandEvent(command=command, phrase=command)
 
@@ -31,7 +40,11 @@ def _spotter(
     events: list[CommandEvent | None], clock: _FakeClock
 ) -> StableCommandSpotter:
     return StableCommandSpotter(
-        FakeCommandSpotter(events), confirm_window=1.0, cooldown=1.5, clock=clock
+        FakeCommandSpotter(events),
+        confirm_window=1.0,
+        cooldown=1.5,
+        required_sightings=2,
+        clock=clock,
     )
 
 
@@ -79,6 +92,57 @@ class TestConfirmation:
         spotter = _spotter([None], clock)
 
         assert spotter.process(_FRAME) is None
+
+    def test_trusted_capture_can_emit_on_one_sighting(self) -> None:
+        clock = _FakeClock()
+        spotter = StableCommandSpotter(
+            FakeCommandSpotter([_event("pause"), _event("pause")]),
+            required_sightings=1,
+            cooldown=1.5,
+            clock=clock,
+        )
+
+        assert spotter.process(_FRAME) == _event("pause")
+        clock.advance(0.1)
+        assert spotter.process(_FRAME) is None
+
+    def test_required_sightings_must_be_positive(self) -> None:
+        with pytest.raises(ValueError, match="at least one"):
+            StableCommandSpotter(FakeCommandSpotter(), required_sightings=0)
+
+    def test_default_rejects_an_early_hypothesis_that_vosk_corrects(self) -> None:
+        clock = _FakeClock()
+        spotter = StableCommandSpotter(
+            FakeCommandSpotter(
+                [
+                    _event("faster"),
+                    _event("faster"),
+                    _event("back"),
+                    _event("back"),
+                    _event("back"),
+                ]
+            ),
+            clock=clock,
+        )
+
+        observed = []
+        for _ in range(5):
+            observed.append(spotter.process(_FRAME))
+            clock.advance(0.1)
+
+        assert observed[:4] == [None, None, None, None]
+        assert observed[4] == _event("back")
+
+    def test_emitting_discards_the_rest_of_the_recognizer_utterance(self) -> None:
+        clock = _FakeClock()
+        inner = _ResettableSpotter([_event("pause")] * 3)
+        spotter = StableCommandSpotter(inner, clock=clock)
+
+        assert spotter.process(_FRAME) is None
+        assert spotter.process(_FRAME) is None
+        assert spotter.process(_FRAME) == _event("pause")
+
+        assert inner.reset_count == 1
 
 
 @pytest.mark.unit
@@ -139,8 +203,9 @@ class TestConformance:
 
     def test_defaults_to_the_real_clock(self) -> None:
         """Constructed without a clock it still works, using time.monotonic."""
-        spotter = StableCommandSpotter(FakeCommandSpotter([_event("stop")] * 2))
+        spotter = StableCommandSpotter(FakeCommandSpotter([_event("stop")] * 3))
 
+        assert spotter.process(_FRAME) is None
         assert spotter.process(_FRAME) is None
         event = spotter.process(_FRAME)  # real clock: elapsed is ~0, so within window
 

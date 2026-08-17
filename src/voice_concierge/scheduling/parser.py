@@ -29,6 +29,11 @@ REMINDER_TRIGGERS: tuple[str, ...] = (
     "let me know",
 )
 
+_SCHEDULE_REQUEST = re.compile(
+    r"\b(?:set|start)\s+(?:a|the)\s+(?:timer|reminder)\b",
+    flags=re.IGNORECASE,
+)
+
 _UNITS: dict[str, int] = {
     "second": 1,
     "minute": 60,
@@ -77,8 +82,10 @@ _TIMER_WORDS = re.compile(r"\b(timer|alarm)\b")
 
 #: Words stripped from the front of the remembered text once parsed.
 _LEAD_IN = re.compile(
-    r"^(?:please\s+)?(?:can you\s+)?(?:remind me(?:\s+to)?|set a reminder(?:\s+to)?"
-    r"|set a timer(?:\s+for)?|reminder(?:\s+to|\s+for)?|wake me(?:\s+up)?"
+    r"^(?:please\s+)?(?:can you\s+)?(?:remind me(?:\s+to)?"
+    r"|(?:set|start)\s+(?:a|the)\s+timer(?:\s+for)?"
+    r"|(?:set|start)\s+(?:a|the)\s+reminder(?:\s+to|\s+for)?"
+    r"|reminder(?:\s+to|\s+for)?|wake me(?:\s+up)?"
     r"|let me know(?:\s+to)?)\s*",
     flags=re.IGNORECASE,
 )
@@ -103,7 +110,9 @@ _LEADING_SCHEDULE = re.compile(
 def is_reminder_request(transcript: str) -> bool:
     """True when the transcript is asking for a reminder or timer."""
     lowered = transcript.casefold()
-    return any(trigger in lowered for trigger in REMINDER_TRIGGERS)
+    return any(trigger in lowered for trigger in REMINDER_TRIGGERS) or bool(
+        _SCHEDULE_REQUEST.search(transcript)
+    )
 
 
 _HALF = re.compile(r"\b(?:in|for)\s+half\s+(?:an?\s+)?(?P<unit>minute|hour|day)s?\b")
