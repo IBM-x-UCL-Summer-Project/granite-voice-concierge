@@ -193,7 +193,8 @@ def test_static_ui_disables_browser_cache() -> None:
 
     assert cache_control == "no-store"
     assert "./playback-policy.js?v=20260815" in html
-    assert "./app.js?v=20260817-1" in html
+    assert "./wake-capture-policy.js?v=20260817" in html
+    assert "./app.js?v=20260817-2" in html
     assert "./styles.css?v=20260816-6" in html
 
 
@@ -229,6 +230,9 @@ def test_browser_exposes_waiting_wake_mode_and_private_chat_export() -> None:
     assert 'id="export-chat-button"' in html
     assert "Transcribing and thinking locally" in script
     assert "beginWakeCommand({ followUp: true })" in script
+    assert "WAKE_COMMAND_ARM_DELAY_MILLISECONDS" in script
+    assert "preRollChunks" in script
+    assert "state.wakeWord.commandChunks = capture.retainedChunks" in script
     assert 'link.href = "/api/session/export"' in script
     assert "localStorage.setItem(LEGACY_PIPELINE_STORAGE_KEY" not in script
 

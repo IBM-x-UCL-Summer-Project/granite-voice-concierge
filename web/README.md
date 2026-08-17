@@ -202,8 +202,13 @@ debug logging to measure the browser/server handoff:
 Then look for `web_wake_detection` and `web_wake_timing`. The useful values are
 `server_processing_ms` (local wake model time), `wake_round_trip_ms` (complete
 browser-to-server round trip), `detection_to_capture_ms` (UI transition time),
-and `buffered_audio_ms` (audio received while detection was in flight). The
-browser console shows the same client timing events as `Granite wake timing`.
+and `buffered_audio_ms` (audio received and retained as request pre-roll while
+detection was in flight). The browser console shows the same client timing
+events as `Granite wake timing`. Retained pre-roll does not trigger a request
+on its own. Request detection arms after a short wake-tail window, so a prompt
+that continues after “Hey Jarvis” is kept while the wake phrase alone cannot
+become a spurious turn. The same guard prevents response playback tails from
+submitting empty follow-up turns.
 
 ## Guided personal setup
 

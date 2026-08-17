@@ -7,8 +7,13 @@ const WAKE_WORD_REQUEST_TIMEOUT_MILLISECONDS = 5000;
 const WAKE_WORD_FRAME_SAMPLES = 3200;
 const ROUTINE_COMMAND_FRAME_SAMPLES = 3200;
 const WAKE_COMMAND_START_TIMEOUT_MILLISECONDS = 7000;
+const WAKE_COMMAND_ARM_DELAY_MILLISECONDS = 350;
 const SILENT_WAV_URL = "data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQIAAAAAAA==";
 const { shouldAutoPlayResponse: playbackPolicyAllows } = window.GranitePlaybackPolicy;
+const {
+  prepareWakeCapture,
+  speechCanStart,
+} = window.GraniteWakeCapturePolicy;
 
 const defaultSettings = {
   version: 2,
@@ -73,6 +78,7 @@ const state = {
     sendingFrame: false,
     commandChunks: [],
     commandStartedAt: 0,
+    speechArmedAt: 0,
     lastVoiceAt: 0,
     voiceDetected: false,
     followUp: false,
@@ -1430,8 +1436,10 @@ async function flushWakeWordFrame() {
     if (result.detected
         && state.wakeWord.active
         && generation === state.wakeWord.generation) {
+      const preRollChunks = state.wakeWord.frameChunks;
       const bufferedAudioMs = state.wakeWord.frameSampleCount / 16;
       beginWakeCommand({
+        preRollChunks,
         timing: {
           detectedAt: detectionReceivedAt,
           frameSentAt,
@@ -1477,11 +1485,22 @@ function reportWakeTiming(event, metrics = {}) {
   });
 }
 
-function beginWakeCommand({ followUp = false, timing = null } = {}) {
+function beginWakeCommand({ followUp = false, timing = null, preRollChunks = [] } = {}) {
+  const captureStartedAt = performance.now();
+  const capture = prepareWakeCapture({
+    chunks: preRollChunks,
+    sampleRate: 16000,
+    captureStartedAt,
+    deferSpeechArm: Boolean(timing) || followUp,
+    armDelayMs: WAKE_COMMAND_ARM_DELAY_MILLISECONDS,
+  });
   resetWakeWordFrameBuffer();
-  state.wakeWord.commandChunks = [];
-  state.wakeWord.commandStartedAt = performance.now();
-  state.wakeWord.lastVoiceAt = state.wakeWord.commandStartedAt;
+  state.wakeWord.commandChunks = capture.retainedChunks;
+  state.wakeWord.commandStartedAt = capture.commandStartedAt;
+  state.wakeWord.lastVoiceAt = captureStartedAt;
+  state.wakeWord.speechArmedAt = capture.speechArmedAt;
+  // Retain the wake handoff audio, but require speech to continue after the
+  // detector responds. Otherwise the tail of “Jarvis” can submit by itself.
   state.wakeWord.voiceDetected = false;
   state.wakeWord.followUp = followUp;
   state.wakeWord.timing = timing;
@@ -1497,7 +1516,7 @@ function beginWakeCommand({ followUp = false, timing = null } = {}) {
       wake_frame_ms: timing.wakeFrameMs,
       wake_round_trip_ms: timing.wakeRoundTripMs,
       buffered_audio_ms: timing.bufferedAudioMs,
-      detection_to_capture_ms: state.wakeWord.commandStartedAt - timing.detectedAt,
+      detection_to_capture_ms: captureStartedAt - timing.detectedAt,
     });
   }
 }
@@ -1507,7 +1526,12 @@ function collectWakeCommand(samples) {
   const now = performance.now();
   const rms = rootMeanSquare(samples);
   const speechThreshold = Math.max(0.012, state.wakeWord.noiseFloor * 3);
-  if (rms >= speechThreshold) {
+  if (speechCanStart({
+    now,
+    speechArmedAt: state.wakeWord.speechArmedAt,
+    rms,
+    speechThreshold,
+  })) {
     if (!state.wakeWord.voiceDetected && state.wakeWord.timing) {
       reportWakeTiming("speech_started", {
         wake_to_speech_ms: now - state.wakeWord.timing.detectedAt,
