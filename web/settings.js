@@ -128,6 +128,7 @@ async function savePersonalSettings() {
     setup_complete: true,
   };
   window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(state.settings));
+  diagnostics.info("personal_settings_saved", { settings: state.settings });
   applyPersonalSettings();
   closeSetup();
   showToast("Personal settings saved on this device");
@@ -199,6 +200,13 @@ async function saveWakeQuickSettings() {
     wake_auto_follow_up: elements.wakeQuickAutoFollowUp.checked,
   };
   window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(state.settings));
+  diagnostics.info("wake_settings_saved", {
+    wake_word_sensitivity: state.settings.wake_word_sensitivity,
+    wake_end_pause_seconds: state.settings.wake_end_pause_seconds,
+    wake_follow_up_seconds: state.settings.wake_follow_up_seconds,
+    wake_max_request_seconds: state.settings.wake_max_request_seconds,
+    wake_auto_follow_up: state.settings.wake_auto_follow_up,
+  });
   elements.wakeSensitivity.value = state.settings.wake_word_sensitivity;
   elements.wakeEndPause.value = state.settings.wake_end_pause_seconds;
   elements.wakeFollowUp.value = state.settings.wake_follow_up_seconds;
@@ -270,11 +278,24 @@ async function findAudioDevices() {
     );
     const microphones = devices.filter((device) => device.kind === "audioinput").length;
     const speakers = devices.filter((device) => device.kind === "audiooutput").length;
+    diagnostics.info("audio_devices_discovered", {
+      microphones,
+      speakers,
+      devices: devices.map((device) => ({
+        kind: device.kind,
+        label: device.label,
+        device_id: device.deviceId,
+      })),
+    });
     const pipelineStatus = state.capabilities.voice_input
       ? " Local Whisper and Piper are enabled."
       : " Restart the server with --voice-io to use local Whisper and Piper.";
     elements.deviceStatus.textContent = `Found ${microphones} microphone${microphones === 1 ? "" : "s"} and ${speakers} speaker${speakers === 1 ? "" : "s"}.${pipelineStatus}`;
   } catch (error) {
+    diagnostics.error("audio_device_discovery_failed", {
+      error_name: error.name,
+      error_message: error.message,
+    });
     elements.deviceStatus.textContent = error.name === "NotAllowedError"
       ? "Microphone access was not allowed. You can keep the system defaults."
       : error.message || "Devices could not be listed. System defaults remain available.";
@@ -295,5 +316,4 @@ function populateDeviceSelect(select, devices, defaultLabel, fallbackLabel) {
     ? selectedValue
     : "default";
 }
-
 

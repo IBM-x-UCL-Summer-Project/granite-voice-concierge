@@ -42,6 +42,12 @@ async function startVoiceCommandListening() {
       || state.voiceCommands.starting) return;
   state.voiceCommands.starting = true;
   const generation = state.voiceCommands.generation;
+  diagnostics.debug("voice_command_listener_starting", {
+    generation,
+    routine_active: state.routine.active,
+    playback_active: Boolean(state.playback),
+    wake_word_active: state.wakeWord.active,
+  });
   try {
     await requestJson(
       "/api/routine-command/start",
@@ -52,6 +58,7 @@ async function startVoiceCommandListening() {
       },
     );
     state.voiceCommands.serverActive = true;
+    diagnostics.info("voice_command_backend_started", { generation });
     resetVoiceCommandFrameBuffer();
     if (!voiceCommandContextActive()
         || generation !== state.voiceCommands.generation) {
@@ -96,6 +103,11 @@ async function startVoiceCommandListening() {
       silentGain,
       sourceRate: context.sampleRate,
     };
+    diagnostics.info("voice_command_microphone_started", {
+      generation,
+      sample_rate: context.sampleRate,
+      microphone_id: state.settings.microphone_id,
+    });
     processor.onaudioprocess = (event) => {
       const samples = resampleAudio(
         new Float32Array(event.inputBuffer.getChannelData(0)),
@@ -107,6 +119,12 @@ async function startVoiceCommandListening() {
   } catch (error) {
     state.voiceCommands.serverActive = false;
     tearDownVoiceCommandAudio();
+    diagnostics.error("voice_command_listener_failed", {
+      generation,
+      error_name: error.name,
+      error_message: error.message,
+      stack: error.stack || null,
+    });
     showToast(error.name === "NotAllowedError"
       ? "Microphone access is needed for hands-free playback controls"
       : "Hands-free playback controls are unavailable");
@@ -122,6 +140,10 @@ function stopVoiceCommandListening() {
   resetVoiceCommandFrameBuffer();
   tearDownVoiceCommandAudio();
   state.voiceCommands.serverActive = false;
+  diagnostics.info("voice_command_listener_stopped", {
+    generation: state.voiceCommands.generation,
+    server_was_active: wasServerActive,
+  });
   if (!wasServerActive) return;
   requestJson(
     "/api/routine-command/stop",
@@ -174,6 +196,12 @@ async function flushVoiceCommandFrame() {
     if (result.command
         && voiceCommandContextActive()
         && generation === state.voiceCommands.generation) {
+      diagnostics.info("voice_command_detected", {
+        command: result.command,
+        phrase: result.phrase,
+        confidence: result.confidence,
+        target: state.routine.active ? "routine" : "playback",
+      });
       if (state.routine.active) await handleRoutineVoiceCommand(result.command);
       else await handlePlaybackVoiceCommand(result.command);
     }
@@ -195,7 +223,7 @@ async function handlePlaybackVoiceCommand(command) {
   if (!state.playback || !isPlaybackBargeInCommand(command)) return;
   resetVoiceCommandFrameBuffer();
   if (command === "stop") {
-    stopPlayback();
+    stopPlayback({ reason: "voice_command" });
     showToast("Response stopped");
   } else if (command === "pause") {
     if (pausePlayback()) showToast("Response paused — say Continue to resume");
@@ -213,6 +241,11 @@ async function handleRoutineVoiceCommand(command) {
     return;
   }
   resetVoiceCommandFrameBuffer();
+  diagnostics.info("routine_voice_command", {
+    command,
+    status: state.routine.status,
+    awaiting_confirmation: state.routine.awaiting_confirmation,
+  });
   cancelRoutineAutoAdvance();
   stopPlayback();
   const deadline = performance.now() + 1500;
@@ -249,6 +282,10 @@ function syncRoutineState(routine) {
     ...next,
     active: Boolean(next.active),
   };
+  diagnostics.info("routine_state_updated", {
+    previous_active: previousActive,
+    routine: next,
+  });
   if (Number.isFinite(next.pace_delta)) {
     state.settings.speech_rate = Math.max(
       0.6,
@@ -326,5 +363,4 @@ function armRoutineConfirmationWindow() {
     }, 500);
   });
 }
-
 

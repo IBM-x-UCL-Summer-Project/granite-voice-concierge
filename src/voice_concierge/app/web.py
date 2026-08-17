@@ -75,6 +75,23 @@ MAX_REQUEST_BYTES = 16 * 1024 * 1024
 MAX_WEB_SESSIONS = 32
 MAX_WEB_SESSION_HISTORY = 200
 MAX_WAKE_WORD_FRAME_BYTES = 64 * 1024
+MAX_REQUEST_ID_LENGTH = 80
+CLIENT_REQUEST_ID_HEADER = "X-Client-Request-ID"
+REQUEST_ID_HEADER = "X-Request-ID"
+CLIENT_DIAGNOSTIC_LEVELS = {
+    "debug": logging.DEBUG,
+    "info": logging.INFO,
+    "warning": logging.WARNING,
+    "error": logging.ERROR,
+}
+HIGH_FREQUENCY_ENDPOINTS = frozenset(
+    {
+        "/api/wake-word/frame",
+        "/api/routine-command/frame",
+        "/api/diagnostics/client-event",
+        "/api/diagnostics/wake-timing",
+    }
+)
 WAKE_TIMING_EVENTS = frozenset(
     {"wake_detected", "command_capture_started", "speech_started", "command_finished"}
 )
@@ -283,11 +300,16 @@ class StartupReadiness:
             return {"status": self._status, "message": self._message}
 
     def _run(self) -> None:
+        started_at = time.monotonic()
+        LOGGER.debug("web_startup_warmup_started")
         try:
             assert self._warm_up is not None
             self._warm_up()
         except Exception:
-            LOGGER.exception("web_startup_warmup_failed")
+            LOGGER.exception(
+                "web_startup_warmup_failed duration_ms=%d",
+                round((time.monotonic() - started_at) * 1000),
+            )
             with self._lock:
                 self._status = "error"
                 self._message = (
@@ -298,6 +320,10 @@ class StartupReadiness:
         with self._lock:
             self._status = "ready"
             self._message = "Local engine is ready."
+        LOGGER.debug(
+            "web_startup_warmup_completed duration_ms=%d",
+            round((time.monotonic() - started_at) * 1000),
+        )
 
 
 class PipelineWebServer(ThreadingHTTPServer):
@@ -317,12 +343,14 @@ class PipelineWebServer(ThreadingHTTPServer):
         wake_word_service: WebWakeWordService | None = None,
         routine_command_service: WebRoutineCommandService | None = None,
         warm_up: Callable[[], None] | None = None,
+        diagnostics_enabled: bool = False,
     ) -> None:
         resolved_policy_profile = validate_reasoning_policy_profile(policy_profile)
         self.pipeline = pipeline
         self.features = features or WebFeatureServices()
         self.wake_word_service = wake_word_service
         self.routine_command_service = routine_command_service
+        self.diagnostics_enabled = diagnostics_enabled
         self.web_directory = web_directory
         self.capabilities = {
             "text_input": True,
@@ -335,6 +363,7 @@ class PipelineWebServer(ThreadingHTTPServer):
             "playback_barge_in": (
                 routine_command_service is not None and voice_input_enabled
             ),
+            "diagnostics": diagnostics_enabled,
             **self.features.capabilities,
         }
         self.runtime = {
@@ -359,7 +388,15 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
         )
 
     def do_GET(self) -> None:  # noqa: N802
+        self._active_request_id = self._resolve_request_id()
+        self._active_request_started_at = time.monotonic()
         path = urlsplit(self.path).path
+        if path.startswith("/api/"):
+            LOGGER.debug(
+                "web_request_started request_id=%s method=GET endpoint=%s",
+                self._active_request_id,
+                path,
+            )
         if path == "/api/health":
             readiness = self.server.readiness.snapshot()
             self._write_json(
@@ -497,16 +534,20 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
         """Keep continuous local wake-word frames out of terminal noise."""
 
         if urlsplit(self.path).path in {
+            "/api/health",
             "/api/wake-word/frame",
             "/api/routine-command/frame",
             "/api/diagnostics/wake-timing",
+            "/api/diagnostics/client-event",
         }:
             return
         super().log_request(code, size)
 
     def do_POST(self) -> None:  # noqa: N802
-        request_id = secrets.token_hex(4)
+        self._active_request_id = self._resolve_request_id()
+        request_id = self._active_request_id
         started_at = time.monotonic()
+        self._active_request_started_at = started_at
         path = urlsplit(self.path).path
         if path in {"/api/turn", "/api/audio"} and not self.server.readiness.ready:
             readiness = self.server.readiness.snapshot()
@@ -536,6 +577,12 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
 
         try:
             payload = self._read_json_body()
+            LOGGER.debug(
+                "web_turn_started request_id=%s endpoint=%s payload=%s",
+                request_id,
+                path,
+                _diagnostic_json(payload),
+            )
             session_id, response = self.server.sessions.process(
                 self._posted_session_id(),
                 lambda resolved_id, state: self._run_turn(
@@ -597,6 +644,12 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
             memory_status or "none",
             memory_detail or "none",
         )
+        LOGGER.debug(
+            "web_turn_response request_id=%s endpoint=%s response=%s",
+            request_id,
+            path,
+            _diagnostic_json(response),
+        )
         self._write_json(HTTPStatus.OK, response, session_id=session_id)
 
     def _run_turn(
@@ -630,6 +683,11 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
                 record_conversation=not automatic_routine,
             )
             if response is None:
+                LOGGER.debug(
+                    "web_turn_route session_id=%s route=reasoning transcript=%r",
+                    session_id,
+                    request.transcript,
+                )
                 response = app_turn_result_to_dict(
                     self.server.pipeline.process_request(request)
                 )
@@ -656,10 +714,21 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
             return handle_audio_turn(payload, self.server.pipeline)
         audio = captured_audio_from_payload(payload)
         options = app_turn_options_from_dict(payload.get("options"))
+        transcription_started_at = time.monotonic()
         try:
             transcript = speech_to_text.transcribe(audio)
         except Exception:
+            LOGGER.exception(
+                "web_audio_transcription_failed audio_seconds=%.3f fallback=adapter",
+                audio.duration_seconds,
+            )
             return handle_audio_turn(payload, self.server.pipeline)
+        LOGGER.debug(
+            "web_audio_transcribed duration_ms=%d audio_seconds=%.3f transcript=%r",
+            round((time.monotonic() - transcription_started_at) * 1000),
+            audio.duration_seconds,
+            transcript.text,
+        )
         routed = self.server.features.route_transcript(
             self.server.pipeline,
             session_id,
@@ -669,6 +738,11 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
         )
         if routed is not None:
             return routed
+        LOGGER.debug(
+            "web_turn_route session_id=%s route=reasoning transcript=%r",
+            session_id,
+            transcript.text,
+        )
         return app_turn_result_to_dict(
             self.server.pipeline.process_transcript_result(
                 transcript,
@@ -698,11 +772,22 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
             "/api/routine-command/reset",
             "/api/routine-command/stop",
             "/api/diagnostics/wake-timing",
+            "/api/diagnostics/client-event",
         }
         if path not in known_paths:
             return False
         try:
             payload = self._read_json_body()
+            if path not in HIGH_FREQUENCY_ENDPOINTS:
+                LOGGER.debug(
+                    "web_control_request_started request_id=%s endpoint=%s payload=%s",
+                    self._active_request_id,
+                    path,
+                    _diagnostic_json(payload),
+                )
+            if path == "/api/diagnostics/client-event":
+                self._handle_client_diagnostic_post(payload)
+                return True
             if path == "/api/diagnostics/wake-timing":
                 self._handle_wake_timing_post(payload)
                 return True
@@ -763,6 +848,31 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
             )
         return True
 
+    def _handle_client_diagnostic_post(self, payload: Mapping[str, Any]) -> None:
+        """Mirror browser activity into the local DEBUG diagnostic stream."""
+
+        event = _required_nonblank_string(payload, "event")
+        level_name = _required_nonblank_string(payload, "level").casefold()
+        level = CLIENT_DIAGNOSTIC_LEVELS.get(level_name)
+        if level is None:
+            raise PayloadValidationError("level is not a supported diagnostic level.")
+        browser_id = _optional_nonblank_string(payload, "browser_id") or "unknown"
+        timestamp = _optional_nonblank_string(payload, "timestamp") or "unknown"
+        details = payload.get("details", {})
+        if not isinstance(details, Mapping):
+            raise PayloadValidationError("details must be an object.")
+        LOGGER.log(
+            level,
+            "browser_event request_id=%s browser_id=%s timestamp=%s "
+            "event=%s details=%s",
+            self._active_request_id,
+            browser_id,
+            timestamp,
+            event,
+            _diagnostic_json(details),
+        )
+        self._write_json(HTTPStatus.OK, {"recorded": True})
+
     def _handle_wake_timing_post(self, payload: Mapping[str, Any]) -> None:
         """Write privacy-safe browser wake/VAD timings at DEBUG level."""
 
@@ -810,6 +920,7 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
         if path == "/api/routine-command/start":
             session_id = self.server.sessions.ensure(posted_session_id)
             service.start(session_id)
+            LOGGER.debug("web_voice_command_listener_started session_id=%s", session_id)
             self._write_json(
                 HTTPStatus.OK,
                 {"active": True, "sample_rate": 16000},
@@ -817,9 +928,15 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
             )
             return
         if path == "/api/routine-command/stop":
+            stopped = service.stop(posted_session_id)
+            LOGGER.debug(
+                "web_voice_command_listener_stopped session_id=%s stopped=%s",
+                posted_session_id or "none",
+                stopped,
+            )
             self._write_json(
                 HTTPStatus.OK,
-                {"active": not service.stop(posted_session_id)},
+                {"active": not stopped},
             )
             return
         if path == "/api/routine-command/reset":
@@ -840,6 +957,15 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
             event = service.process_pcm(posted_session_id, pcm)
         except ValueError as exc:
             raise PayloadValidationError(str(exc)) from exc
+        if event is not None:
+            LOGGER.debug(
+                "web_voice_command_detected session_id=%s command=%s phrase=%r "
+                "confidence=%s",
+                posted_session_id or "none",
+                event.command,
+                event.phrase,
+                event.confidence,
+            )
         self._write_json(
             HTTPStatus.OK,
             {
@@ -870,6 +996,13 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
                 threshold = service.start(session_id, sensitivity=sensitivity)
             except ValueError as exc:
                 raise PayloadValidationError(str(exc)) from exc
+            LOGGER.debug(
+                "web_wake_listener_started session_id=%s sensitivity=%s "
+                "confidence_threshold=%.3f",
+                session_id,
+                sensitivity,
+                threshold,
+            )
             self._write_json(
                 HTTPStatus.OK,
                 {
@@ -882,9 +1015,15 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
             return
 
         if path == "/api/wake-word/stop":
+            stopped = service.stop(posted_session_id)
+            LOGGER.debug(
+                "web_wake_listener_stopped session_id=%s stopped=%s",
+                posted_session_id or "none",
+                stopped,
+            )
             self._write_json(
                 HTTPStatus.OK,
-                {"active": not service.stop(posted_session_id)},
+                {"active": not stopped},
             )
             return
 
@@ -1038,6 +1177,20 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
         session = cookies.get(SESSION_COOKIE_NAME)
         return session.value if session is not None else None
 
+    def _resolve_request_id(self) -> str:
+        client_request_id = self.headers.get(CLIENT_REQUEST_ID_HEADER, "").strip()
+        if (
+            client_request_id
+            and len(client_request_id) <= MAX_REQUEST_ID_LENGTH
+            and client_request_id.isascii()
+            and all(
+                character.isalnum() or character in "-_"
+                for character in client_request_id
+            )
+        ):
+            return client_request_id
+        return secrets.token_hex(8)
+
     def _read_json_body(self) -> Mapping[str, Any]:
         content_length = self.headers.get("Content-Length")
         try:
@@ -1061,11 +1214,35 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
         *,
         session_id: str | None = None,
     ) -> None:
+        path = urlsplit(self.path).path
+        if path not in HIGH_FREQUENCY_ENDPOINTS and path not in {
+            "/api/turn",
+            "/api/audio",
+        }:
+            started_at = getattr(self, "_active_request_started_at", None)
+            duration_ms = (
+                round((time.monotonic() - started_at) * 1000)
+                if started_at is not None
+                else 0
+            )
+            LOGGER.debug(
+                "web_response request_id=%s method=%s endpoint=%s status=%d "
+                "duration_ms=%d payload=%s",
+                getattr(self, "_active_request_id", "none"),
+                self.command,
+                path,
+                int(status),
+                duration_ms,
+                _diagnostic_json(payload),
+            )
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        request_id = getattr(self, "_active_request_id", None)
+        if request_id is not None:
+            self.send_header(REQUEST_ID_HEADER, request_id)
         if session_id is not None:
             self.send_header(
                 "Set-Cookie",
@@ -1083,12 +1260,23 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
         *,
         filename: str,
     ) -> None:
+        LOGGER.debug(
+            "web_response request_id=%s method=%s endpoint=%s status=%d payload=%s",
+            getattr(self, "_active_request_id", "none"),
+            self.command,
+            urlsplit(self.path).path,
+            int(HTTPStatus.OK),
+            _diagnostic_json(payload),
+        )
         body = json.dumps(payload, indent=2).encode("utf-8")
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
         self.send_header("Cache-Control", "no-store")
+        request_id = getattr(self, "_active_request_id", None)
+        if request_id is not None:
+            self.send_header(REQUEST_ID_HEADER, request_id)
         self.end_headers()
         self.wfile.write(body)
 
@@ -1268,7 +1456,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--log-file",
         type=Path,
         default=None,
-        help="Optional local diagnostic log file; transcript text is not logged.",
+        help=(
+            "Optional local diagnostic log file. DEBUG includes browser events, "
+            "prompts, responses, routing, and pipeline timings."
+        ),
     )
     args = parser.parse_args(argv)
     _configure_logging(args.log_level, args.log_file)
@@ -1321,6 +1512,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         wake_word_service=wake_word_service,
         routine_command_service=routine_command_service,
         warm_up=None if args.demo else pipeline.warm_up,
+        diagnostics_enabled=args.log_level == "DEBUG",
     )
     features.start()
     print(f"Granite web UI: http://{args.host}:{args.port}")
@@ -1349,7 +1541,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _configure_logging(level: str, log_file: Path | None) -> None:
-    """Configure privacy-conscious local diagnostics for the web process."""
+    """Configure detailed local diagnostics for the web process."""
 
     handlers: list[logging.Handler] = [logging.StreamHandler()]
     if log_file is not None:
@@ -1365,6 +1557,28 @@ def _configure_logging(level: str, log_file: Path | None) -> None:
     # clients otherwise emit one INFO line per model-management request.
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+
+def _diagnostic_json(value: object) -> str:
+    """Serialize diagnostic data while replacing large encoded audio bodies."""
+
+    return json.dumps(_summarize_diagnostic_value(value), sort_keys=True, default=str)
+
+
+def _summarize_diagnostic_value(value: object, *, key: str = "") -> object:
+    if isinstance(value, str) and key.casefold().endswith("base64"):
+        return f"<base64 characters={len(value)}>"
+    if isinstance(value, Mapping):
+        return {
+            str(item_key): _summarize_diagnostic_value(
+                item_value,
+                key=str(item_key),
+            )
+            for item_key, item_value in value.items()
+        }
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return [_summarize_diagnostic_value(item) for item in value]
+    return value
 
 
 def _required_positive_int(payload: Mapping[str, Any], field: str) -> int:

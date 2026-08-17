@@ -1,7 +1,15 @@
 // Wake-word detection, VAD capture, and follow-up listening.
 
 function setWakeWordView(phase, { title, status, detail } = {}) {
+  const previous = state.wakeWord.phase;
   state.wakeWord.phase = phase;
+  diagnostics.info("wake_phase_changed", {
+    previous,
+    current: phase,
+    title: title || null,
+    status: status || null,
+    detail: detail || null,
+  });
   elements.wakeWordScreen.dataset.state = phase;
   if (title) elements.wakeWordTitle.textContent = title;
   if (status) elements.wakeWordStatus.textContent = status;
@@ -47,6 +55,11 @@ async function startWakeWordMode() {
   const generation = state.wakeWord.generation + 1;
   state.wakeWord.generation = generation;
   state.wakeWord.sendingFrame = false;
+  diagnostics.info("wake_mode_starting", {
+    generation,
+    sensitivity: state.settings.wake_word_sensitivity,
+    microphone_id: state.settings.microphone_id,
+  });
 
   unlockResponsePlayback();
   if (!elements.wakeWordScreen.open) elements.wakeWordScreen.showModal();
@@ -93,12 +106,17 @@ async function startWakeWordMode() {
     tearDownVoiceCommandAudio();
     state.wakeWord.noiseFloor = 0.004;
     processor.onaudioprocess = handleWakeWordAudio;
+    diagnostics.info("wake_microphone_started", {
+      generation,
+      sample_rate: context.sampleRate,
+    });
     await requestJson(
       "/api/wake-word/start",
       { sensitivity: Number(state.settings.wake_word_sensitivity) },
       { timeoutMilliseconds: WAKE_WORD_REQUEST_TIMEOUT_MILLISECONDS },
     );
     if (generation !== state.wakeWord.generation) return;
+    diagnostics.info("wake_backend_started", { generation });
     resetWakeWordFrameBuffer();
     setWakeWordView("waiting", {
       title: "Say “Hey Jarvis”",
@@ -109,6 +127,12 @@ async function startWakeWordMode() {
     if (generation !== state.wakeWord.generation) return;
     state.wakeWord.active = false;
     tearDownWakeWordAudio();
+    diagnostics.error("wake_mode_failed", {
+      generation,
+      error_name: error.name,
+      error_message: error.message,
+      stack: error.stack || null,
+    });
     setWakeWordView("error", {
       title: "Wake mode unavailable",
       status: error.name === "NotAllowedError"
@@ -129,6 +153,10 @@ function stopWakeWordMode() {
   state.wakeWord.phase = "inactive";
   resetWakeWordFrameBuffer();
   state.wakeWord.commandChunks = [];
+  diagnostics.info("wake_mode_stopped", {
+    was_active: wasActive,
+    generation: state.wakeWord.generation,
+  });
   if (elements.wakeWordScreen.open) elements.wakeWordScreen.close();
   tearDownWakeWordAudio();
   if (voiceCommandContextActive()) {
@@ -204,6 +232,11 @@ async function flushWakeWordFrame() {
     if (result.detected
         && state.wakeWord.active
         && generation === state.wakeWord.generation) {
+      diagnostics.info("wake_word_detected", {
+        phrase: result.phrase,
+        confidence: result.confidence,
+        server_round_trip_ms: detectionReceivedAt - frameSentAt,
+      });
       const preRollChunks = state.wakeWord.frameChunks;
       const bufferedAudioMs = state.wakeWord.frameSampleCount / 16;
       beginWakeCommand({
@@ -240,7 +273,7 @@ function reportWakeTiming(event, metrics = {}) {
   for (const [name, value] of Object.entries(metrics)) {
     if (Number.isFinite(value) && value >= 0) payload[name] = value;
   }
-  console.debug("Granite wake timing", payload);
+  diagnostics.debug("wake_timing", payload);
   requestJson(
     "/api/diagnostics/wake-timing",
     payload,
@@ -272,6 +305,13 @@ function beginWakeCommand({ followUp = false, timing = null, preRollChunks = [] 
   state.wakeWord.voiceDetected = false;
   state.wakeWord.followUp = followUp;
   state.wakeWord.timing = timing;
+  diagnostics.info("wake_command_capture_started", {
+    follow_up: followUp,
+    pre_roll_chunks: preRollChunks.length,
+    retained_chunks: capture.retainedChunks.length,
+    speech_armed_at: capture.speechArmedAt,
+    timing,
+  });
   setWakeWordView("listening", {
     title: followUp ? "Anything else?" : "I’m listening",
     status: followUp ? "Listening for a follow-up" : "Speak your request",
@@ -360,6 +400,11 @@ async function finishWakeCommand({ force = false } = {}) {
     detail: "This can take a moment while the on-device models prepare the response.",
   });
   const samples = mergeAudioChunks(chunks);
+  diagnostics.info("wake_command_submitted", {
+    forced: force,
+    sample_count: samples.length,
+    duration_ms: Math.round(samples.length / 16),
+  });
   const response = await runTurn({ kind: "audio", wavBase64: encodeWavBase64(samples, 16000) });
   await waitForResponsePlayback();
   if (state.wakeWord.active) {
@@ -395,5 +440,3 @@ function resumeWakeWordListening(status) {
 function waitForResponsePlayback() {
   return state.playback?.completion || Promise.resolve();
 }
-
-

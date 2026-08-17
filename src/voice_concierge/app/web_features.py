@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from collections import OrderedDict, deque
 from collections.abc import Callable
@@ -37,6 +38,7 @@ from voice_concierge.scheduling.types import Reminder
 
 MAX_ROUTINE_SESSIONS = 32
 MAX_DUE_NOTIFICATIONS = 64
+LOGGER = logging.getLogger("voice_concierge.web.features")
 _SAFETY_INTERRUPT = re.compile(
     r"\b(?:emergency|gas\s+leak|smell\s+gas|fire|smoke|can't\s+breathe|"
     r"cannot\s+breathe|chest\s+pain|severe\s+bleeding|in\s+danger)\b",
@@ -281,14 +283,23 @@ class WebFeatureServices:
             or current_state.pending_bulk_memory_delete
             or current_state.context.pending_mode is not None
         ):
+            LOGGER.debug(
+                "web_feature_route session_id=%s route=pipeline_pending transcript=%r",
+                session_id,
+                transcript,
+            )
             return None
 
         response: str | None = None
+        route: str | None = None
         if self.routine_sessions is not None:
             response = self.routine_sessions.route(session_id, transcript)
+            if response is not None:
+                route = "guided_routine"
         if response is None and self.reminder_handler is not None:
             if self.reminder_handler.handles(transcript):
                 response = self.reminder_handler.run(transcript)
+                route = "reminder"
         if response is None and self.privacy_centre is not None:
             if _is_privacy_summary_request(transcript):
                 report = build_report(self.privacy_centre)
@@ -298,8 +309,17 @@ class WebFeatureServices:
                     "device. Recorded audio and conversation history are not stored. "
                     "Open Local data to review or change saved memories."
                 )
+                route = "privacy_summary"
         if response is None:
             return None
+
+        LOGGER.debug(
+            "web_feature_route session_id=%s route=%s transcript=%r response=%r",
+            session_id,
+            route,
+            transcript,
+            response,
+        )
 
         result = pipeline.process_local_response(
             transcript,

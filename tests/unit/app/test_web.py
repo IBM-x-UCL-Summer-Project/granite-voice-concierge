@@ -58,6 +58,7 @@ from voice_concierge.voice_input.wake_word_detector import WakeWordPrediction
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 WEB_APPLICATION_SCRIPTS = (
     "app-context.js",
+    "diagnostics.js",
     "settings.js",
     "conversation.js",
     "api-client.js",
@@ -114,6 +115,7 @@ def running_server(
     routine_command_service: WebRoutineCommandService | None = None,
     warm_up: Callable[[], None] | None = None,
     voice_input_enabled: bool = False,
+    diagnostics_enabled: bool = False,
 ) -> Iterator[str]:
     resolved_pipeline = pipeline or build_smoke_pipeline()
     server = PipelineWebServer(
@@ -125,6 +127,7 @@ def running_server(
         routine_command_service=routine_command_service,
         warm_up=warm_up,
         voice_input_enabled=voice_input_enabled,
+        diagnostics_enabled=diagnostics_enabled,
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -171,11 +174,76 @@ def test_health_reports_pipeline_capabilities() -> None:
             "wake_word": False,
             "routine_barge_in": False,
             "playback_barge_in": False,
+            "diagnostics": False,
             "reminders": False,
             "guided_routines": False,
             "privacy_centre": False,
         },
         "runtime": {"model": "smoke model", "policy_profile": "strict"},
+    }
+
+
+def test_debug_health_enables_browser_diagnostic_forwarding() -> None:
+    with running_server(diagnostics_enabled=True) as base_url:
+        response = read_json(f"{base_url}/api/health")
+
+    assert response["capabilities"]["diagnostics"] is True
+
+
+def test_api_response_echoes_valid_client_request_id() -> None:
+    with running_server() as base_url:
+        request = Request(
+            f"{base_url}/api/health",
+            headers={"X-Client-Request-ID": "browser-request-123"},
+        )
+        with urlopen(request, timeout=2) as response:
+            request_id = response.headers.get("X-Request-ID")
+
+    assert request_id == "browser-request-123"
+
+
+def test_browser_diagnostic_event_logs_full_details(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.DEBUG, logger="voice_concierge.web"):
+        with running_server(diagnostics_enabled=True) as base_url:
+            response = read_json(
+                f"{base_url}/api/diagnostics/client-event",
+                payload={
+                    "timestamp": "2026-08-17T12:00:00.000Z",
+                    "browser_id": "browser-123",
+                    "level": "info",
+                    "event": "turn_response_received",
+                    "details": {
+                        "transcript": "remember my appointment",
+                        "spoken_response": "I can remember that.",
+                    },
+                },
+            )
+
+    assert response == {"recorded": True}
+    assert "browser_event" in caplog.text
+    assert "browser_id=browser-123" in caplog.text
+    assert "event=turn_response_received" in caplog.text
+    assert "remember my appointment" in caplog.text
+    assert "I can remember that." in caplog.text
+
+
+def test_diagnostic_payload_keeps_text_and_summarizes_encoded_audio() -> None:
+    summarized = json.loads(
+        web_module._diagnostic_json(
+            {
+                "transcript": "keep this prompt",
+                "wav_base64": "QUJDRA==",
+                "nested": {"pcm_base64": "AAAA"},
+            }
+        )
+    )
+
+    assert summarized == {
+        "nested": {"pcm_base64": "<base64 characters=4>"},
+        "transcript": "keep this prompt",
+        "wav_base64": "<base64 characters=8>",
     }
 
 
@@ -217,7 +285,7 @@ def test_static_ui_disables_browser_cache() -> None:
     assert "./playback-policy.js?v=20260817" in html
     assert "./wake-capture-policy.js?v=20260817" in html
     for name in WEB_APPLICATION_SCRIPTS:
-        assert f'./{name}?v=20260817-' in html
+        assert f"./{name}?v=20260817-" in html
     assert "./app.js?v=20260817-6" in html
     assert "./styles.css?v=20260817-4" in html
 
@@ -562,6 +630,24 @@ def test_turn_log_reports_pipeline_status_without_transcript(
     assert "web_turn_completed" in caplog.text
     assert "errors=none" in caplog.text
     assert private_transcript not in caplog.text
+
+
+def test_debug_turn_log_reports_prompt_response_and_route(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG, logger="voice_concierge.web")
+    transcript = "hello from detailed diagnostics"
+
+    with running_server(diagnostics_enabled=True) as base_url:
+        response = read_json(
+            f"{base_url}/api/turn",
+            payload={"transcript": transcript},
+        )
+
+    assert transcript in caplog.text
+    assert response["spoken_response"] in caplog.text
+    assert "route=reasoning" in caplog.text
+    assert "web_turn_response" in caplog.text
 
 
 def test_web_session_retains_confirmation_when_client_omits_state() -> None:

@@ -35,19 +35,26 @@ async function speakText(
     paused: false,
   };
   state.playback = playback;
+  diagnostics.info("playback_prepared", {
+    kind: "browser_speech",
+    text,
+    speech_rate: utterance.rate,
+    volume: utterance.volume,
+  });
   if (button) {
     button.classList.add("is-playing");
     button.setAttribute("aria-label", "Stop assistant response");
     button.lastChild.textContent = " Stop response";
   }
   utterance.onend = () => {
-    if (state.playback === playback) stopPlayback();
+    if (state.playback === playback) stopPlayback({ reason: "natural_completion" });
   };
   utterance.onerror = () => {
-    if (state.playback === playback) stopPlayback();
+    if (state.playback === playback) stopPlayback({ reason: "browser_speech_error" });
   };
   await startVoiceCommandListening();
   window.speechSynthesis.speak(utterance);
+  diagnostics.info("playback_started", { kind: "browser_speech" });
 }
 
 
@@ -62,13 +69,16 @@ function confirmationKind(response) {
   return null;
 }
 
-function stopPlayback({ preserveVoiceCommands = false } = {}) {
+function stopPlayback({ preserveVoiceCommands = false, reason = "requested" } = {}) {
   const playback = state.playback;
   if (!playback) {
     window.speechSynthesis?.cancel();
     return;
   }
   state.playback = null;
+  const positionSeconds = playback.kind === "audio"
+    ? playback.audio.currentTime
+    : null;
   if (playback.kind === "speech") {
     playback.utterance.onend = null;
     playback.utterance.onerror = null;
@@ -88,6 +98,11 @@ function stopPlayback({ preserveVoiceCommands = false } = {}) {
       : " Play browser voice";
   }
   playback.resolveCompletion?.();
+  diagnostics.info("playback_stopped", {
+    kind: playback.kind,
+    reason,
+    position_seconds: positionSeconds,
+  });
   if (!preserveVoiceCommands) syncVoiceCommandListening();
 }
 
@@ -101,6 +116,10 @@ function pausePlayback() {
     playback.button.setAttribute("aria-label", "Resume assistant response");
     playback.button.lastChild.textContent = " Resume response";
   }
+  diagnostics.info("playback_paused", {
+    kind: playback.kind,
+    position_seconds: playback.kind === "audio" ? playback.audio.currentTime : null,
+  });
   return true;
 }
 
@@ -123,6 +142,10 @@ async function resumePlayback() {
     playback.button.setAttribute("aria-label", "Stop assistant response");
     playback.button.lastChild.textContent = " Stop response";
   }
+  diagnostics.info("playback_resumed", {
+    kind: playback.kind,
+    position_seconds: playback.kind === "audio" ? playback.audio.currentTime : null,
+  });
   return true;
 }
 
@@ -197,20 +220,27 @@ async function playResponse(button) {
     paused: false,
   };
   state.playback = playback;
+  diagnostics.info("playback_prepared", {
+    kind: "piper_audio",
+    wav_base64_characters: audioPayload.wav_base64.length,
+    volume: audio.volume,
+    playback_rate: audio.playbackRate,
+  });
   button.classList.add("is-playing");
   button.setAttribute("aria-label", "Stop assistant response");
   button.lastChild.textContent = " Stop response";
   audio.onended = () => {
-    if (state.playback === playback) stopPlayback();
+    if (state.playback === playback) stopPlayback({ reason: "natural_completion" });
   };
   audio.onerror = () => {
-    if (state.playback === playback) stopPlayback();
+    if (state.playback === playback) stopPlayback({ reason: "audio_error" });
   };
   try {
     await startVoiceCommandListening();
     await audio.play();
+    diagnostics.info("playback_started", { kind: "piper_audio" });
   } catch {
-    stopPlayback();
+    stopPlayback({ reason: "autoplay_blocked" });
     showToast("Automatic playback was blocked; choose Play response to retry");
   }
 }
@@ -227,5 +257,3 @@ function shouldAutoPlayResponse(response, isAudioTurn) {
     isAudioTurn,
   });
 }
-
-

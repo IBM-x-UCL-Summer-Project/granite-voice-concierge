@@ -73,6 +73,7 @@ const state = {
     guided_routines: false,
     routine_barge_in: false,
     playback_barge_in: false,
+    diagnostics: false,
     privacy_centre: false,
   },
   connection: "connecting",
@@ -222,5 +223,4 @@ function loadSettings() {
     return structuredClone(defaultSettings);
   }
 }
-
 

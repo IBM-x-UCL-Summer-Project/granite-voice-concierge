@@ -1,6 +1,7 @@
 // Memory, reminder, privacy-centre, and export controls.
 
 async function openLocalData() {
+  diagnostics.info("local_data_opened", { capabilities: state.capabilities });
   if (!elements.localDataDialog.open) elements.localDataDialog.showModal();
   await refreshLocalData();
 }
@@ -13,6 +14,14 @@ async function refreshLocalData() {
     ? getJson("/api/reminders")
     : Promise.resolve(null);
   const [privacy, reminders] = await Promise.allSettled([privacyRequest, reminderRequest]);
+  diagnostics.debug("local_data_refreshed", {
+    privacy_status: privacy.status,
+    privacy: privacy.status === "fulfilled" ? privacy.value : null,
+    privacy_error: privacy.status === "rejected" ? privacy.reason?.message : null,
+    reminders_status: reminders.status,
+    reminders: reminders.status === "fulfilled" ? reminders.value : null,
+    reminders_error: reminders.status === "rejected" ? reminders.reason?.message : null,
+  });
 
   if (privacy.status === "fulfilled" && privacy.value) {
     renderMemories(privacy.value);
@@ -256,6 +265,11 @@ async function pollDueReminders() {
   if (state.connection !== "ready" || !state.capabilities.reminders) return;
   try {
     const result = await getJson("/api/reminders/due");
+    if ((result.notifications || []).length) {
+      diagnostics.info("due_reminders_received", {
+        notifications: result.notifications,
+      });
+    }
     for (const reminder of result.notifications || []) {
       const speakButton = appendMessage("assistant", reminder.announcement, {
         audio: reminder.audio,
@@ -265,9 +279,11 @@ async function pollDueReminders() {
     if ((result.notifications || []).length && elements.localDataDialog.open) {
       await refreshLocalData();
     }
-  } catch {
+  } catch (error) {
+    diagnostics.warning("due_reminder_poll_failed", {
+      error_message: error.message,
+    });
     // Connection state and retry messaging are handled by requestJson.
   }
 }
-
 

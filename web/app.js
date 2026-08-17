@@ -204,12 +204,22 @@ elements.setupDialog.addEventListener("cancel", () => {
 
 document.documentElement.dataset.theme = window.localStorage.getItem("granite-theme") || "light";
 window.localStorage.removeItem(LEGACY_PIPELINE_STORAGE_KEY);
+diagnostics.info("browser_application_starting", {
+  location: window.location.href,
+  user_agent: navigator.userAgent,
+  settings: state.settings,
+});
 applyPersonalSettings();
 restoreConversationHistory();
 connectPipeline();
 window.setInterval(() => connectPipeline({ silent: true }), HEALTH_POLL_MILLISECONDS);
 window.setInterval(pollDueReminders, DUE_POLL_MILLISECONDS);
 window.addEventListener("pagehide", () => {
+  diagnostics.info("browser_application_stopping", {
+    connection: state.connection,
+    busy: state.busy,
+    wake_word_phase: state.wakeWord.phase,
+  });
   tearDownWakeWordAudio();
   tearDownVoiceCommandAudio();
 });

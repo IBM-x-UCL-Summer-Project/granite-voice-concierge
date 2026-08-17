@@ -9,6 +9,9 @@ async function startVoiceRecording() {
     ? true
     : { deviceId: { exact: state.settings.microphone_id } };
   try {
+    diagnostics.info("push_to_talk_capture_starting", {
+      microphone_id: state.settings.microphone_id,
+    });
     const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraint });
     const AudioContext = window.AudioContext || window.webkitAudioContext;
     const context = new AudioContext();
@@ -23,11 +26,26 @@ async function startVoiceRecording() {
     source.connect(processor);
     processor.connect(silentGain);
     silentGain.connect(context.destination);
-    state.recorder = { stream, context, source, processor, silentGain, chunks };
+    state.recorder = {
+      stream,
+      context,
+      source,
+      processor,
+      silentGain,
+      chunks,
+      startedAt: performance.now(),
+    };
+    diagnostics.info("push_to_talk_capture_started", {
+      source_sample_rate: context.sampleRate,
+    });
     elements.microphoneButton.classList.add("is-recording");
     elements.microphoneButton.setAttribute("aria-label", "Stop and send voice input");
     elements.microphoneButton.title = "Stop and send";
   } catch (error) {
+    diagnostics.error("push_to_talk_capture_failed", {
+      error_name: error.name,
+      error_message: error.message,
+    });
     showToast(error.name === "NotAllowedError"
       ? "Microphone permission was not allowed"
       : "The selected microphone is unavailable");
@@ -49,7 +67,18 @@ async function stopVoiceRecording() {
   elements.microphoneButton.title = "Start voice input";
 
   const samples = mergeAudioChunks(recorder.chunks);
+  diagnostics.info("push_to_talk_capture_stopped", {
+    capture_elapsed_ms: Math.round(performance.now() - recorder.startedAt),
+    source_sample_rate: sourceRate,
+    source_samples: samples.length,
+    audio_seconds: Number((samples.length / sourceRate).toFixed(3)),
+  });
   if (samples.length < sourceRate / 5) {
+    diagnostics.warning("push_to_talk_capture_rejected", {
+      reason: "too_short",
+      source_samples: samples.length,
+      minimum_samples: sourceRate / 5,
+    });
     showToast("That recording was too short");
     return;
   }
@@ -134,5 +163,4 @@ function encodePcmBase64(samples) {
   }
   return window.btoa(binary);
 }
-
 

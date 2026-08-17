@@ -9,6 +9,16 @@ async function runTurn(
   const transcript = isAudio ? "" : String(input || "").trim();
   if (!isAudio && !transcript) return;
 
+  const turnStartedAt = performance.now();
+  diagnostics.info("turn_started", {
+    input_kind: isAudio ? "audio" : "text",
+    transcript: isAudio ? null : transcript,
+    audio_base64_characters: isAudio ? input.wavBase64.length : 0,
+    routine_control: routineControl,
+    automatic,
+    suppress_playback: suppressPlayback,
+  });
+
   unlockResponsePlayback();
   state.running = true;
   if (!isAudio && !automatic) {
@@ -27,6 +37,16 @@ async function runTurn(
     if (!response?.state || !response?.context || !Array.isArray(response.errors)) {
       throw new Error("The local pipeline returned an incomplete response.");
     }
+
+    diagnostics.info("turn_response_received", {
+      duration_ms: Math.round(performance.now() - turnStartedAt),
+      transcript: response.transcript?.text || null,
+      spoken_response: response.spoken_response || null,
+      errors: response.errors,
+      memory_operation: response.memory_operation || null,
+      routine: response.routine || null,
+      context: response.context,
+    });
 
     if (response.context.command_action === "stop") stopPlayback();
 
@@ -47,11 +67,22 @@ async function runTurn(
     scheduleRoutineAutoAdvance();
     armRoutineConfirmationWindow();
   } catch (error) {
+    diagnostics.error("turn_failed", {
+      duration_ms: Math.round(performance.now() - turnStartedAt),
+      transcript: isAudio ? null : transcript,
+      error_name: error.name,
+      error_message: error.message,
+      stack: error.stack || null,
+    });
     removePendingMessage();
     appendPipelineError(error.message);
   } finally {
     state.running = false;
     updateSendState();
+    diagnostics.debug("turn_finished", {
+      duration_ms: Math.round(performance.now() - turnStartedAt),
+      succeeded: Boolean(completedResponse),
+    });
   }
   return completedResponse;
 }
@@ -177,6 +208,13 @@ function restoreConversationHistory() {
 function setConnectionStatus(status, health = null) {
   const previous = state.connection;
   state.connection = status;
+  if (previous !== status) {
+    diagnostics.info("connection_state_changed", {
+      previous,
+      current: status,
+      health,
+    });
+  }
   elements.runtimeDot.classList.toggle("is-offline", status === "offline");
   elements.runtimeDot.classList.toggle(
     "is-connecting",
@@ -250,6 +288,11 @@ async function restoreServerSession() {
   state.sessionLoaded = true;
   renderConversationHistory();
   saveState();
+  diagnostics.info("session_restored", {
+    turns: state.sessionHistory.length,
+    mode: state.pipeline.context.mode,
+    routine: session.routine,
+  });
 }
 
 async function connectPipeline({ silent = false } = {}) {
@@ -258,8 +301,11 @@ async function connectPipeline({ silent = false } = {}) {
     const health = await getJson("/api/health", {
       updateConnection: false,
       timeoutMilliseconds: WAKE_WORD_REQUEST_TIMEOUT_MILLISECONDS,
+      diagnostic: !silent,
     });
     state.capabilities = { ...state.capabilities, ...health.capabilities };
+    diagnostics.setEnabled(Boolean(state.capabilities.diagnostics));
+    if (!silent) diagnostics.debug("health_received", health);
     const healthStatus = ["ready", "starting", "error"].includes(health.status)
       ? health.status
       : "error";
@@ -290,7 +336,11 @@ async function connectPipeline({ silent = false } = {}) {
       !state.capabilities.wake_word,
     );
     renderState();
-  } catch {
+  } catch (error) {
+    diagnostics.error("health_check_failed", {
+      error_name: error.name,
+      error_message: error.message,
+    });
     state.capabilities = {
       text_input: false,
       voice_input: false,
@@ -300,8 +350,10 @@ async function connectPipeline({ silent = false } = {}) {
       guided_routines: false,
       routine_barge_in: false,
       playback_barge_in: false,
+      diagnostics: false,
       privacy_centre: false,
     };
+    diagnostics.setEnabled(false);
     setConnectionStatus("offline");
   }
 }
@@ -325,5 +377,3 @@ async function startNewConversation() {
     updateSendState();
   }
 }
-
-

@@ -91,8 +91,14 @@ For the complete local browser path with diagnostic logs:
 
 ```bash
 python -m voice_concierge.app.web --voice-io \
+  --log-level DEBUG \
   --log-file .local/logs/web.log
 ```
+
+DEBUG mode correlates browser and server requests and records prompts,
+responses, feature routing, local-data operations, playback/voice state, and
+pipeline timings. Encoded audio bodies are represented by their size instead
+of being copied into the log.
 
 The browser supports push-to-talk and wake-word capture, an automatic follow-up
 listening window, adjustable wake timing and sensitivity, automatic Piper

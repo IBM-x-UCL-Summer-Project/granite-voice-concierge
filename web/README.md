@@ -97,16 +97,22 @@ Long conversations therefore remain visible and survive a page reload while
 that local server session is alive, without sending every old turn back through
 the model. The header stays pinned while the transcript scrolls.
 
-For privacy-conscious diagnostic logs in both the terminal and an ignored local
+For detailed UAT diagnostic logs in both the terminal and an ignored local
 file:
 
 ```bash
 python -m voice_concierge.app.web --voice-io \
-  --log-level INFO --log-file .local/logs/web.log
+  --log-level DEBUG --log-file .local/logs/web.log
 ```
 
-Turn logs include the endpoint, duration, recoverable error codes, and typed
-memory-operation status/detail. They do not include transcript or memory text.
+DEBUG mode includes prompts, responses, selected feature/reasoning routes,
+memory and reminder operations, startup/STT/request timings, wake and barge-in
+detections, browser connection state, voice capture, and response playback.
+Each browser API request sends a client request ID which the backend returns as
+`X-Request-ID`, making the browser event and server-side pipeline entries easy
+to correlate. Raw WAV/PCM base64 bodies are represented by their character
+count instead of being copied into the log. INFO mode keeps the shorter turn
+completion summaries.
 
 For UI review without Ollama or audio models, use the deterministic pipeline
 adapters while keeping the same HTTP, serialization, state, and component flow:
@@ -114,6 +120,15 @@ adapters while keeping the same HTTP, serialization, state, and component flow:
 ```bash
 python -m voice_concierge.app.web --demo
 ```
+
+## Browser code structure
+
+The dependency-free client is split by responsibility: shared state and DOM
+references (`app-context.js`), diagnostics, settings, conversation rendering,
+API transport, playback, push-to-talk input, voice commands, wake-word mode,
+session orchestration, and local-data controls. `app.js` contains only startup
+and event wiring. `index.html` loads these classic scripts in dependency order
+so the application does not require a browser build step.
 
 ## Integration boundary
 
@@ -167,6 +182,7 @@ Additional same-origin endpoints support the connected local features:
 - guided-routine command start/frame/reset/stop under
   `POST /api/routine-command/...`;
 - privacy-safe browser wake timing under `POST /api/diagnostics/wake-timing`;
+- DEBUG browser-event forwarding under `POST /api/diagnostics/client-event`;
 - temporary state/display-history restoration under `GET /api/session`.
 
 Unknown `/api/` routes return JSON errors for both GET and POST requests. The
@@ -190,9 +206,11 @@ playback pace, with the personal device setting acting as a local multiplier.
 
 ### Wake-word timing diagnostics
 
-The browser reports timing values only—never audio or transcript text—to the
-Web process when a wake phrase starts request capture. Run the server with
-debug logging to measure the browser/server handoff:
+The dedicated wake-timing endpoint reports timing values only—never audio or
+transcript text—when a wake phrase starts request capture. Other DEBUG browser
+events deliberately include transcripts and responses for controlled UAT
+diagnosis. Run the server with debug logging to measure the browser/server
+handoff:
 
 ```bash
 .venv/bin/python -m voice_concierge.app.web --voice-io \
@@ -204,7 +222,7 @@ Then look for `web_wake_detection` and `web_wake_timing`. The useful values are
 browser-to-server round trip), `detection_to_capture_ms` (UI transition time),
 and `buffered_audio_ms` (audio received and retained as request pre-roll while
 detection was in flight). The browser console shows the same client timing
-events as `Granite wake timing`. Retained pre-roll does not trigger a request
+events as `[Granite] wake_timing`. Retained pre-roll does not trigger a request
 on its own. Request detection arms after a short wake-tail window, so a prompt
 that continues after “Hey Jarvis” is kept while the wake phrase alone cannot
 become a spurious turn. The same guard prevents response playback tails from
