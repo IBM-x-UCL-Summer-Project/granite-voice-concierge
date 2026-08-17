@@ -47,12 +47,103 @@ def test_policy_guard_adds_accessibility_preference_action() -> None:
 
     assert response.needs_confirmation is True
     assert response.proposed_memory_action is not None
-    assert response.proposed_memory_action.action == "update"
+    assert response.proposed_memory_action.action == "store"
     assert response.proposed_memory_action.content == "accessibility.verbosity=short"
     assert response.proposed_memory_action.target == MemoryTarget(
         memory_key="preference:accessibility.verbosity"
     )
     assert response.metadata["policy_guard"] == "accessibility_preference_confirmation"
+
+
+def test_policy_guard_updates_an_existing_accessibility_preference() -> None:
+    preference = memory_reference(
+        "accessibility.preferred_pace=normal",
+        memory_id=17,
+        revision=3,
+        memory_key="preference:accessibility.preferred_pace",
+    )
+
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(
+            transcript="Can you speak slower?",
+            memories=(preference,),
+        ),
+        ReasoningResponse(
+            spoken_response="I can update that. Please confirm before I save it.",
+            needs_confirmation=True,
+            proposed_memory_action=MemoryAction(
+                action="update",
+                content="accessibility.preferred_pace=slow",
+                rationale="Update speaking preference.",
+                target=preference.mutation_target(),
+            ),
+            confidence="medium",
+        ),
+    )
+
+    assert response.proposed_memory_action is not None
+    assert response.proposed_memory_action.action == "update"
+    assert response.proposed_memory_action.target == preference.mutation_target()
+
+
+def test_policy_guard_replaces_invalid_first_time_accessibility_update() -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(transcript="Can you speak slower?"),
+        ReasoningResponse(
+            spoken_response="I can update that. Please confirm before I save it.",
+            needs_confirmation=True,
+            proposed_memory_action=MemoryAction(
+                action="update",
+                content="accessibility.preferred_pace=slow",
+                rationale="Update speaking preference.",
+                target=MemoryTarget(
+                    memory_key="preference:accessibility.preferred_pace"
+                ),
+            ),
+            confidence="medium",
+        ),
+    )
+
+    assert response.proposed_memory_action is not None
+    assert response.proposed_memory_action.action == "store"
+    assert response.proposed_memory_action.target == MemoryTarget(
+        memory_key="preference:accessibility.preferred_pace"
+    )
+
+
+def test_policy_guard_rejects_memory_action_invented_by_standalone_confirmation() -> (
+    None
+):
+    coffee = memory_reference(
+        "I drink my coffee black",
+        memory_id=22,
+        revision=2,
+    )
+
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(
+            transcript="Yes, confirm.",
+            memories=(coffee,),
+        ),
+        ReasoningResponse(
+            spoken_response="Please confirm before I save that again.",
+            needs_confirmation=True,
+            proposed_memory_action=MemoryAction(
+                action="update",
+                content="I drink my coffee black",
+                rationale="Model incorrectly inferred a pending action.",
+                target=coffee.mutation_target(),
+            ),
+            confidence="medium",
+        ),
+    )
+
+    assert response.spoken_response == "There is no pending memory change to confirm."
+    assert response.needs_confirmation is False
+    assert response.proposed_memory_action is None
+    assert response.metadata["policy_guard"] == (
+        "unsolicited_confirmation_memory_action"
+    )
 
 
 def test_policy_guard_prevents_missing_shopping_list_invention() -> None:
@@ -856,7 +947,7 @@ def test_policy_guard_targets_the_retrieved_memory_for_a_correction() -> None:
 def test_policy_guard_refuses_ambiguous_memory_correction() -> None:
     response = apply_reasoning_policy_guards(
         ReasoningRequest(
-            transcript="Actually I prefer coffee, not tea.",
+            transcript="Actually I prefer a different drink now.",
             memories=(
                 memory_reference("I prefer tea.", memory_id=7),
                 memory_reference("I drink coffee in the morning.", memory_id=8),
@@ -876,6 +967,35 @@ def test_policy_guard_refuses_ambiguous_memory_correction() -> None:
     assert response.proposed_memory_action is None
     assert response.needs_confirmation is False
     assert response.metadata["policy_guard"] == "stable_memory_target_required"
+
+
+def test_policy_guard_uses_named_prior_value_to_disambiguate_correction() -> None:
+    fruit = memory_reference(
+        "my favourite fruit is bananas",
+        memory_id=31,
+        revision=2,
+    )
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(
+            transcript="Actually, my favourite fruit is apples, not bananas.",
+            memories=(
+                memory_reference("I drink my coffee black", memory_id=22),
+                fruit,
+                memory_reference(
+                    "accessibility.preferred_pace=slow",
+                    memory_id=30,
+                ),
+            ),
+        ),
+        ReasoningResponse(spoken_response="Your favourite fruit is apples."),
+    )
+
+    assert response.proposed_memory_action == MemoryAction(
+        action="update",
+        content="my favourite fruit is apples, not bananas",
+        rationale="User explicitly corrected a previously saved memory.",
+        target=fruit.mutation_target(),
+    )
 
 
 def test_policy_guard_does_not_treat_plain_actually_as_memory_correction() -> None:

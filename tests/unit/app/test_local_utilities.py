@@ -57,6 +57,8 @@ def test_unrelated_request_continues_to_reasoning() -> None:
         ("I smell gas in my home", "Leave the building immediately"),
         ("My kitchen is on fire", "stay outside"),
         ("I have chest pain", "Call emergency services now"),
+        ("I have severe chest pain", "Call emergency services now"),
+        ("Someone is having sudden chest pain", "Call emergency services now"),
     ),
 )
 def test_urgent_safety_requests_cannot_be_degraded_by_model_metadata(

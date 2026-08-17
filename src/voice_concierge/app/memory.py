@@ -155,6 +155,13 @@ class MemoryManagerGateway:
             return (shopping_list,) if shopping_list is not None else ()
 
         exact_memories: tuple[MemoryReference, ...] = ()
+        preference_key = _accessibility_preference_key(query)
+        if preference_key is not None and _scope_allows_key(scope, preference_key):
+            preference = _memory_reference(
+                self._manager.get_memory_by_key(preference_key)
+            )
+            if preference is not None:
+                exact_memories = (preference,)
         if scope == "task_relevant_only":
             task_list = _memory_reference(
                 self._manager.get_memory_by_key(TASK_LIST_MEMORY_KEY)
@@ -329,6 +336,20 @@ def _storage_metadata(scope: MemoryScope) -> tuple[str, str | None]:
         "list_relevant": ("feedback", "shopping"),
     }
     return metadata[scope]
+
+
+def _accessibility_preference_key(query: str) -> str | None:
+    normalized = " ".join(query.casefold().split())
+    if re.search(
+        r"\b(?:speak|talk|answer)\s+"
+        r"(?:(?:a|one)\s+)?(?:(?:little|bit)\s+)?"
+        r"(?:more\s+slowly|slower)\b",
+        normalized,
+    ):
+        return "preference:accessibility.preferred_pace"
+    if "keep answers short" in normalized or "short answers" in normalized:
+        return "preference:accessibility.verbosity"
+    return None
 
 
 def _memory_command_from_action(

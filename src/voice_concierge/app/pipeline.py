@@ -1003,14 +1003,19 @@ def _conversation_summary(history: tuple[ConversationTurn, ...]) -> str | None:
     if not history:
         return None
 
-    return "\n\n".join(
-        (
-            f"Previous turn {index}:\n"
-            f"User transcript: {turn.user_transcript}\n"
-            f"Assistant response: {turn.assistant_response}"
-        )
-        for index, turn in enumerate(history, start=1)
+    earlier_turns = tuple(
+        f"Earlier turn {index}:\n"
+        f"User transcript: {turn.user_transcript}\n"
+        f"Assistant response: {turn.assistant_response}"
+        for index, turn in enumerate(history[:-1], start=1)
     )
+    latest = history[-1]
+    most_recent = (
+        "Most recent completed turn:\n"
+        f"User transcript: {latest.user_transcript}\n"
+        f"Assistant response: {latest.assistant_response}"
+    )
+    return "\n\n".join((*earlier_turns, most_recent))
 
 
 def _decision_for_state(state: ContextState) -> ContextDecision:

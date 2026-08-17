@@ -506,7 +506,7 @@ def test_ollama_engine_applies_policy_guards() -> None:
 
     assert response.needs_confirmation is True
     assert response.proposed_memory_action is not None
-    assert response.proposed_memory_action.action == "update"
+    assert response.proposed_memory_action.action == "store"
     assert response.proposed_memory_action.content == "accessibility.verbosity=short"
     assert response.metadata["policy_guard"] == "accessibility_preference_confirmation"
 

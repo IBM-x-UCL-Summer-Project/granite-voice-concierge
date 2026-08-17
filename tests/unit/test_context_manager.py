@@ -191,7 +191,7 @@ class ContextManagerTest(unittest.TestCase):
 
         short_decision = self.manager.handle("Keep answers short", state)
         slow_decision = self.manager.handle(
-            "Answer more slowly",
+            "Can you speak slower?",
             short_decision.state,
         )
 

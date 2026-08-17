@@ -251,6 +251,30 @@ def test_memory_manager_gateway_semantically_retrieves_personal_context() -> Non
     assert manager.key_calls == []
 
 
+def test_memory_manager_gateway_retrieves_exact_accessibility_preference() -> None:
+    manager = FakeMemoryManager()
+    manager.keyed_memories["preference:accessibility.preferred_pace"] = _memory_record(
+        memory_id=30,
+        content="accessibility.preferred_pace=normal",
+        revision=5,
+        layer="profile",
+        memory_key="preference:accessibility.preferred_pace",
+    )
+    gateway = MemoryManagerGateway(manager)
+
+    memories = gateway.retrieve("Can you speak slower?", "personal_relevant", limit=2)
+
+    assert memories[0] == MemoryReference(
+        memory_id=30,
+        content="accessibility.preferred_pace=normal",
+        layer="profile",
+        revision=5,
+        memory_key="preference:accessibility.preferred_pace",
+    )
+    assert manager.key_calls == ["preference:accessibility.preferred_pace"]
+    assert manager.retrieve_calls[0]["top_k"] == 1
+
+
 def test_memory_manager_gateway_retrieves_shopping_list_by_stable_key() -> None:
     manager = FakeMemoryManager()
     gateway = MemoryManagerGateway(manager)

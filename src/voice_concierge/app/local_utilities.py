@@ -47,7 +47,8 @@ _FIRE_EMERGENCY = re.compile(
 _MEDICAL_EMERGENCY = re.compile(
     r"\b(?:(?:i|they|he|she|someone)\s+(?:can't|cannot)\s+breathe|"
     r"(?:i|they|he|she|someone)\s+(?:have|has|am\s+having|is\s+having|"
-    r"are\s+having)\s+chest\s+pain|"
+    r"are\s+having)\s+(?:(?:severe|sudden|crushing|intense|bad)\s+)?"
+    r"chest\s+pain|"
     r"(?:i(?:'m|\s+am)|they(?:'re|\s+are)|he(?:'s|\s+is)|she(?:'s|\s+is)|"
     r"someone\s+is)\s+bleeding\s+(?:badly|heavily|severely)|"
     r"(?:i|they|he|she|someone)\s+(?:have|has|am\s+having|is\s+having|"

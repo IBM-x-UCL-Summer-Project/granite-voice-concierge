@@ -299,7 +299,7 @@ def test_prior_conversation_turns_are_passed_to_reasoning() -> None:
     second_context = reasoning.calls[1]["context"]
     assert isinstance(second_context, ReasoningTurnContext)
     assert second_context.conversation_summary == (
-        "Previous turn 1:\n"
+        "Most recent completed turn:\n"
         "User transcript: Who is Ada Lovelace?\n"
         "Assistant response: Follow-up response."
     )

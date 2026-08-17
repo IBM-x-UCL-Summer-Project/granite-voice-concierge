@@ -118,6 +118,20 @@ def apply_reasoning_policy_guards(
             ),
         )
 
+    if _standalone_confirmation(text) and response.proposed_memory_action is not None:
+        return _replace_response(
+            response,
+            spoken_response="There is no pending memory change to confirm.",
+            needs_confirmation=False,
+            proposed_memory_action=None,
+            confidence="high",
+            guard="unsolicited_confirmation_memory_action",
+            required_information_source="user_input",
+            information_evidence=(
+                InformationEvidence(source="user_input", quote=transcript),
+            ),
+        )
+
     if _shopping_list_read_requested(text):
         shopping_list_memory = _shopping_list_memory(request.memories)
         if shopping_list_memory is None:
@@ -351,10 +365,20 @@ def apply_reasoning_policy_guards(
 
     if accessibility_preference and not memory_write_requested:
         content, spoken_preference = accessibility_preference
-        target = MemoryTarget(memory_key=_accessibility_target_key(content))
+        memory_key = _accessibility_target_key(content)
+        existing_preference = next(
+            (memory for memory in request.memories if memory.memory_key == memory_key),
+            None,
+        )
+        action = "update" if existing_preference is not None else "store"
+        target = (
+            existing_preference.mutation_target()
+            if existing_preference is not None
+            else MemoryTarget(memory_key=memory_key)
+        )
         if _has_confirmed_action_response(
             response,
-            "update",
+            action,
             expected_content=content,
             expected_target=target,
         ):
@@ -368,7 +392,7 @@ def apply_reasoning_policy_guards(
             ),
             needs_confirmation=True,
             proposed_memory_action=MemoryAction(
-                action="update",
+                action=action,
                 content=content,
                 rationale="User asked to change an accessibility preference.",
                 target=target,
@@ -742,7 +766,12 @@ def _format_items_for_speech(items: tuple[str, ...]) -> str:
 
 
 def _accessibility_preference(text: str) -> tuple[str, str] | None:
-    if "speak more slowly" in text or "answer more slowly" in text:
+    if re.search(
+        r"\b(?:speak|talk|answer)\s+"
+        r"(?:(?:a|one)\s+)?(?:(?:little|bit)\s+)?"
+        r"(?:more\s+slowly|slower)\b",
+        text,
+    ):
         return ("accessibility.preferred_pace=slow", "speak more slowly")
 
     if "keep answers short" in text or "short answers" in text:
@@ -762,6 +791,20 @@ def _do_not_save_requested(text: str) -> bool:
     )
 
 
+def _standalone_confirmation(text: str) -> bool:
+    normalized = re.sub(r"[^a-z]+", " ", text.casefold()).strip()
+    return normalized in {
+        "confirm",
+        "confirm it",
+        "go ahead",
+        "okay confirm",
+        "yes",
+        "yes confirm",
+        "yes go ahead",
+        "yes please",
+    }
+
+
 def _memory_correction(
     request: ReasoningRequest,
     transcript: str,
@@ -773,7 +816,8 @@ def _memory_correction(
         for memory in request.memories
         if memory.memory_key not in {SHOPPING_LIST_MEMORY_KEY, TASK_LIST_MEMORY_KEY}
     )
-    if len(candidates) != 1:
+    target = _correction_target(candidates, transcript)
+    if target is None:
         return None
 
     corrected_content = re.sub(
@@ -792,7 +836,37 @@ def _memory_correction(
     ).strip(" .")
     if not corrected_content:
         return None
-    return candidates[0], corrected_content
+    return target, corrected_content
+
+
+def _correction_target(
+    candidates: tuple[MemoryReference, ...],
+    transcript: str,
+) -> MemoryReference | None:
+    if len(candidates) == 1:
+        return candidates[0]
+    if not candidates:
+        return None
+
+    prior_value = re.search(
+        r"\b(?:not|instead\s+of|rather\s+than)\s+(.+?)\s*[.!?]*$",
+        transcript,
+        flags=re.IGNORECASE,
+    )
+    if prior_value is None:
+        return None
+    prior_tokens = {
+        token.casefold() for token in _EVIDENCE_TOKEN.findall(prior_value.group(1))
+    }
+    if not prior_tokens:
+        return None
+    matching = tuple(
+        memory
+        for memory in candidates
+        if prior_tokens
+        <= {token.casefold() for token in _EVIDENCE_TOKEN.findall(memory.content)}
+    )
+    return matching[0] if len(matching) == 1 else None
 
 
 def _memory_correction_requested(text: str) -> bool:
