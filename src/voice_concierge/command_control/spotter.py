@@ -57,3 +57,10 @@ class PhraseCommandSpotter:
         if command is None:
             return None
         return CommandEvent(command=command, phrase=phrase)
+
+    def reset(self) -> None:
+        """Discard partial recognizer audio when a prompt finishes."""
+
+        reset = getattr(self._recognizer, "reset", None)
+        if callable(reset):
+            reset()

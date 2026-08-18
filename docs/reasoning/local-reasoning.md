@@ -80,6 +80,22 @@ does not by itself prove that every generated claim logically follows from the
 cited text. The citations make that grounding inspectable in app output and
 benchmark reports instead of leaving provenance as an unverifiable model label.
 
+Two explicit policy profiles control how those checks affect user-facing text:
+
+- `strict` retains the fail-closed behavior described above and remains the
+  default for programmatic reasoning-engine construction and benchmarks;
+- `uat_relaxed` is the default for the interactive web and live runners during
+  controlled testing. It preserves useful non-current answers when the model
+  omits or misclassifies provenance evidence, and records the relaxed decision
+  in response metadata.
+
+The relaxed profile does not permit missing personal context, unavailable
+current device information, external live information while offline, or a
+current claim based only on stable knowledge. It also does not relax memory
+writes, exact mutation targets, confirmation, deletion, privacy, or application
+execution boundaries. The profile is passed to both prompt construction and
+post-generation policy guards; Ollama responses record it as `policy_profile`.
+
 Memory commands have an additional invariant: a direct store is created only
 for content classified as supplied by the user. A lookup phrased as a memory
 command must first obtain the information from an allowed source; the unresolved

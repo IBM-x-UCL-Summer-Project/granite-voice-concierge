@@ -137,15 +137,17 @@ the adapter output.
 ## State Shape
 
 The response includes this whole object so the UI can render conversation and
-confirmation state. The included browser stores it as a local display cache but
-does not send it back. The server retains the authoritative copy used for the
-next turn. A frontend must never create or edit pending actions or targets.
+confirmation state. The included browser keeps it only in JavaScript memory and
+does not send it back or persist it in browser storage. The server retains the
+authoritative copy used for the next turn. A frontend must never create or edit
+pending actions or targets.
 
 `conversation_history` contains short-term session context only. The pipeline
 keeps at most six completed exchanges and passes prior exchanges to reasoning so
 follow-up references can be understood. It is separate from approved persistent
 memory. A client may render its response copy, but the server-owned value is the
-only one used for reasoning.
+only one used for reasoning. `POST /api/session/reset` replaces that transient
+state without changing approved memories or scheduled reminders.
 
 ```ts
 type AppPipelineState = {

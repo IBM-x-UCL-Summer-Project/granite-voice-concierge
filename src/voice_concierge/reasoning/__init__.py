@@ -42,6 +42,13 @@ from voice_concierge.reasoning.models import (
     save_model_selection,
 )
 from voice_concierge.reasoning.output import apply_spoken_word_limit
+from voice_concierge.reasoning.profiles import (
+    STRICT_REASONING_POLICY_PROFILE,
+    SUPPORTED_REASONING_POLICY_PROFILES,
+    UAT_REASONING_POLICY_PROFILE,
+    ReasoningPolicyProfile,
+    validate_reasoning_policy_profile,
+)
 from voice_concierge.reasoning.prompting import (
     DEFAULT_PROMPT_VERSION,
     ChatMessage,
@@ -112,17 +119,21 @@ __all__ = [
     "ReasoningGenerationError",
     "ReasoningModelUnavailableError",
     "ReasoningModelSelection",
+    "ReasoningPolicyProfile",
     "ReasoningRequest",
     "ReasoningRequestError",
     "ReasoningResponse",
     "ReasoningTrace",
     "ReasoningTimeoutError",
     "RuntimeReference",
+    "STRICT_REASONING_POLICY_PROFILE",
     "SHOPPING_LIST_MEMORY_KEY",
     "STRUCTURED_LIST_MEMORY_KEYS",
     "StructuredListOperation",
+    "SUPPORTED_REASONING_POLICY_PROFILES",
     "TASK_LIST_MEMORY_KEY",
     "TraceableReasoningEngine",
+    "UAT_REASONING_POLICY_PROFILE",
     "apply_spoken_word_limit",
     "build_granite_messages",
     "build_reasoning_engine",
@@ -131,6 +142,7 @@ __all__ = [
     "load_prompt_template",
     "save_model_selection",
     "validate_reasoning_request",
+    "validate_reasoning_policy_profile",
 ]
 
 

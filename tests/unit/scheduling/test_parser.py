@@ -28,6 +28,10 @@ class TestRecognisingRequests:
         [
             "remind me to take my pills",
             "set a timer for ten minutes",
+            "set the timer for five minutes",
+            "start a timer for two minutes",
+            "set timer for two minutes",
+            "it says a timer for three minutes",
             "set a reminder for tomorrow",
             "wake me at seven",
             "let me know in five minutes",
@@ -47,6 +51,9 @@ class TestRecognisingRequests:
     )
     def test_other_requests_are_not_reminders(self, transcript: str) -> None:
         assert is_reminder_request(transcript) is False
+
+    def test_resetting_something_is_not_mistaken_for_setting_a_timer(self) -> None:
+        assert is_reminder_request("reset the timer display") is False
 
 
 @pytest.mark.unit
@@ -89,12 +96,67 @@ class TestOneOffReminders:
         assert reminder.kind == "timer"
         assert "timer" in reminder.announcement.lower()
 
+    @pytest.mark.parametrize(
+        "transcript",
+        [
+            "set the timer for 5 minutes",
+            "start a timer for five minutes",
+            "set timer for five minutes",
+        ],
+    )
+    def test_natural_timer_variants_are_parsed(self, transcript: str) -> None:
+        reminder = parse_reminder(transcript, now=NOW)
+
+        assert reminder is not None
+        assert reminder.kind == "timer"
+        assert reminder.due_at == NOW + 300
+
+    @pytest.mark.parametrize(
+        "transcript",
+        [
+            "It says a timer for three minutes.",
+            "It said a timer for three minutes.",
+            "It sets a timer for three minutes.",
+        ],
+    )
+    def test_common_whisper_timer_mishearing_is_normalized(
+        self,
+        transcript: str,
+    ) -> None:
+        reminder = parse_reminder(transcript, now=NOW)
+
+        assert reminder is not None
+        assert reminder.kind == "timer"
+        assert reminder.due_at == NOW + 180
+        assert reminder.text == "three minutes"
+
+    def test_descriptive_timer_sentence_is_not_normalized(self) -> None:
+        assert is_reminder_request("It says a timer is already running.") is False
+
     def test_a_reminder_is_not_a_timer(self) -> None:
         reminder = parse_reminder("remind me to stretch in 5 minutes", now=NOW)
 
         assert reminder is not None
         assert reminder.kind == "reminder"
         assert reminder.text == "stretch"
+
+    @pytest.mark.parametrize(
+        ("transcript", "subject"),
+        [
+            ("Remind me in 10 minutes to check the oven.", "check the oven"),
+            ("remind me at 5 to check the oven", "check the oven"),
+            ("Set a timer for 10 seconds.", "10 seconds"),
+        ],
+    )
+    def test_subject_supports_capitals_and_a_leading_schedule(
+        self,
+        transcript: str,
+        subject: str,
+    ) -> None:
+        reminder = parse_reminder(transcript, now=NOW)
+
+        assert reminder is not None
+        assert reminder.text == subject
 
     def test_clock_time_later_today(self) -> None:
         reminder = parse_reminder("remind me to call mum at 14:30", now=NOW)
@@ -157,6 +219,16 @@ class TestRecurringReminders:
         assert reminder is not None
         assert reminder.schedule.recurrence == "daily"
         assert _local(reminder.due_at).hour == 8
+
+    def test_recurring_schedule_can_precede_the_subject(self) -> None:
+        reminder = parse_reminder(
+            "Remind me every morning to take my pills",
+            now=NOW,
+        )
+
+        assert reminder is not None
+        assert reminder.schedule.recurrence == "daily"
+        assert reminder.text == "take my pills"
 
     def test_every_evening_implies_a_later_time(self) -> None:
         reminder = parse_reminder("remind me to lock up every evening", now=NOW)

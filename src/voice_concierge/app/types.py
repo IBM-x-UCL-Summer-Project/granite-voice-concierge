@@ -94,6 +94,8 @@ class ConversationTurn:
 
     user_transcript: str
     assistant_response: str
+    user_sent_at: str | None = None
+    assistant_received_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -109,6 +111,7 @@ class AppPipelineState:
     conversation_history: tuple[ConversationTurn, ...] = ()
     pending_memory_action: MemoryAction | None = None
     pending_memory_scope: MemoryScope | None = None
+    pending_bulk_memory_delete: bool = False
 
 
 @dataclass(frozen=True)

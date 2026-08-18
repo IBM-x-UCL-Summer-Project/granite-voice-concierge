@@ -28,6 +28,10 @@ LIST_PHRASES: tuple[str, ...] = (
     "my reminders",
     "list reminders",
     "any reminders",
+    "do i have a reminder",
+    "do i have any reminder",
+    "do i have a timer",
+    "do i have any timer",
 )
 
 #: Spoken phrases that ask for everything to be cleared.

@@ -13,12 +13,11 @@ class TestRoutineRequests:
         [
             "guide me through making pasta",
             "walk me through changing a tyre",
-            "show me how to fold a shirt",
-            "how do i make bread",
-            "give me the steps to set up the router",
-            "recipe for banana bread",
-            "start making tea",
-            "take me through it step by step",
+            "talk me through folding a shirt",
+            "coach me through making bread",
+            "start a guided routine for banana bread",
+            "guide me step by step through making tea",
+            "take me through changing a tyre",
         ],
     )
     def test_guidance_requests_are_detected(self, transcript: str) -> None:
@@ -42,6 +41,10 @@ class TestNonRoutineRequests:
             "remind me to call mum at six",
             "add milk to the shopping list",
             "what did i say yesterday",
+            "give me three steps to boil an egg",
+            "how do i make bread",
+            "show me how to fold a shirt",
+            "recipe for banana bread",
             "",
         ],
     )

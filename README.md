@@ -37,14 +37,17 @@ python -m voice_concierge.app.live --no-wake-word
 python -m voice_concierge.app.live --device-index <index>
 python -m voice_concierge.app.live --no-memory --no-playback
 python -m voice_concierge.app.live --no-guided-routines
+python -m voice_concierge.app.live --policy-profile strict
 ```
 
 ### Guided routines
 
-Asking to be walked through something ("guide me through making pasta", "how do
-I ...", "steps to ...") starts a guided routine instead of a one-shot answer.
-The assistant reads a step, keeps listening while it speaks, and moves on by
-itself if you stay quiet, so it works with your hands busy.
+Explicitly asking to be walked through something (for example, "guide me through
+making pasta") starts a guided routine instead of a one-shot answer. Ordinary
+requests for a recipe or a list of steps remain normal answers. The assistant
+reads a step, keeps listening while it speaks, and moves on by itself if you
+stay quiet, so it works with your hands busy. Unrelated and urgent requests can
+interrupt the routine without losing its place.
 
 While a step is being read, or in the quiet window after it:
 
@@ -69,22 +72,49 @@ source .venv/bin/activate
 python -m voice_concierge.app.web
 ```
 
-Add `--voice-io` for browser recording/STT and response TTS, `--memory` for
-persistent local memory, or `--demo` to review the UI without Ollama and audio
-models. If the virtual environment has not been installed yet, run
+Add `--voice-io` for browser recording/STT, response TTS, and hands-free
+**Hey Jarvis** wake-word mode. Persistent local memory is enabled by default;
+use `--no-memory` for a memory-free run. Use `--demo` to review the UI without
+Ollama and audio models. If the virtual
+environment has not been installed yet, run
 `python -m pip install -e .` after activating it. See
 [the web UI guide](web/README.md) for details.
+
+The interactive web and live runners default to the `uat_relaxed` reasoning
+profile during controlled testing. It favors useful ordinary answers when the
+model's provenance metadata is imperfect, while retaining offline/live-data
+honesty and all memory, deletion, privacy, confirmation, and exact-target
+controls. Use `--policy-profile strict` to restore fail-closed provenance
+enforcement. Programmatic reasoning construction remains strict by default.
 
 For the complete local browser path with diagnostic logs:
 
 ```bash
-python -m voice_concierge.app.web --voice-io --memory \
+python -m voice_concierge.app.web --voice-io \
+  --log-level DEBUG \
   --log-file .local/logs/web.log
 ```
 
-The browser supports push-to-talk capture and automatic Piper response
-playback. Continuous wake-word listening remains available through the live
-runner.
+DEBUG mode correlates browser and server requests and records prompts,
+responses, feature routing, local-data operations, playback/voice state, and
+pipeline timings. Encoded audio bodies are represented by their size instead
+of being copied into the log.
+
+The browser supports push-to-talk and wake-word capture, an automatic follow-up
+listening window, adjustable wake timing and sensitivity, automatic Piper
+response playback, startup and per-turn waiting states, and temporary chat JSON
+export. The header remains available while a long conversation scrolls, and an
+extended temporary display transcript (up to 200 completed exchanges) is kept
+separately from the shorter model context window. Reminder and guided-routine
+requests are routed to their local services, due reminders appear in the open
+browser, and **Local data** exposes
+memory review/edit/delete/export plus reminder edit/snooze/cancel controls.
+Guided routines automatically advance after each spoken step and accept the
+same no-wake control words as the CLI, including pause, continue, next, back,
+repeat, slower, faster, and stop.
+**New conversation** clears only transient conversation context; approved
+memories and scheduled reminders remain. Continuous wake-word listening remains
+available through the live runner.
 
 ## Reminders and timers
 

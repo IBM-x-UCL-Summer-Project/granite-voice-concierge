@@ -96,6 +96,7 @@ def _engine_with_response(
         ("keep_alive", 0, "keep_alive"),
         ("keep_alive", True, "keep_alive"),
         ("model_role", "emergency", "model_role"),
+        ("policy_profile", "unsafe", "policy profile"),
     ),
 )
 def test_ollama_config_rejects_invalid_values(
@@ -185,6 +186,7 @@ def test_ollama_engine_sends_chat_messages_and_generated_schema() -> None:
     assert response.metadata["output_format"] == "structured_json"
     assert response.metadata["prompt_id"] == "local-reasoning"
     assert response.metadata["prompt_version"] == "v3"
+    assert response.metadata["policy_profile"] == "strict"
     assert response.metadata["temperature"] == "0.2"
     assert response.metadata["top_p"] == "0.9"
     assert response.metadata["num_ctx"] == "4096"
@@ -193,6 +195,31 @@ def test_ollama_engine_sends_chat_messages_and_generated_schema() -> None:
     assert response.metadata["keep_alive"] == "5m"
     assert response.metadata["total_duration"] == "1000"
     assert response.metadata["eval_count"] == "5"
+
+
+def test_ollama_engine_applies_relaxed_uat_prompt_and_policy() -> None:
+    client = Mock()
+    client.chat.return_value = _chat_response(
+        _structured_content(
+            "Plants use light energy to make sugars.",
+            required_information_source="runtime_live",
+        )
+    )
+    engine = OllamaReasoningEngine(
+        OllamaConfig(
+            model="granite-local-test",
+            policy_profile="uat_relaxed",
+        ),
+        client=client,
+    )
+
+    response = engine.generate(ReasoningRequest(transcript="Explain photosynthesis."))
+
+    system_prompt = client.chat.call_args.kwargs["messages"][0]["content"]
+    assert "UAT behavior profile" in system_prompt
+    assert response.spoken_response == "Plants use light energy to make sugars."
+    assert response.required_information_source == "stable_knowledge"
+    assert response.metadata["policy_profile"] == "uat_relaxed"
 
 
 def test_ollama_engine_derives_generation_limit_from_request_word_limit() -> None:
@@ -479,7 +506,7 @@ def test_ollama_engine_applies_policy_guards() -> None:
 
     assert response.needs_confirmation is True
     assert response.proposed_memory_action is not None
-    assert response.proposed_memory_action.action == "update"
+    assert response.proposed_memory_action.action == "store"
     assert response.proposed_memory_action.content == "accessibility.verbosity=short"
     assert response.metadata["policy_guard"] == "accessibility_preference_confirmation"
 
@@ -537,6 +564,42 @@ def test_ollama_engine_trace_preserves_raw_and_guarded_response() -> None:
     assert trace.guarded_response.proposed_memory_action is not None
     assert trace.guarded_response.metadata["policy_guard"] == (
         "accessibility_preference_confirmation"
+    )
+
+
+def test_ollama_engine_repairs_paraphrased_quote_for_exact_memory_identity() -> None:
+    engine, _ = _engine_with_response(
+        _structured_content(
+            "You prefer tea.",
+            confidence="high",
+            required_information_source="local_context",
+            information_evidence=[
+                {
+                    "source": "memory",
+                    "quote": "You prefer tea.",
+                    "memory_id": 1,
+                    "memory_revision": 1,
+                }
+            ],
+        )
+    )
+    memory = memory_reference(
+        "You remember that I prefer tea",
+        memory_id=1,
+        revision=1,
+    )
+
+    trace = engine.generate_trace(
+        ReasoningRequest(
+            transcript="What drink do I prefer?",
+            memories=(memory,),
+        )
+    )
+
+    assert trace.raw_response.information_evidence[0].quote == "You prefer tea."
+    assert trace.guarded_response.spoken_response == "You prefer tea."
+    assert trace.guarded_response.information_evidence == (
+        memory.information_evidence(),
     )
 
 

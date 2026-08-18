@@ -5,7 +5,16 @@ from __future__ import annotations
 import re
 from dataclasses import replace
 
-from voice_concierge.reasoning.information_policy import decide_information_policy
+from voice_concierge.reasoning.information_policy import (
+    InformationDisposition,
+    decide_information_policy,
+)
+from voice_concierge.reasoning.profiles import (
+    STRICT_REASONING_POLICY_PROFILE,
+    UAT_REASONING_POLICY_PROFILE,
+    ReasoningPolicyProfile,
+    validate_reasoning_policy_profile,
+)
 from voice_concierge.reasoning.types import (
     SHOPPING_LIST_MEMORY_KEY,
     TASK_LIST_MEMORY_KEY,
@@ -19,13 +28,55 @@ from voice_concierge.reasoning.types import (
     StructuredListOperation,
 )
 
+_LIST_ADD_LEAD = re.compile(
+    r"^\s*(?:"
+    r"(?:please\s+)?"
+    r"|(?:can|could|would|will)\s+you\s+(?:please\s+)?"
+    r"|i(?:['’]ll|\s+will)\s+"
+    r"|i(?:['’]d|\s+would)\s+like\s+to\s+"
+    r"|i\s+want\s+to\s+"
+    r")add\s+",
+    flags=re.IGNORECASE,
+)
+_EVIDENCE_TOKEN = re.compile(r"[a-z0-9]+(?:['’][a-z0-9]+)?", flags=re.IGNORECASE)
+_UAT_RELAXED_EVIDENCE_DISPOSITIONS: frozenset[InformationDisposition] = frozenset(
+    {
+        "missing_user_input_evidence",
+        "invalid_user_input_evidence",
+        "missing_local_context_evidence",
+        "invalid_local_context_evidence",
+        "unexpected_information_evidence",
+    }
+)
+_UAT_RELAXED_NONCURRENT_SOURCE_DISPOSITIONS: frozenset[InformationDisposition] = (
+    frozenset(
+        {
+            "runtime_source_unavailable",
+            "missing_runtime_context_evidence",
+            "invalid_runtime_context_evidence",
+            "live_source_requires_current_freshness",
+        }
+    )
+)
+
 
 def apply_reasoning_policy_guards(
     request: ReasoningRequest,
     response: ReasoningResponse,
+    *,
+    policy_profile: ReasoningPolicyProfile = STRICT_REASONING_POLICY_PROFILE,
 ) -> ReasoningResponse:
     """Apply local policy guards that should not depend on model compliance."""
 
+    resolved_profile = validate_reasoning_policy_profile(policy_profile)
+    if resolved_profile == UAT_REASONING_POLICY_PROFILE:
+        response = replace(
+            response,
+            metadata={
+                **response.metadata,
+                "policy_profile": UAT_REASONING_POLICY_PROFILE,
+            },
+        )
     transcript = request.transcript.strip()
     text = transcript.lower()
     shopping_items = _shopping_items_to_add(
@@ -34,9 +85,52 @@ def apply_reasoning_policy_guards(
         mode=request.mode,
     )
     task_items = _task_items_to_add(transcript, text)
+    shopping_items_to_remove = _structured_list_items_to_remove(
+        transcript,
+        list_name="shopping",
+    )
+    task_items_to_remove = _structured_list_items_to_remove(
+        transcript,
+        list_name="task",
+    )
     accessibility_preference = _accessibility_preference(text)
     memory_write_requested = _memory_write_requested(text)
-    delete_target = memory_delete_target(transcript)
+    delete_target = (
+        None
+        if shopping_items_to_remove or task_items_to_remove
+        else memory_delete_target(transcript)
+    )
+
+    if _do_not_save_requested(text):
+        return _replace_response(
+            response,
+            spoken_response=(
+                "Understood. I'll use that only in this conversation and won't "
+                "save it to memory."
+            ),
+            needs_confirmation=False,
+            proposed_memory_action=None,
+            confidence="high",
+            guard="explicit_do_not_save",
+            required_information_source="user_input",
+            information_evidence=(
+                InformationEvidence(source="user_input", quote=transcript),
+            ),
+        )
+
+    if _standalone_confirmation(text) and response.proposed_memory_action is not None:
+        return _replace_response(
+            response,
+            spoken_response="There is no pending memory change to confirm.",
+            needs_confirmation=False,
+            proposed_memory_action=None,
+            confidence="high",
+            guard="unsolicited_confirmation_memory_action",
+            required_information_source="user_input",
+            information_evidence=(
+                InformationEvidence(source="user_input", quote=transcript),
+            ),
+        )
 
     if _shopping_list_read_requested(text):
         shopping_list_memory = _shopping_list_memory(request.memories)
@@ -65,20 +159,33 @@ def apply_reasoning_policy_guards(
             information_evidence=(shopping_list_memory.information_evidence(),),
         )
 
+    response = _normalize_information_classification(request, response)
     information_decision = decide_information_policy(request, response)
     if not information_decision.allowed:
-        assert information_decision.spoken_response is not None
-        return _replace_response(
-            response,
-            spoken_response=information_decision.spoken_response,
-            needs_confirmation=False,
-            proposed_memory_action=None,
-            confidence="high",
-            guard=information_decision.disposition,
-            information_evidence=(),
-        )
+        relaxed_response = None
+        if resolved_profile == UAT_REASONING_POLICY_PROFILE:
+            relaxed_response = _relax_information_policy(
+                response,
+                information_decision.disposition,
+            )
+        if relaxed_response is None:
+            assert information_decision.spoken_response is not None
+            return _replace_response(
+                response,
+                spoken_response=information_decision.spoken_response,
+                needs_confirmation=False,
+                proposed_memory_action=None,
+                confidence="high",
+                guard=information_decision.disposition,
+                information_evidence=(),
+            )
+        response = relaxed_response
 
-    if information_decision.attribution_prefix is not None:
+    if (
+        information_decision.allowed
+        and information_decision.attribution_prefix is not None
+        and resolved_profile == STRICT_REASONING_POLICY_PROFILE
+    ):
         spoken_response = (
             f"{information_decision.attribution_prefix} "
             f"{response.spoken_response.rstrip()}"
@@ -115,6 +222,8 @@ def apply_reasoning_policy_guards(
         response=response,
         shopping_items=shopping_items,
         task_items=task_items,
+        shopping_items_to_remove=shopping_items_to_remove,
+        task_items_to_remove=task_items_to_remove,
         accessibility_preference=accessibility_preference,
         memory_write_requested=memory_write_requested,
         delete_target=delete_target,
@@ -203,12 +312,73 @@ def apply_reasoning_policy_guards(
             guard="task_list_add_confirmation",
         )
 
-    if accessibility_preference and not memory_write_requested:
-        content, spoken_preference = accessibility_preference
-        target = MemoryTarget(memory_key=_accessibility_target_key(content))
+    list_removal = _list_removal_request(
+        request,
+        shopping_items=shopping_items_to_remove,
+        task_items=task_items_to_remove,
+    )
+    if list_removal is not None:
+        list_name, items, memory = list_removal
+        if memory is None:
+            label = "shopping" if list_name == "shopping" else "task"
+            return _replace_response(
+                response,
+                spoken_response=f"I do not have a saved {label} list yet.",
+                needs_confirmation=False,
+                proposed_memory_action=None,
+                confidence="high",
+                guard=f"missing_{label}_list_for_removal",
+            )
+
+        list_operation = StructuredListOperation(
+            list_name=list_name,
+            operation="remove_items",
+            items=items,
+        )
         if _has_confirmed_action_response(
             response,
             "update",
+            expected_target=memory.mutation_target(),
+            expected_list_operation=list_operation,
+        ):
+            return response
+
+        spoken_items = _format_items_for_speech(items)
+        label = "shopping" if list_name == "shopping" else "task"
+        return _replace_response(
+            response,
+            spoken_response=(
+                f"I can remove {spoken_items} from your {label} list. Please "
+                "confirm before I change it."
+            ),
+            needs_confirmation=True,
+            proposed_memory_action=MemoryAction(
+                action="update",
+                content=None,
+                rationale=f"User asked to remove items from the {label} list.",
+                target=memory.mutation_target(),
+                list_operation=list_operation,
+            ),
+            confidence="high",
+            guard=f"{label}_list_remove_confirmation",
+        )
+
+    if accessibility_preference and not memory_write_requested:
+        content, spoken_preference = accessibility_preference
+        memory_key = _accessibility_target_key(content)
+        existing_preference = next(
+            (memory for memory in request.memories if memory.memory_key == memory_key),
+            None,
+        )
+        action = "update" if existing_preference is not None else "store"
+        target = (
+            existing_preference.mutation_target()
+            if existing_preference is not None
+            else MemoryTarget(memory_key=memory_key)
+        )
+        if _has_confirmed_action_response(
+            response,
+            action,
             expected_content=content,
             expected_target=target,
         ):
@@ -222,13 +392,53 @@ def apply_reasoning_policy_guards(
             ),
             needs_confirmation=True,
             proposed_memory_action=MemoryAction(
-                action="update",
+                action=action,
                 content=content,
                 rationale="User asked to change an accessibility preference.",
                 target=target,
             ),
             confidence="high",
             guard="accessibility_preference_confirmation",
+        )
+
+    if _memory_correction_requested(text):
+        corrected_memory = _memory_correction(request, transcript)
+        if corrected_memory is None:
+            return _replace_response(
+                response,
+                spoken_response=(
+                    "I cannot safely identify one saved memory to update. "
+                    "Please review it in Local data."
+                ),
+                needs_confirmation=False,
+                proposed_memory_action=None,
+                confidence="high",
+                guard="stable_memory_target_required",
+            )
+        memory, corrected_content = corrected_memory
+        target = memory.mutation_target()
+        if _has_confirmed_action_response(
+            response,
+            "update",
+            expected_content=corrected_content,
+            expected_target=target,
+        ):
+            return response
+
+        return _replace_response(
+            response,
+            spoken_response=(
+                "I can update that saved memory. Please confirm before I change it."
+            ),
+            needs_confirmation=True,
+            proposed_memory_action=MemoryAction(
+                action="update",
+                content=corrected_content,
+                rationale="User explicitly corrected a previously saved memory.",
+                target=target,
+            ),
+            confidence="high",
+            guard="memory_correction_confirmation",
         )
 
     if delete_target:
@@ -359,6 +569,8 @@ def _memory_change_requested(
     response: ReasoningResponse,
     shopping_items: tuple[str, ...] | None,
     task_items: tuple[str, ...] | None,
+    shopping_items_to_remove: tuple[str, ...] | None,
+    task_items_to_remove: tuple[str, ...] | None,
     accessibility_preference: tuple[str, str] | None,
     memory_write_requested: bool,
     delete_target: str | None,
@@ -367,6 +579,8 @@ def _memory_change_requested(
         response.proposed_memory_action is not None
         or shopping_items is not None
         or task_items is not None
+        or shopping_items_to_remove is not None
+        or task_items_to_remove is not None
         or accessibility_preference is not None
         or memory_write_requested
         or delete_target is not None
@@ -465,14 +679,12 @@ def _shopping_items_to_add(
     if "shopping list" not in text and mode.casefold() != "shopping":
         return None
 
+    lead = _LIST_ADD_LEAD.match(transcript)
+    if lead is None:
+        return None
+    cleaned = transcript[lead.end() :]
     cleaned = re.sub(
-        r"^\s*(please\s+)?add\s+",
-        "",
-        transcript,
-        flags=re.IGNORECASE,
-    )
-    cleaned = re.sub(
-        r"\s+to\s+(?:my|the)\s+(?:shopping\s+)?list\.?\s*$",
+        r"\s+to\s+(?:my|the)\s+(?:shopping\s+)?list[.?!]?\s*$",
         "",
         cleaned,
         flags=re.IGNORECASE,
@@ -485,14 +697,12 @@ def _task_items_to_add(transcript: str, text: str) -> tuple[str, ...] | None:
     if not re.search(rf"\b{list_name}\b", text) or not re.search(r"\badd\b", text):
         return None
 
+    lead = _LIST_ADD_LEAD.match(transcript)
+    if lead is None:
+        return None
+    cleaned = transcript[lead.end() :]
     cleaned = re.sub(
-        r"^\s*(please\s+)?add\s+",
-        "",
-        transcript,
-        flags=re.IGNORECASE,
-    )
-    cleaned = re.sub(
-        rf"\s+to\s+(?:my|the)\s+{list_name}\.?\s*$",
+        rf"\s+to\s+(?:my|the)\s+{list_name}[.?!]?\s*$",
         "",
         cleaned,
         flags=re.IGNORECASE,
@@ -500,8 +710,49 @@ def _task_items_to_add(transcript: str, text: str) -> tuple[str, ...] | None:
     return _split_list_items(cleaned)
 
 
+def _structured_list_items_to_remove(
+    transcript: str,
+    *,
+    list_name: str,
+) -> tuple[str, ...] | None:
+    """Extract an explicit item-level removal without matching whole-list deletes."""
+
+    if list_name == "shopping":
+        name_pattern = r"shopping\s+list"
+    else:
+        name_pattern = r"(?:task|to-do|todo)\s+list"
+    patterns = (
+        rf"^\s*(?:please\s+)?(?:remove|delete)\s+(.+?)\s+from\s+"
+        rf"(?:my|the)\s+{name_pattern}\.?\s*$",
+        rf"^\s*(?:please\s+)?take\s+(.+?)\s+off\s+(?:my|the)\s+"
+        rf"{name_pattern}\.?\s*$",
+    )
+    for pattern in patterns:
+        match = re.match(pattern, transcript, flags=re.IGNORECASE)
+        if match is not None:
+            return _split_list_items(match.group(1))
+    return None
+
+
+def _list_removal_request(
+    request: ReasoningRequest,
+    *,
+    shopping_items: tuple[str, ...] | None,
+    task_items: tuple[str, ...] | None,
+) -> tuple[str, tuple[str, ...], MemoryReference | None] | None:
+    if shopping_items:
+        return "shopping", shopping_items, _shopping_list_memory(request.memories)
+    if task_items:
+        return "task", task_items, _task_list_memory(request.memories)
+    return None
+
+
 def _split_list_items(value: str) -> tuple[str, ...] | None:
-    parts = re.split(r"\s*,\s*|\s+and\s+", value, flags=re.IGNORECASE)
+    parts = re.split(
+        r"\s*,\s*(?:and\s+)?|\s+and\s+",
+        value,
+        flags=re.IGNORECASE,
+    )
     normalized = tuple(part.strip(" .") for part in parts if part.strip(" ."))
     return normalized or None
 
@@ -515,13 +766,268 @@ def _format_items_for_speech(items: tuple[str, ...]) -> str:
 
 
 def _accessibility_preference(text: str) -> tuple[str, str] | None:
-    if "speak more slowly" in text or "answer more slowly" in text:
+    if re.search(
+        r"\b(?:speak|talk|answer)\s+"
+        r"(?:(?:a|one)\s+)?(?:(?:little|bit)\s+)?"
+        r"(?:more\s+slowly|slower)\b",
+        text,
+    ):
         return ("accessibility.preferred_pace=slow", "speak more slowly")
 
     if "keep answers short" in text or "short answers" in text:
         return ("accessibility.verbosity=short", "keep answers short")
 
     return None
+
+
+def _do_not_save_requested(text: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(do not|don't|dont|never)\s+(save|remember|store|record)\b"
+            r"|\b(for (?:this|the) conversation only|just for this conversation)\b"
+            r"|\bdo not keep (?:this|that)\b",
+            text,
+        )
+    )
+
+
+def _standalone_confirmation(text: str) -> bool:
+    normalized = re.sub(r"[^a-z]+", " ", text.casefold()).strip()
+    return normalized in {
+        "confirm",
+        "confirm it",
+        "go ahead",
+        "okay confirm",
+        "yes",
+        "yes confirm",
+        "yes go ahead",
+        "yes please",
+    }
+
+
+def _memory_correction(
+    request: ReasoningRequest,
+    transcript: str,
+) -> tuple[MemoryReference, str] | None:
+    """Return an exact retrieved target for an explicit correction."""
+
+    candidates = tuple(
+        memory
+        for memory in request.memories
+        if memory.memory_key not in {SHOPPING_LIST_MEMORY_KEY, TASK_LIST_MEMORY_KEY}
+    )
+    target = _correction_target(candidates, transcript)
+    if target is None:
+        return None
+
+    corrected_content = re.sub(
+        r"^\s*(?:actually\s*[,;:]?\s*)",
+        "",
+        transcript,
+        flags=re.IGNORECASE,
+    )
+    corrected_content = re.sub(
+        r"^\s*(?:please\s+)?(?:correct|update|change)\s+"
+        r"(?:(?:my|the)\s+)?(?:saved\s+)?(?:memory|preference)"
+        r"(?:\s+to|\s*[:,-])?\s*",
+        "",
+        corrected_content,
+        flags=re.IGNORECASE,
+    ).strip(" .")
+    if not corrected_content:
+        return None
+    return target, corrected_content
+
+
+def _correction_target(
+    candidates: tuple[MemoryReference, ...],
+    transcript: str,
+) -> MemoryReference | None:
+    if len(candidates) == 1:
+        return candidates[0]
+    if not candidates:
+        return None
+
+    prior_value = re.search(
+        r"\b(?:not|instead\s+of|rather\s+than)\s+(.+?)\s*[.!?]*$",
+        transcript,
+        flags=re.IGNORECASE,
+    )
+    if prior_value is None:
+        return None
+    prior_tokens = {
+        token.casefold() for token in _EVIDENCE_TOKEN.findall(prior_value.group(1))
+    }
+    if not prior_tokens:
+        return None
+    matching = tuple(
+        memory
+        for memory in candidates
+        if prior_tokens
+        <= {token.casefold() for token in _EVIDENCE_TOKEN.findall(memory.content)}
+    )
+    return matching[0] if len(matching) == 1 else None
+
+
+def _memory_correction_requested(text: str) -> bool:
+    explicit_memory_change = re.search(
+        r"\b(correct|correction|update|change)\b.*\b(memory|saved|preference)\b",
+        text,
+    )
+    contrast_correction = re.search(r"\bactually\b", text) and re.search(
+        r"\b(not|instead|rather|now)\b",
+        text,
+    )
+    return bool(explicit_memory_change or contrast_correction)
+
+
+def _normalize_information_classification(
+    request: ReasoningRequest,
+    response: ReasoningResponse,
+) -> ReasoningResponse:
+    """Normalize model labels only when trusted conversation evidence proves them."""
+
+    response = _normalize_identified_memory_evidence(request, response)
+    if not request.conversation_summary:
+        return response
+    if (
+        response.required_information_source == "local_context"
+        and not response.information_evidence
+    ):
+        return replace(
+            response,
+            information_evidence=(
+                InformationEvidence(
+                    source="conversation_summary",
+                    quote=request.conversation_summary,
+                ),
+            ),
+            metadata={
+                **response.metadata,
+                "policy_normalization": "conversation_evidence_attached",
+            },
+        )
+    if response.required_information_source not in {"runtime_live", "external_live"}:
+        return response
+    evidence = tuple(
+        item
+        for item in response.information_evidence
+        if item.source == "conversation_summary"
+        and item.quote in request.conversation_summary
+    )
+    if not evidence:
+        return response
+    return replace(
+        response,
+        required_information_source="local_context",
+        information_evidence=evidence,
+        freshness_requirement="not_required",
+        metadata={
+            **response.metadata,
+            "policy_normalization": "non_live_request",
+        },
+    )
+
+
+def _relax_information_policy(
+    response: ReasoningResponse,
+    disposition: InformationDisposition,
+) -> ReasoningResponse | None:
+    """Soften provenance metadata failures for a controlled UAT runtime.
+
+    Missing local context and every genuinely current/live-data failure remain
+    hard blocks. The relaxed profile only stops response metadata quality from
+    replacing an otherwise useful non-current answer with a generic refusal.
+    """
+
+    if disposition in _UAT_RELAXED_EVIDENCE_DISPOSITIONS:
+        return replace(
+            response,
+            information_evidence=(),
+            metadata={
+                **response.metadata,
+                "policy_relaxation": disposition,
+            },
+        )
+
+    if (
+        disposition in _UAT_RELAXED_NONCURRENT_SOURCE_DISPOSITIONS
+        and response.freshness_requirement == "not_required"
+    ):
+        return replace(
+            response,
+            required_information_source="stable_knowledge",
+            information_evidence=(),
+            metadata={
+                **response.metadata,
+                "policy_relaxation": disposition,
+            },
+        )
+
+    return None
+
+
+def _normalize_identified_memory_evidence(
+    request: ReasoningRequest,
+    response: ReasoningResponse,
+) -> ReasoningResponse:
+    """Canonicalize a conservative paraphrase tied to an exact memory revision."""
+
+    if (
+        response.required_information_source != "local_context"
+        or not response.information_evidence
+    ):
+        return response
+
+    memories_by_identity = {
+        (memory.memory_id, memory.revision): memory for memory in request.memories
+    }
+    normalized_evidence: list[InformationEvidence] = []
+    changed = False
+    for evidence in response.information_evidence:
+        memory = memories_by_identity.get(
+            (evidence.memory_id, evidence.memory_revision)
+        )
+        if (
+            evidence.source == "memory"
+            and memory is not None
+            and evidence.quote not in memory.content
+            and _is_ordered_token_subsequence(evidence.quote, memory.content)
+        ):
+            normalized_evidence.append(memory.information_evidence())
+            changed = True
+        else:
+            normalized_evidence.append(evidence)
+
+    if not changed:
+        return response
+    return replace(
+        response,
+        information_evidence=tuple(normalized_evidence),
+        metadata={
+            **response.metadata,
+            "policy_normalization": "identified_memory_quote_canonicalized",
+        },
+    )
+
+
+def _is_ordered_token_subsequence(candidate: str, source: str) -> bool:
+    """Accept omitted wrapper words, but never invented or reordered content."""
+
+    candidate_tokens = tuple(
+        token.casefold() for token in _EVIDENCE_TOKEN.findall(candidate)
+    )
+    source_tokens = tuple(token.casefold() for token in _EVIDENCE_TOKEN.findall(source))
+    if len(candidate_tokens) < 2:
+        return False
+
+    source_index = 0
+    for candidate_token in candidate_tokens:
+        try:
+            source_index = source_tokens.index(candidate_token, source_index) + 1
+        except ValueError:
+            return False
+    return True
 
 
 def _accessibility_target_key(content: str) -> str:

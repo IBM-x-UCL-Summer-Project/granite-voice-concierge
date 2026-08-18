@@ -59,12 +59,14 @@ def test_build_reasoning_turn_service_uses_runtime_config() -> None:
         *,
         prompt_version: str,
         timeout_s: float,
+        policy_profile: str,
     ) -> FakeReasoningEngine:
         calls.append(
             {
                 "selection_path": selection_path,
                 "prompt_version": prompt_version,
                 "timeout_s": timeout_s,
+                "policy_profile": policy_profile,
             }
         )
         return engine
@@ -74,6 +76,7 @@ def test_build_reasoning_turn_service_uses_runtime_config() -> None:
             selection_path=Path(".local/custom-selection.json"),
             prompt_version="v1",
             timeout_s=8.5,
+            policy_profile="uat_relaxed",
         ),
         engine_factory=fake_factory,
     )
@@ -87,6 +90,7 @@ def test_build_reasoning_turn_service_uses_runtime_config() -> None:
             "selection_path": Path(".local/custom-selection.json"),
             "prompt_version": "v1",
             "timeout_s": 8.5,
+            "policy_profile": "uat_relaxed",
         }
     ]
     assert len(engine.requests) == 1

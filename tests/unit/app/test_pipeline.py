@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from tests.support import memory_reference, runtime_reference
+from voice_concierge.app.memory import BulkMemoryDeleteResult
 from voice_concierge.app.pipeline import VoiceConciergePipeline
 from voice_concierge.app.reasoning import (
     ReasoningFailure,
@@ -66,12 +67,18 @@ class FakeMemory:
         apply_result: MemoryOperationOutcome = MemoryOperationOutcome(
             MemoryOperationStatus.STORED_SUCCESSFULLY
         ),
+        bulk_delete_result: BulkMemoryDeleteResult = BulkMemoryDeleteResult(
+            2,
+            MemoryOperationOutcome(MemoryOperationStatus.DELETED_SUCCESSFULLY),
+        ),
     ) -> None:
         self.memories = memories
         self.retrieve_error = retrieve_error
         self.apply_result = apply_result
+        self.bulk_delete_result = bulk_delete_result
         self.retrieve_calls: list[dict[str, object]] = []
         self.apply_calls: list[dict[str, object]] = []
+        self.delete_all_calls = 0
         self.closed = False
 
     def retrieve(
@@ -89,6 +96,10 @@ class FakeMemory:
     def apply(self, action: MemoryAction, scope: str) -> MemoryOperationOutcome:
         self.apply_calls.append({"action": action, "scope": scope})
         return self.apply_result
+
+    def delete_all(self) -> BulkMemoryDeleteResult:
+        self.delete_all_calls += 1
+        return self.bulk_delete_result
 
     def close(self) -> None:
         self.closed = True
@@ -288,7 +299,7 @@ def test_prior_conversation_turns_are_passed_to_reasoning() -> None:
     second_context = reasoning.calls[1]["context"]
     assert isinstance(second_context, ReasoningTurnContext)
     assert second_context.conversation_summary == (
-        "Previous turn 1:\n"
+        "Most recent completed turn:\n"
         "User transcript: Who is Ada Lovelace?\n"
         "Assistant response: Follow-up response."
     )
@@ -527,6 +538,69 @@ def test_pending_memory_confirmation_applies_and_clears_action() -> None:
     assert memory.apply_calls == [{"action": action, "scope": "personal_relevant"}]
 
 
+@pytest.mark.parametrize(
+    ("action", "status", "expected"),
+    (
+        (
+            MemoryAction(
+                action="update",
+                content="User prefers peppermint tea.",
+                rationale="User corrected a memory.",
+                target=MemoryTarget(memory_id=4, expected_revision=2),
+            ),
+            MemoryOperationStatus.UPDATED_SUCCESSFULLY,
+            "I've updated that memory.",
+        ),
+        (
+            MemoryAction(
+                action="delete",
+                content="User prefers tea.",
+                rationale="User asked to forget it.",
+                target=MemoryTarget(memory_id=4, expected_revision=2),
+            ),
+            MemoryOperationStatus.DELETED_SUCCESSFULLY,
+            "I've deleted that memory.",
+        ),
+        (
+            MemoryAction(
+                action="update",
+                content=None,
+                rationale="User removed a list item.",
+                target=MemoryTarget(
+                    memory_id=9,
+                    memory_key="list:shopping",
+                    expected_revision=3,
+                ),
+                list_operation=StructuredListOperation(
+                    list_name="shopping",
+                    operation="remove_items",
+                    items=("bread",),
+                ),
+            ),
+            MemoryOperationStatus.UPDATED_SUCCESSFULLY,
+            "I've removed bread from your shopping list.",
+        ),
+    ),
+)
+def test_confirmation_copy_names_the_completed_operation(
+    action, status, expected
+) -> None:
+    state = AppPipelineState(
+        pending_memory_action=action,
+        pending_memory_scope=(
+            "list_relevant"
+            if action.list_operation is not None
+            else "personal_relevant"
+        ),
+    )
+    memory = FakeMemory(apply_result=MemoryOperationOutcome(status))
+    pipeline = VoiceConciergePipeline(FakeReasoning(), memory=memory)
+
+    result = pipeline.process_transcript("yes", state)
+
+    assert result.spoken_response == expected
+
+
 def test_duplicate_confirmation_is_an_idempotent_completed_request() -> None:
     action = MemoryAction(
         action="store",
@@ -647,6 +721,83 @@ def test_ambiguous_memory_confirmation_preserves_pending_action(
     assert result.memory_operation.attempted is False
     assert memory.apply_calls == []
     assert reasoning.calls == []
+
+
+@pytest.mark.parametrize(
+    "transcript",
+    (
+        "delete my memories",
+        "Please erase all of my saved memories.",
+        "forget what you know about me",
+        "forget everything you remember about me",
+    ),
+)
+def test_bulk_memory_delete_requires_confirmation_without_reasoning(
+    transcript: str,
+) -> None:
+    memory = FakeMemory()
+    reasoning = FakeReasoning()
+    pipeline = VoiceConciergePipeline(reasoning, memory=memory)
+
+    result = pipeline.process_transcript(transcript)
+
+    assert result.spoken_response.startswith("This will permanently delete all")
+    assert result.state.pending_bulk_memory_delete is True
+    assert memory.delete_all_calls == 0
+    assert reasoning.calls == []
+
+
+def test_confirmed_bulk_memory_delete_reports_count_and_clears_state() -> None:
+    memory = FakeMemory()
+    state = AppPipelineState(pending_bulk_memory_delete=True)
+    pipeline = VoiceConciergePipeline(FakeReasoning(), memory=memory)
+
+    result = pipeline.process_transcript("yes, confirm", state)
+
+    assert result.spoken_response == "I've permanently deleted 2 saved memories."
+    assert result.state.pending_bulk_memory_delete is False
+    assert result.memory_operation.succeeded is True
+    assert memory.delete_all_calls == 1
+
+
+def test_cancelled_bulk_memory_delete_keeps_memories() -> None:
+    memory = FakeMemory()
+    state = AppPipelineState(pending_bulk_memory_delete=True)
+    pipeline = VoiceConciergePipeline(FakeReasoning(), memory=memory)
+
+    result = pipeline.process_transcript("no", state)
+
+    assert result.spoken_response == "Okay, I won't delete your memories."
+    assert result.state.pending_bulk_memory_delete is False
+    assert memory.delete_all_calls == 0
+
+
+def test_ambiguous_bulk_memory_delete_confirmation_remains_pending() -> None:
+    memory = FakeMemory()
+    state = AppPipelineState(pending_bulk_memory_delete=True)
+    pipeline = VoiceConciergePipeline(FakeReasoning(), memory=memory)
+
+    result = pipeline.process_transcript("maybe later", state)
+
+    assert result.spoken_response == "Sorry, was that a yes or a no?"
+    assert result.state.pending_bulk_memory_delete is True
+    assert memory.delete_all_calls == 0
+
+
+def test_empty_bulk_memory_delete_is_a_successful_noop() -> None:
+    memory = FakeMemory(
+        bulk_delete_result=BulkMemoryDeleteResult(
+            0,
+            MemoryOperationOutcome(MemoryOperationStatus.NO_CHANGES),
+        )
+    )
+    state = AppPipelineState(pending_bulk_memory_delete=True)
+    pipeline = VoiceConciergePipeline(FakeReasoning(), memory=memory)
+
+    result = pipeline.process_transcript("yes", state)
+
+    assert result.spoken_response == "You didn't have any saved memories to delete."
+    assert result.errors == ()
 
 
 def test_memory_retrieval_failure_still_allows_reasoning() -> None:

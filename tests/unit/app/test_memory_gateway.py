@@ -29,6 +29,8 @@ class FakeMemoryManager:
         self.id_calls: list[int] = []
         self.retrieve_calls: list[dict[str, object]] = []
         self.processed_commands: list[MemoryCommand] = []
+        self.deleted: list[tuple[int, int | None]] = []
+        self.delete_outcomes: dict[int, MemoryOperationOutcome] = {}
         self.closed = False
         self.keyed_memories: dict[str, MemoryRecord] = {
             "list:shopping": _memory_record(
@@ -127,6 +129,23 @@ class FakeMemoryManager:
             )
         return MemoryOperationOutcome(MemoryOperationStatus.UPDATED_SUCCESSFULLY)
 
+    def get_all_memories(self) -> list[MemoryRecord]:
+        return [*self.keyed_memories.values(), *self.id_memories.values()]
+
+    def delete_memory(
+        self,
+        memory_id: int,
+        expected_revision: int | None = None,
+    ) -> MemoryOperationOutcome:
+        self.deleted.append((memory_id, expected_revision))
+        return self.delete_outcomes.get(
+            memory_id,
+            MemoryOperationOutcome(
+                MemoryOperationStatus.DELETED_SUCCESSFULLY,
+                memory_id=memory_id,
+            ),
+        )
+
     def close(self) -> None:
         self.closed = True
 
@@ -170,6 +189,35 @@ def test_null_memory_gateway_returns_no_memories_and_blocks_writes() -> None:
     outcome = gateway.apply(action, "personal_relevant")
     assert outcome.status is MemoryOperationStatus.MEMORY_NOT_CONFIGURED
     assert outcome.succeeded is False
+    bulk = gateway.delete_all()
+    assert bulk.deleted_count == 0
+    assert bulk.outcome.status is MemoryOperationStatus.MEMORY_NOT_CONFIGURED
+
+
+def test_memory_manager_gateway_deletes_snapshot_with_exact_revisions() -> None:
+    manager = FakeMemoryManager()
+    gateway = MemoryManagerGateway(manager)
+
+    result = gateway.delete_all()
+
+    assert result.deleted_count == 3
+    assert result.outcome.status is MemoryOperationStatus.DELETED_SUCCESSFULLY
+    assert manager.deleted == [(10, 3), (20, 4), (42, 3)]
+
+
+def test_memory_manager_gateway_reports_partial_bulk_delete() -> None:
+    manager = FakeMemoryManager()
+    manager.delete_outcomes[20] = MemoryOperationOutcome(
+        MemoryOperationStatus.MEMORY_REVISION_CONFLICT,
+        memory_id=20,
+    )
+    gateway = MemoryManagerGateway(manager)
+
+    result = gateway.delete_all()
+
+    assert result.deleted_count == 2
+    assert result.outcome.status is MemoryOperationStatus.DELETE_ERROR
+    assert result.outcome.detail == "Could not delete memory IDs 20"
 
 
 def test_memory_manager_gateway_semantically_retrieves_personal_context() -> None:
@@ -203,6 +251,30 @@ def test_memory_manager_gateway_semantically_retrieves_personal_context() -> Non
     assert manager.key_calls == []
 
 
+def test_memory_manager_gateway_retrieves_exact_accessibility_preference() -> None:
+    manager = FakeMemoryManager()
+    manager.keyed_memories["preference:accessibility.preferred_pace"] = _memory_record(
+        memory_id=30,
+        content="accessibility.preferred_pace=normal",
+        revision=5,
+        layer="profile",
+        memory_key="preference:accessibility.preferred_pace",
+    )
+    gateway = MemoryManagerGateway(manager)
+
+    memories = gateway.retrieve("Can you speak slower?", "personal_relevant", limit=2)
+
+    assert memories[0] == MemoryReference(
+        memory_id=30,
+        content="accessibility.preferred_pace=normal",
+        layer="profile",
+        revision=5,
+        memory_key="preference:accessibility.preferred_pace",
+    )
+    assert manager.key_calls == ["preference:accessibility.preferred_pace"]
+    assert manager.retrieve_calls[0]["top_k"] == 1
+
+
 def test_memory_manager_gateway_retrieves_shopping_list_by_stable_key() -> None:
     manager = FakeMemoryManager()
     gateway = MemoryManagerGateway(manager)
@@ -223,6 +295,24 @@ def test_memory_manager_gateway_retrieves_shopping_list_by_stable_key() -> None:
     )
     assert manager.key_calls == ["list:shopping"]
     assert manager.retrieve_calls == []
+
+
+def test_memory_manager_gateway_repairs_legacy_list_wrapper_for_reasoning() -> None:
+    manager = FakeMemoryManager()
+    manager.keyed_memories["list:shopping"] = _memory_record(
+        memory_id=10,
+        content="Shopping list: I'll add milk, bread.",
+        revision=3,
+        memory_key="list:shopping",
+        topic="shopping",
+    )
+    gateway = MemoryManagerGateway(manager)
+
+    memories = gateway.retrieve("What is on my shopping list?", "list_relevant")
+
+    assert memories[0].content == "Shopping list: milk, bread."
+    assert memories[0].memory_id == 10
+    assert memories[0].revision == 3
 
 
 def test_memory_manager_gateway_does_not_semantically_substitute_missing_list() -> None:

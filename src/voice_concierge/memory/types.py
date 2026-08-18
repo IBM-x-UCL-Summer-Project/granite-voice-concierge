@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
+from typing import Literal
 
 from voice_concierge.memory_contracts import (
     SHOPPING_LIST_MEMORY_KEY,
@@ -200,10 +201,15 @@ class StructuredListMutation:
 
     list_name: StructuredListName
     items: tuple[str, ...]
+    operation: Literal["add_items", "remove_items"] = "add_items"
 
     def __post_init__(self) -> None:
         if self.list_name not in {"shopping", "task"}:
             raise ValueError(f"Unsupported structured list: {self.list_name!r}.")
+        if self.operation not in {"add_items", "remove_items"}:
+            raise ValueError(
+                f"Unsupported structured-list operation: {self.operation!r}."
+            )
         if not isinstance(self.items, tuple) or not self.items:
             raise ValueError("Structured-list items must be a non-empty tuple.")
         if any(

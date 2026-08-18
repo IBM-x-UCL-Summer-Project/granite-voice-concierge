@@ -8,7 +8,7 @@
       content="Granite Voice Concierge local conversation interface"
     />
     <title>Granite Voice Concierge</title>
-    <link rel="stylesheet" href="./styles.css?v=20260812" />
+    <link rel="stylesheet" href="./styles.css?v=20260817-4" />
   </head>
   <body>
     <div class="app-shell">
@@ -31,6 +31,19 @@
         </div>
 
         <div class="topbar-actions">
+          <button class="settings-button" id="wake-word-button" type="button" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z" />
+              <path d="M5 11v1a7 7 0 0 0 14 0v-1M12 19v2M9 21h6" />
+            </svg>
+            <span>Wake mode</span>
+          </button>
+          <button class="settings-button" id="local-data-button" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 6h16v12H4zM8 10h8M8 14h5" />
+            </svg>
+            <span>Local data</span>
+          </button>
           <button class="settings-button" id="settings-button" type="button">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <circle cx="12" cy="12" r="3" />
@@ -54,20 +67,28 @@
               <p class="eyebrow">Live session</p>
               <h1 id="conversation-title">Conversation</h1>
             </div>
-            <div class="mode-control">
-              <span>Mode</span>
-              <label class="mode-pill" for="mode-select">
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M3 11.5 12 4l9 7.5" />
-                  <path d="M5.5 10.5V20h13v-9.5M9 20v-6h6v6" />
-                </svg>
-                <select id="mode-select" aria-label="Conversation mode">
-                  <option value="home">Home</option>
-                  <option value="cooking">Cooking</option>
-                  <option value="shopping">Shopping</option>
-                  <option value="driving">Driving</option>
-                </select>
-              </label>
+            <div class="session-controls">
+              <button class="secondary-button" id="export-chat-button" type="button" disabled>
+                Export chat
+              </button>
+              <button class="secondary-button" id="new-conversation-button" type="button">
+                New conversation
+              </button>
+              <div class="mode-control">
+                <span>Mode</span>
+                <label class="mode-pill" for="mode-select">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M3 11.5 12 4l9 7.5" />
+                    <path d="M5.5 10.5V20h13v-9.5M9 20v-6h6v6" />
+                  </svg>
+                  <select id="mode-select" aria-label="Conversation mode">
+                    <option value="home">Home</option>
+                    <option value="cooking">Cooking</option>
+                    <option value="shopping">Shopping</option>
+                    <option value="driving">Driving</option>
+                  </select>
+                </label>
+              </div>
             </div>
           </div>
 
@@ -92,6 +113,8 @@
           <div class="suggestions" aria-label="Example prompts">
             <button type="button" data-prompt="Switch to driving mode">Switch mode</button>
             <button type="button" data-prompt="Remember that I prefer short answers">Remember a preference</button>
+            <button type="button" data-prompt="Remind me in ten minutes to check the oven" data-capability="reminders">Set a reminder</button>
+            <button type="button" data-prompt="Guide me through a simple morning stretch" data-capability="guided_routines">Start a routine</button>
             <button type="button" data-prompt="What do I need for pasta tonight?">Ask a question</button>
           </div>
 
@@ -123,12 +146,88 @@
           </form>
           <p class="privacy-note">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 10V8a6 6 0 0 1 12 0v2M5 10h14v11H5z" /></svg>
-            Conversation stays on this device
+            Conversation context is temporary. Saved memories stay only on this device.
           </p>
         </section>
 
+        <dialog class="wake-word-screen" id="wake-word-screen" aria-labelledby="wake-word-title">
+          <form id="wake-word-close-form" method="dialog">
+            <button class="wake-word-close" id="wake-word-close" type="submit" aria-label="Return to conversation">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5-7 7 7 7" /></svg>
+              Conversation
+            </button>
+          </form>
+          <button
+            class="wake-conversation-toggle"
+            id="wake-conversation-toggle"
+            type="button"
+            aria-controls="wake-conversation-panel"
+            aria-pressed="false"
+          >
+            Show conversation
+          </button>
+          <details class="wake-settings">
+            <summary>Wake settings</summary>
+            <div class="wake-settings-panel">
+              <label for="wake-quick-sensitivity"><span>Wake sensitivity</span><output id="wake-quick-sensitivity-output" for="wake-quick-sensitivity">60%</output></label>
+              <input id="wake-quick-sensitivity" type="range" min="20" max="100" value="60" step="10" />
+              <label for="wake-quick-pause"><span>Pause before sending</span><output id="wake-quick-pause-output" for="wake-quick-pause">1.8 sec</output></label>
+              <input id="wake-quick-pause" type="range" min="0.8" max="3" value="1.8" step="0.2" />
+              <label for="wake-quick-follow-up"><span>Follow-up listening</span><output id="wake-quick-follow-up-output" for="wake-quick-follow-up">7 sec</output></label>
+              <input id="wake-quick-follow-up" type="range" min="3" max="15" value="7" step="1" />
+              <label class="wake-quick-switch" for="wake-quick-auto-follow-up">
+                <span>Listen automatically after each response</span>
+                <input id="wake-quick-auto-follow-up" type="checkbox" checked />
+              </label>
+              <label for="wake-quick-maximum"><span>Maximum request</span><output id="wake-quick-maximum-output" for="wake-quick-maximum">20 sec</output></label>
+              <input id="wake-quick-maximum" type="range" min="8" max="30" value="20" step="1" />
+            </div>
+          </details>
+          <aside
+            class="wake-conversation-panel"
+            id="wake-conversation-panel"
+            aria-label="Current conversation"
+            aria-hidden="true"
+          >
+            <header>
+              <p class="eyebrow">Current session</p>
+              <h2>Conversation</h2>
+            </header>
+            <div class="wake-conversation-list" id="wake-conversation-list"></div>
+          </aside>
+          <div class="wake-word-stage">
+            <p class="eyebrow">Hands-free · processed locally</p>
+            <h1 id="wake-word-title">Say “Hey Jarvis”</h1>
+            <div class="wake-orb" id="wake-orb" aria-hidden="true">
+              <span></span><span></span><span></span>
+            </div>
+            <p class="wake-word-status" id="wake-word-status" role="status" aria-live="polite">
+              Preparing the local microphone…
+            </p>
+            <p class="wake-word-detail" id="wake-word-detail">
+              Granite listens only for the wake phrase. After your request, it returns to wake-word listening.
+            </p>
+            <div class="wake-word-actions">
+              <button class="wake-push-button" id="wake-push-button" type="button">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z" /><path d="M5 11v1a7 7 0 0 0 14 0v-1M12 19v2M9 21h6" /></svg>
+                <span id="wake-push-label">Talk now</span>
+              </button>
+              <button class="wake-cancel-button" id="wake-cancel-button" type="button" hidden>Cancel listening</button>
+            </div>
+          </div>
+        </dialog>
+
       </main>
     </div>
+
+    <section class="startup-screen" id="startup-screen" aria-labelledby="startup-title">
+      <div class="startup-card">
+        <span class="startup-mark" aria-hidden="true"><span></span><span></span><span></span></span>
+        <p class="eyebrow">Local runtime</p>
+        <h1 id="startup-title">Starting Granite</h1>
+        <p id="startup-message">Connecting to the local engine…</p>
+      </div>
+    </section>
 
     <dialog class="setup-dialog" id="setup-dialog" aria-labelledby="setup-title">
       <div class="setup-shell">
@@ -193,7 +292,6 @@
                   </select>
                   <small>Used for spoken responses and alerts.</small>
                 </label>
-              </div>
             </section>
 
             <section class="setup-step" data-setup-step="1" hidden>
@@ -215,12 +313,38 @@
 
             <section class="setup-step" data-setup-step="2" hidden>
               <div class="range-setting">
-                <div class="range-heading"><div><strong>Wake-word sensitivity</strong><span>The web UI does not stream microphone audio continuously; wake word remains available in the live runner.</span></div><output id="sensitivity-output" for="wake-sensitivity">Live runner only</output></div>
-                <input id="wake-sensitivity" name="wake_word_sensitivity" type="range" min="20" max="100" value="60" step="10" aria-label="Wake-word sensitivity" disabled />
+                <div class="range-heading"><div><strong>Wake-word sensitivity</strong><span>Controls local “Hey Jarvis” detection in hands-free wake mode.</span></div><output id="sensitivity-output" for="wake-sensitivity">Balanced · 60%</output></div>
+                <input id="wake-sensitivity" name="wake_word_sensitivity" type="range" min="20" max="100" value="60" step="10" aria-label="Wake-word sensitivity" />
                 <div class="range-scale"><span>Fewer false triggers</span><span>Easier to activate</span></div>
               </div>
-              <fieldset class="preference-group">
+              <div class="wake-timing-grid">
+                <label class="compact-range" for="wake-end-pause">
+                  <span><strong>Pause before sending</strong><small>Silence allowed while speaking</small></span>
+                  <output id="wake-end-pause-output" for="wake-end-pause">1.8 sec</output>
+                  <input id="wake-end-pause" name="wake_end_pause_seconds" type="range" min="0.8" max="3" value="1.8" step="0.2" />
+                </label>
+                <label class="compact-range" for="wake-follow-up">
+                  <span><strong>Follow-up listening</strong><small>Open-mic window after a response</small></span>
+                  <output id="wake-follow-up-output" for="wake-follow-up">7 sec</output>
+                  <input id="wake-follow-up" name="wake_follow_up_seconds" type="range" min="3" max="15" value="7" step="1" />
+                </label>
+                <label class="compact-range" for="wake-maximum-request">
+                  <span><strong>Maximum request</strong><small>Longest single spoken request</small></span>
+                  <output id="wake-maximum-request-output" for="wake-maximum-request">20 sec</output>
+                  <input id="wake-maximum-request" name="wake_max_request_seconds" type="range" min="8" max="30" value="20" step="1" />
+                </label>
+              </div>
+              <label class="switch-setting" for="wake-auto-follow-up">
+                <span><strong>Automatic follow-up listening</strong><small>After Granite replies in wake mode, briefly listen for another request without requiring “Hey Jarvis”.</small></span>
+                <span class="switch-control"><input id="wake-auto-follow-up" name="wake_auto_follow_up" type="checkbox" checked /><span aria-hidden="true"></span></span>
+              </label>
+              <fieldset class="preference-group interaction-options">
                 <legend>Preferred interaction</legend>
+                <label class="choice-card" id="wake-word-choice">
+                  <input type="radio" name="interaction_mode" value="wake_word" />
+                  <span class="choice-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z" /><path d="M5 11v1a7 7 0 0 0 14 0v-1" /></svg></span>
+                  <span><strong>Wake word</strong><small>Keep listening locally for “Hey Jarvis”</small></span>
+                </label>
                 <label class="choice-card">
                   <input type="radio" name="interaction_mode" value="voice_first" checked />
                   <span class="choice-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" /><path d="M5 10v2a7 7 0 0 0 14 0v-2" /></svg></span>
@@ -272,8 +396,83 @@
       </div>
     </dialog>
 
+    <dialog class="data-dialog" id="local-data-dialog" aria-labelledby="local-data-title">
+      <div class="data-shell">
+        <header class="data-header">
+          <div>
+            <p class="eyebrow">Privacy centre</p>
+            <h2 id="local-data-title">Local data</h2>
+            <p>Review saved memories and reminders. Conversation transcripts and recorded audio are not written to disk.</p>
+          </div>
+          <button class="dialog-close" id="local-data-close" type="button" aria-label="Close local data">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
+          </button>
+        </header>
+        <div class="data-content">
+          <section class="data-section" aria-labelledby="memory-section-title">
+            <div class="data-section-heading">
+              <div><h3 id="memory-section-title">Saved memories</h3><p id="memory-summary">Checking local memory…</p></div>
+              <button class="secondary-button" id="export-memories" type="button">Export JSON</button>
+            </div>
+            <div class="data-list" id="memory-list"></div>
+            <button class="danger-button" id="forget-all-memories" type="button">Forget all memories</button>
+          </section>
+          <section class="data-section" aria-labelledby="reminder-section-title">
+            <div class="data-section-heading">
+              <div><h3 id="reminder-section-title">Reminders and timers</h3><p id="reminder-summary">Checking local reminders…</p></div>
+            </div>
+            <div class="data-list" id="reminder-list"></div>
+            <button class="danger-button" id="cancel-all-reminders" type="button">Cancel all reminders</button>
+          </section>
+          <section class="data-section" aria-labelledby="storage-section-title">
+            <div class="data-section-heading">
+              <div><h3 id="storage-section-title">Storage</h3><p>All enabled durable data remains in local application files.</p></div>
+            </div>
+            <div class="storage-list" id="storage-list"></div>
+          </section>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog class="action-dialog" id="action-dialog" aria-labelledby="action-title" aria-describedby="action-description">
+      <form class="action-form" id="action-form">
+        <header class="action-header">
+          <div>
+            <p class="eyebrow">Local data</p>
+            <h2 id="action-title">Confirm action</h2>
+          </div>
+          <button class="dialog-close" id="action-close" type="button" aria-label="Close confirmation">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
+          </button>
+        </header>
+        <div class="action-content">
+          <p id="action-description"></p>
+          <label class="action-input-field" id="action-input-field" for="action-input" hidden>
+            <span id="action-input-label">Updated value</span>
+            <textarea id="action-input" rows="4"></textarea>
+          </label>
+        </div>
+        <footer class="action-footer">
+          <button class="secondary-button" id="action-cancel" type="button">Cancel</button>
+          <button class="primary-button action-confirm" id="action-confirm" type="submit">Confirm</button>
+        </footer>
+      </form>
+    </dialog>
+
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script src="./playback-policy.js?v=20260815"></script>
-    <script src="./app.js?v=20260815-2"></script>
+    <script src="./playback-policy.js?v=20260817"></script>
+    <script src="./wake-capture-policy.js?v=20260817"></script>
+    <script src="./app-context.js?v=20260817-1"></script>
+    <script src="./diagnostics.js?v=20260817-1"></script>
+    <script src="./settings.js?v=20260817-1"></script>
+    <script src="./conversation.js?v=20260817-1"></script>
+    <script src="./api-client.js?v=20260817-1"></script>
+    <script src="./playback.js?v=20260817-1"></script>
+    <script src="./voice-input.js?v=20260817-1"></script>
+    <script src="./voice-commands.js?v=20260817-1"></script>
+    <script src="./wake-word.js?v=20260817-1"></script>
+    <script src="./session.js?v=20260817-1"></script>
+    <script src="./local-data.js?v=20260817-1"></script>
+    <script src="./app.js?v=20260817-6"></script>
   </body>
 </html>

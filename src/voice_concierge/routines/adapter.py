@@ -52,6 +52,12 @@ class RoutineCommandAdapter:
         """
         return self._session.status if self._session is not None else None
 
+    @property
+    def awaiting_choice(self) -> bool:
+        """Whether a start request needs the user to choose between routines."""
+
+        return bool(self._pending)
+
     def start_routine(self, request: str) -> str:
         self._pending = ()  # a new start-request abandons any pending disambiguation
         try:

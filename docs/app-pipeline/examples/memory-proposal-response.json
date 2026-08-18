@@ -22,7 +22,8 @@
       "rationale": "Smoke runner detected a remember request.",
       "requires_confirmation": true
     },
-    "pending_memory_scope": "personal_relevant"
+    "pending_memory_scope": "personal_relevant",
+    "pending_bulk_memory_delete": false
   },
   "transcript": {
     "text": "remember that I prefer tea",
