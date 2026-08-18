@@ -69,20 +69,34 @@ def _spoken_text_stream(prompt: str, model: str) -> Iterator[str]:
             return
 
 
-def _build_voice(silent: bool):
-    """Return a text-to-speech backend and player, or None when silent."""
+def _build_voice(silent: bool, *, use_piper: bool = False):
+    """Return a text-to-speech backend and player, or None when silent.
+
+    Uses macOS `say` rather than the factory default, which is Piper. Piper is
+    broken on macOS arm64 (issue #52) and raises on every synthesis, so the
+    default would measure the cost of failing rather than of speaking. Every
+    other demo in this directory makes the same substitution.
+    """
     if silent:
         return None, None
     from voice_concierge.audio.player import SoundDevicePlayer
-    from voice_concierge.voice_output.factory import build_text_to_speech
 
-    return build_text_to_speech(), SoundDevicePlayer()
+    if use_piper:
+        from voice_concierge.voice_output.factory import build_text_to_speech
+
+        return build_text_to_speech(), SoundDevicePlayer()
+
+    from voice_concierge.voice_output.say import SayTextToSpeech
+
+    return SayTextToSpeech(), SoundDevicePlayer()
 
 
-def run_blocking(prompt: str, model: str, *, silent: bool) -> None:
+def run_blocking(
+    prompt: str, model: str, *, silent: bool, use_piper: bool = False
+) -> None:
     """Wait for the entire reply, then speak it. Today's behaviour."""
     print("\n--- BLOCKING (what the app does now) ---")
-    tts, player = _build_voice(silent)
+    tts, player = _build_voice(silent, use_piper=use_piper)
     start = time.perf_counter()
 
     with urllib.request.urlopen(
@@ -101,10 +115,12 @@ def run_blocking(prompt: str, model: str, *, silent: bool) -> None:
     print(f"  total               : {time.perf_counter() - start:.2f}s")
 
 
-def run_streaming(prompt: str, model: str, *, silent: bool) -> None:
+def run_streaming(
+    prompt: str, model: str, *, silent: bool, use_piper: bool = False
+) -> None:
     """Speak each sentence as soon as the model finishes it."""
     print("\n--- STREAMING (this branch) ---")
-    tts, player = _build_voice(silent)
+    tts, player = _build_voice(silent, use_piper=use_piper)
     start = time.perf_counter()
     first_audio: float | None = None
 
@@ -146,6 +162,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--streaming-only", action="store_true", help="Skip the blocking baseline."
     )
+    parser.add_argument(
+        "--piper",
+        action="store_true",
+        help="Use the factory default Piper voice, which is broken on macOS arm64.",
+    )
     args = parser.parse_args(argv)
 
     print(f'Prompt: "{args.prompt}"')
@@ -161,8 +182,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if not args.streaming_only:
-        run_blocking(args.prompt, args.model, silent=args.silent)
-    run_streaming(args.prompt, args.model, silent=args.silent)
+        run_blocking(args.prompt, args.model, silent=args.silent, use_piper=args.piper)
+    run_streaming(args.prompt, args.model, silent=args.silent, use_piper=args.piper)
     return 0
 
 
