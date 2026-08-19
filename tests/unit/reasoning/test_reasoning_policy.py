@@ -755,23 +755,26 @@ def test_policy_guard_strips_bare_shopping_list_destination() -> None:
 
 
 @pytest.mark.parametrize(
-    ("transcript", "expected_items"),
+    ("transcript", "mode", "expected_items"),
     (
-        ("I want to buy apple.", ("apple",)),
-        ("I need to get some milk.", ("milk",)),
-        ("Please buy bread and eggs.", ("bread", "eggs")),
+        ("I want to buy apple.", "home", ("apple",)),
+        ("I'd like to purchase tea.", "home", ("tea",)),
+        ("I need to get some milk.", "shopping", ("milk",)),
+        ("Please buy bread and eggs.", "home", ("bread", "eggs")),
         (
             "I would like to pick up an onion, tea, and meat.",
+            "shopping",
             ("onion", "tea", "meat"),
         ),
     ),
 )
 def test_policy_guard_extracts_items_from_purchase_intent(
     transcript: str,
+    mode: str,
     expected_items: tuple[str, ...],
 ) -> None:
     response = apply_reasoning_policy_guards(
-        ReasoningRequest(transcript=transcript),
+        ReasoningRequest(transcript=transcript, mode=mode),
         ReasoningResponse(spoken_response="Okay.", confidence="medium"),
     )
 
@@ -780,6 +783,26 @@ def test_policy_guard_extracts_items_from_purchase_intent(
         "shopping", *expected_items
     )
     assert "shopping list" in response.spoken_response
+
+
+@pytest.mark.parametrize(
+    "transcript",
+    (
+        "Please get help.",
+        "I need to get ready.",
+        "Please pick up my parcel.",
+    ),
+)
+def test_policy_guard_does_not_treat_ambiguous_acquisition_as_shopping(
+    transcript: str,
+) -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(transcript=transcript, mode="home"),
+        ReasoningResponse(spoken_response="Original answer.", confidence="medium"),
+    )
+
+    assert response.spoken_response == "Original answer."
+    assert response.proposed_memory_action is None
 
 
 @pytest.mark.parametrize(

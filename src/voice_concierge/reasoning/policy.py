@@ -9,6 +9,7 @@ from voice_concierge.reasoning.information_policy import (
     InformationDisposition,
     decide_information_policy,
 )
+from voice_concierge.reasoning.list_intents import shopping_purchase_remainder
 from voice_concierge.reasoning.profiles import (
     STRICT_REASONING_POLICY_PROFILE,
     UAT_REASONING_POLICY_PROFILE,
@@ -36,14 +37,6 @@ _LIST_ADD_LEAD = re.compile(
     r"|i(?:['’]d|\s+would)\s+like\s+to\s+"
     r"|i\s+want\s+to\s+"
     r")add\s+",
-    flags=re.IGNORECASE,
-)
-_SHOPPING_PURCHASE_LEAD = re.compile(
-    r"^\s*(?:"
-    r"(?:please\s+)?(?:buy|get|pick\s+up)\s+"
-    r"|i\s+(?:want|need|would\s+like)\s+to\s+"
-    r"(?:buy|get|pick\s+up)\s+"
-    r")",
     flags=re.IGNORECASE,
 )
 _EVIDENCE_TOKEN = re.compile(r"[a-z0-9]+(?:['’][a-z0-9]+)?", flags=re.IGNORECASE)
@@ -696,9 +689,12 @@ def _shopping_items_to_add(
     *,
     mode: str,
 ) -> tuple[str, ...] | None:
-    purchase_lead = _SHOPPING_PURCHASE_LEAD.match(transcript)
-    if purchase_lead is not None:
-        return _split_list_items(transcript[purchase_lead.end() :])
+    purchase_remainder = shopping_purchase_remainder(
+        transcript,
+        shopping_context=mode.casefold() == "shopping",
+    )
+    if purchase_remainder is not None:
+        return _split_list_items(purchase_remainder)
 
     if not re.search(r"\badd\b", text):
         return None

@@ -262,7 +262,7 @@ def test_detailed_preference_does_not_relax_driving_safety_limit() -> None:
         ("Please update the task list", "task_relevant_only"),
     ),
 )
-def test_explicit_structured_list_routes_retrieval_outside_list_mode(
+def test_structured_list_and_direct_purchase_routes_retrieval_outside_list_mode(
     transcript: str,
     expected_scope: str,
 ) -> None:
@@ -273,6 +273,27 @@ def test_explicit_structured_list_routes_retrieval_outside_list_mode(
 
     assert memory.retrieve_calls == [
         {"query": transcript, "scope": expected_scope, "limit": 3}
+    ]
+
+
+@pytest.mark.parametrize(
+    "transcript",
+    (
+        "Please get help",
+        "I need to get ready",
+        "Please pick up my parcel",
+    ),
+)
+def test_ambiguous_acquisition_keeps_default_retrieval_scope(
+    transcript: str,
+) -> None:
+    memory = FakeMemory()
+    pipeline = VoiceConciergePipeline(FakeReasoning(), memory=memory)
+
+    pipeline.process_transcript(transcript)
+
+    assert memory.retrieve_calls == [
+        {"query": transcript, "scope": "personal_relevant", "limit": 3}
     ]
 
 
