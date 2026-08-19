@@ -65,6 +65,8 @@ CMD ["python", "-m", "voice_concierge.app.web", "--voice-io", "--log-level", "DE
 FROM application AS test
 
 RUN python -c 'import subprocess, sys, tomllib; dependencies = tomllib.load(open("pyproject.toml", "rb"))["project"]["optional-dependencies"]["dev"]; subprocess.check_call([sys.executable, "-m", "pip", "install", "--no-cache-dir", *dependencies])'
+COPY benchmarks ./benchmarks
+COPY docs ./docs
 COPY tests ./tests
 CMD ["python", "-m", "pytest", "-v"]
 

@@ -9,6 +9,10 @@
 
 !src/
 !src/**
+!benchmarks/
+!benchmarks/**
+!docs/
+!docs/**
 !tests/
 !tests/**
 !web/

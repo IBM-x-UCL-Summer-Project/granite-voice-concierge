@@ -8,5 +8,7 @@ services:
       # Editable installation means mounted Python sources are imported
       # directly. Restart the service after changing server-side Python code.
       - ./src:/app/src
+      - ./benchmarks:/app/benchmarks
+      - ./docs:/app/docs
       - ./tests:/app/tests
       - ./web:/app/web
