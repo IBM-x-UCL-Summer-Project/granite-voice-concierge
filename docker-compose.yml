@@ -1,0 +1,78 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: granite-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    environment:
+      - OLLAMA_MODELS=/root/.ollama/models
+    command: serve
+    healthcheck:
+      # The official Ollama image does not include curl. Use its own CLI to
+      # verify that the API server is accepting requests.
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  voice-concierge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: granite-voice-concierge
+    ports:
+      - "127.0.0.1:4173:4173"
+    volumes:
+      # Persistent data
+      - ./data/.local:/app/.local
+      # Keep downloaded Whisper and other Hugging Face model files across
+      # container recreation.
+      - model-cache:/root/.cache
+    environment:
+      # Tell the app where to find Ollama
+      - OLLAMA_API_URL=http://ollama:11434
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      ollama:
+        condition: service_healthy
+    command:
+      - python
+      - -m
+      - voice_concierge.app.web
+      - --host
+      - 0.0.0.0
+      - --port
+      - "4173"
+      - --voice-io
+      - --log-level
+      - DEBUG
+      - --log-file
+      - .local/logs/web.log
+    # For live voice mode, uncomment below:
+    # devices:
+    #   - /dev/snd:/dev/snd
+    #   - /dev/dsp:/dev/dsp
+
+  # Optional: Web UI reverse proxy / api gateway
+  # Uncomment if you need routing or SSL termination
+  # nginx:
+  #   image: nginx:alpine
+  #   ports:
+  #     - "80:80"
+  #   volumes:
+  #     - ./nginx.conf:/etc/nginx/nginx.conf:ro
+  #   depends_on:
+  #     - voice-concierge
+
+volumes:
+  ollama-data:
+    driver: local
+  model-cache:
+    driver: local
+
+networks:
+  default:
+    name: granite-network
