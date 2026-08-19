@@ -20,7 +20,7 @@ echo ""
 
 if ! command -v ollama &> /dev/null; then
     echo "Ollama not found. Install the macOS Ollama application first:"
-    echo "  brew install --cask ollama"
+    echo "  brew install --cask ollama-app"
     exit 1
 fi
 
