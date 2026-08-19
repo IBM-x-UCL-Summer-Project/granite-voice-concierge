@@ -15,14 +15,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Copy project files
 COPY pyproject.toml requirements.txt requirements-dev.txt ./
-COPY src ./src
 
 # Install CPU-only PyTorch first. The default Linux wheels may pull several
 # gigabytes of CUDA libraries that this image cannot use.
 RUN pip install --no-cache-dir \
         --index-url https://download.pytorch.org/whl/cpu \
         torch torchaudio \
-    && pip install --no-cache-dir -e .
+    && python -c 'import subprocess, sys, tomllib; dependencies = tomllib.load(open("pyproject.toml", "rb"))["project"]["dependencies"]; subprocess.check_call([sys.executable, "-m", "pip", "install", "--no-cache-dir", *dependencies])'
+
+# Source changes should not invalidate the expensive dependency layer.
+COPY src ./src
+
+# Keep the large Piper voice model in the final image without transferring it
+# through the macOS build context. Pin its expected digest for reproducibility.
+RUN curl --fail --location --retry 3 \
+        --output src/voice_concierge/voice_output/en_GB-alan-medium.onnx \
+        https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alan/medium/en_GB-alan-medium.onnx \
+    && echo "0a309668932205e762801f1efc2736cd4b0120329622adf62be09e56339d3330  src/voice_concierge/voice_output/en_GB-alan-medium.onnx" \
+        | sha256sum --check --strict
+
+RUN pip install --no-cache-dir --no-deps -e .
 
 # Static UI changes should not invalidate the Python dependency layer.
 COPY web ./web
