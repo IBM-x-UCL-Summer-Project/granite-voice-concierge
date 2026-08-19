@@ -13,7 +13,8 @@ help:
 	@echo "  logs            Show service logs"
 	@echo "  shell           Open shell in voice-concierge container"
 	@echo "  live            Run live voice mode on the host (uses the Mac microphone)"
-	@echo "  test            Run tests in container"
+	@echo "  test            Build the test image and run tests in a fresh container"
+	@echo "  dev-up          Start with source and tests mounted from the host"
 	@echo "  pull-model      Pull a model into Ollama"
 	@echo "  list-models     List available Ollama models"
 	@echo "  clean           Remove containers & data"
@@ -52,7 +53,11 @@ live-no-memory:
 	.venv/bin/python -m voice_concierge.app.live --no-memory --no-playback
 
 test:
-	docker compose exec voice-concierge pytest -v
+	@echo "Building the isolated Docker test target..."
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml build voice-concierge
+	@echo "Running tests without starting Ollama or the long-running web service..."
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm \
+		--no-deps --entrypoint python voice-concierge -m pytest -v
 
 pull-model:
 	@read -p "Enter model name: " model; \
@@ -71,10 +76,11 @@ rebuild: clean build up
 ps:
 	docker compose ps
 
-# Development: mount source code for live reloading
+# Development: mount source, tests, and web assets from the host. The current
+# server has no auto-reloader, so restart the service after Python changes.
 dev-up:
-	@echo "Starting in development mode (source code mounted)..."
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+	@echo "Starting in source-mounted development mode..."
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 	@echo "Development services started"
 
 .DEFAULT_GOAL := help

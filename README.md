@@ -270,6 +270,24 @@ docker compose down
 docker compose up -d --build --force-recreate
 ```
 
+### Docker development and tests
+
+Build the dedicated test target and run the full suite in a fresh container:
+
+```bash
+make test
+```
+
+The test target contains development tools and the test suite; the normal
+runtime image does not. To start the web service with local source, tests, and
+web assets mounted into that development target, run:
+
+```bash
+make dev-up
+```
+
+The server does not auto-reload Python changes. Restart the service after
+server-side edits with `docker compose restart voice-concierge`.
 
 ## Project Documentation
 
