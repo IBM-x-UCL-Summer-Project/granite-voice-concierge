@@ -1,23 +1,4 @@
 services:
-  ollama:
-    image: ollama/ollama:latest
-    container_name: granite-ollama
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama-data:/root/.ollama
-    environment:
-      - OLLAMA_MODELS=/root/.ollama/models
-    command: serve
-    healthcheck:
-      # The official Ollama image does not include curl. Use its own CLI to
-      # verify that the API server is accepting requests.
-      test: ["CMD", "ollama", "list"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-
   voice-concierge:
     build:
       context: .
@@ -32,15 +13,14 @@ services:
       # container recreation.
       - model-cache:/root/.cache
     environment:
-      # OLLAMA_API_URL is written to the persisted reasoning selection by the
-      # entrypoint. OLLAMA_HOST is used by the Ollama embedding client.
-      - OLLAMA_API_URL=http://ollama:11434
-      - OLLAMA_HOST=http://ollama:11434
+      # Ollama runs natively on the host so macOS can use Metal acceleration.
+      # The entrypoint also writes this URL to the reasoning model selection.
+      - OLLAMA_API_URL=${OLLAMA_API_URL:-http://host.docker.internal:11434}
+      - OLLAMA_HOST=${OLLAMA_API_URL:-http://host.docker.internal:11434}
       - REASONING_MODEL=${OLLAMA_MODEL:-granite4.1:8b}
       - PYTHONUNBUFFERED=1
-    depends_on:
-      ollama:
-        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command:
       - python
       - -m
@@ -71,8 +51,6 @@ services:
   #     - voice-concierge
 
 volumes:
-  ollama-data:
-    driver: local
   model-cache:
     driver: local
 

@@ -1,6 +1,7 @@
 """Validates whether content should be stored as a memory using LLM judgment."""
 
 import json
+import os
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, Optional, Tuple
@@ -73,16 +74,17 @@ Extract and return as JSON (only these exact keys):
 
 Respond with ONLY valid JSON, no other text."""
 
-    def __init__(self, model: str = "granite:7b", host: str = "http://localhost:11434"):
+    def __init__(self, model: str = "granite:7b", host: str | None = None):
         """
         Initialize the validator with Ollama configuration.
 
         Args:
             model: The model to use for validation (default: granite:7b)
-            host: Ollama server host (default: http://localhost:11434)
+            host: Ollama server host. Defaults to OLLAMA_HOST, then localhost.
         """
         self.model = model
-        self.client = Client(host=host)
+        self.host = host or os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+        self.client = Client(host=self.host)
 
     def should_store(self, content: str) -> Tuple[bool, str]:
         """

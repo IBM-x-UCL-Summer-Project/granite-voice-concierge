@@ -12,8 +12,8 @@ mkdir -p .local/logs
 echo "Persistent directories ready"
 
 # The application stores its selected reasoning host in a local JSON file.
-# Keep the user's model choices, but replace the host with the Docker service
-# address on every container start. This avoids changing application source.
+# Keep the user's model choices, but replace the host with the configured
+# native Ollama address on every container start.
 if [ -n "${OLLAMA_API_URL:-}" ]; then
     python3 - <<'PY'
 import json

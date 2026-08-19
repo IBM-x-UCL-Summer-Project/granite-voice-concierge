@@ -1,4 +1,4 @@
-.PHONY: help build up down logs logs-ollama shell live live-no-wakeword \
+.PHONY: help build up down logs shell live live-no-wakeword \
 	live-no-memory test pull-model list-models clean rebuild ps dev-up
 
 help:
@@ -26,7 +26,7 @@ up:
 	docker compose up -d
 	@echo "Services started"
 	@echo "  Web UI: http://127.0.0.1:4173"
-	@echo "  Ollama: http://localhost:11434"
+	@echo "  Native Ollama: http://localhost:11434"
 
 down:
 	docker compose down
@@ -34,9 +34,6 @@ down:
 
 logs:
 	docker compose logs -f voice-concierge
-
-logs-ollama:
-	docker compose logs -f ollama
 
 shell:
 	docker compose exec voice-concierge /bin/bash
@@ -59,10 +56,10 @@ test:
 
 pull-model:
 	@read -p "Enter model name: " model; \
-	docker compose exec ollama ollama pull $$model
+	ollama pull $$model
 
 list-models:
-	docker compose exec ollama ollama list
+	ollama list
 
 clean:
 	docker compose down

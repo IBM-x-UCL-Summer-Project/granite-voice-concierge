@@ -4,7 +4,7 @@ set -e
 echo "Granite Voice Concierge - Quick Start"
 echo ""
 
-# Check Docker
+# Check required host applications.
 if ! command -v docker &> /dev/null; then
     echo "Docker not found. Please install Docker Desktop"
     exit 1
@@ -18,50 +18,50 @@ fi
 echo "Docker found"
 echo ""
 
-# Build
+if ! command -v ollama &> /dev/null; then
+    echo "Ollama not found. Install the macOS Ollama application first:"
+    echo "  brew install --cask ollama"
+    exit 1
+fi
+
+if ! curl --fail --silent http://127.0.0.1:11434/api/tags > /dev/null; then
+    echo "Native Ollama is not responding on http://127.0.0.1:11434"
+    echo "Start the Ollama application, or run:"
+    echo "  OLLAMA_HOST=0.0.0.0:11434 ollama serve"
+    exit 1
+fi
+
+echo "Native Ollama is ready"
+echo ""
+
+# Models are owned by native Ollama and remain outside the Docker image.
+export OLLAMA_MODEL="${OLLAMA_MODEL:-granite4.1:8b}"
+if ! ollama list | grep -Fq "$OLLAMA_MODEL"; then
+    echo "Downloading $OLLAMA_MODEL (first run only)..."
+    ollama pull "$OLLAMA_MODEL"
+fi
+
+OLLAMA_EMBEDDING_MODEL="${OLLAMA_EMBEDDING_MODEL:-granite-embedding:278m}"
+if ! ollama list | grep -Fq "$OLLAMA_EMBEDDING_MODEL"; then
+    echo "Downloading $OLLAMA_EMBEDDING_MODEL (first run only)..."
+    ollama pull "$OLLAMA_EMBEDDING_MODEL"
+fi
+
 echo "Building Docker image..."
 docker compose build
 
-echo ""
-echo "Build complete!"
-echo ""
-
-# Start Ollama first so a model can be present before the application starts.
-echo "Starting Ollama..."
-docker compose up -d ollama
-
-echo ""
-echo "Services started!"
-echo ""
-
-# Wait for Ollama
-echo "Waiting for Ollama to be ready..."
-for i in {1..30}; do
-    if docker compose exec -T ollama ollama list > /dev/null 2>&1; then
-        echo "Ollama is ready!"
-        break
-    fi
-    echo "  Attempt $i/30..."
-    sleep 2
-done
-
-# Use Granite 4.1 8B for reasoning. The named Ollama volume keeps it across
-# restarts, and exporting the value passes the same choice to Docker Compose.
-export OLLAMA_MODEL="${OLLAMA_MODEL:-granite4.1:8b}"
-if ! docker compose exec -T ollama ollama list | grep -Fq "$OLLAMA_MODEL"; then
-    echo "Downloading $OLLAMA_MODEL (first run only)..."
-    docker compose exec -T ollama ollama pull "$OLLAMA_MODEL"
-fi
-
-# Persistent memory uses a separate local embedding model.
-OLLAMA_EMBEDDING_MODEL="${OLLAMA_EMBEDDING_MODEL:-granite-embedding:278m}"
-if ! docker compose exec -T ollama ollama list | grep -Fq "$OLLAMA_EMBEDDING_MODEL"; then
-    echo "Downloading $OLLAMA_EMBEDDING_MODEL (first run only)..."
-    docker compose exec -T ollama ollama pull "$OLLAMA_EMBEDDING_MODEL"
+# Verify the host service is reachable through Docker Desktop before starting
+# the long-running application container.
+echo "Checking Ollama access from Docker..."
+if ! docker compose run --rm --no-deps --entrypoint sh voice-concierge \
+    -c 'curl --fail --silent "$OLLAMA_API_URL/api/tags" > /dev/null'; then
+    echo "Docker cannot reach native Ollama. Restart Ollama with:"
+    echo "  OLLAMA_HOST=0.0.0.0:11434 ollama serve"
+    exit 1
 fi
 
 echo "Starting Granite Voice Concierge..."
-docker compose up -d voice-concierge
+docker compose up -d
 
 echo ""
 echo "Service Status:"
@@ -70,7 +70,7 @@ echo ""
 
 echo "Next Steps:"
 echo ""
-echo "1. The default model is ready: $OLLAMA_MODEL"
+echo "1. Native Ollama model is ready: $OLLAMA_MODEL"
 echo "   The embedding model is ready: $OLLAMA_EMBEDDING_MODEL"
 echo ""
 echo "2. Access Web UI:"
