@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from json import JSONDecodeError
@@ -48,6 +48,7 @@ from voice_concierge.reasoning.prompting import (
     build_granite_messages,
     load_prompt_template,
 )
+from voice_concierge.reasoning.streaming_json import SpokenResponseExtractor
 from voice_concierge.reasoning.types import (
     SHOPPING_LIST_MEMORY_KEY,
     STRUCTURED_LIST_MEMORY_KEYS,
@@ -368,6 +369,85 @@ class OllamaReasoningEngine:
             "prompt_version": self._prompt_template.version,
             **generation_options.as_metadata(),
             **self._extract_metrics(response),
+        }
+        raw_response = self._parse_response_content(content, metadata)
+        guarded_response = apply_reasoning_policy_guards(request, raw_response)
+        guarded_response = apply_spoken_word_limit(
+            guarded_response,
+            request.constraints.max_words,
+        )
+        return ReasoningTrace(
+            raw_response=raw_response,
+            guarded_response=guarded_response,
+        )
+
+    def generate_stream_trace(
+        self,
+        request: ReasoningRequest,
+        on_spoken_text: Callable[[str], None],
+    ) -> ReasoningTrace:
+        """Generate with the reply streamed, then return the same trace as usual.
+
+        `on_spoken_text` receives the spoken field as the model writes it, so a
+        caller can start speaking before the reply is finished. Everything after
+        the stream closes is identical to the blocking path: the accumulated
+        JSON goes through the same parser and the same policy guards, so the
+        structured result a turn depends on is unchanged.
+
+        The guards can still rewrite the spoken text after the fact, most
+        notably by substituting a confirmation prompt. A caller that has already
+        spoken the streamed words is responsible for reconciling that; the trace
+        returned here always reflects the guarded truth.
+        """
+
+        validate_reasoning_request(request)
+        generation_options = _generation_options_for_request(request, self.config)
+        messages = [
+            message.as_dict()
+            for message in build_granite_messages(
+                request,
+                prompt_version=self.config.prompt_version,
+            )
+        ]
+        extractor = SpokenResponseExtractor()
+        parts: list[str] = []
+        try:
+            for chunk in self._client.chat(
+                model=self.config.model,
+                messages=messages,
+                stream=True,
+                format=_StructuredReasoningResponse.model_json_schema(),
+                options={
+                    "temperature": self.config.temperature,
+                    "top_p": self.config.top_p,
+                    "num_ctx": generation_options.num_ctx,
+                    "num_predict": generation_options.num_predict,
+                },
+                keep_alive=generation_options.keep_alive,
+            ):
+                piece = chunk.message.content if chunk.message is not None else None
+                if not piece:
+                    continue
+                parts.append(piece)
+                revealed = extractor.feed(piece)
+                if revealed:
+                    on_spoken_text(revealed)
+        except _OLLAMA_CLIENT_ERRORS as exc:
+            raise _generation_error_from_client_error(exc, self.config.host) from exc
+
+        content = "".join(parts).strip()
+        if not content:
+            raise OllamaGenerationError("Ollama streamed an empty response.")
+
+        metadata = {
+            "backend": "ollama",
+            "model": self.config.model,
+            "model_role": self.config.model_role,
+            "output_format": "structured_json",
+            "streamed": "true",
+            "prompt_id": self._prompt_template.prompt_id,
+            "prompt_version": self._prompt_template.version,
+            **generation_options.as_metadata(),
         }
         raw_response = self._parse_response_content(content, metadata)
         guarded_response = apply_reasoning_policy_guards(request, raw_response)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol
@@ -151,6 +152,49 @@ class ReasoningTurnService:
             return _failure_result("unknown", exc)
 
         return ReasoningTurnResult(response=response)
+
+    def supports_streaming(self) -> bool:
+        """Whether the engine underneath can stream a reply as it writes it."""
+
+        return hasattr(self._engine, "generate_stream_trace")
+
+    def stream_transcript(
+        self,
+        transcript: str,
+        context: ReasoningTurnContext | None = None,
+        *,
+        on_spoken_text: Callable[[str], None],
+    ) -> ReasoningTurnResult:
+        """Generate with the spoken text delivered as it arrives.
+
+        Returns the same result as process_transcript, including the same
+        failure handling, so a caller can fall back to the blocking path
+        without special-casing errors. The only difference is that the words
+        have already been handed over by the time this returns.
+        """
+
+        turn_context = context or ReasoningTurnContext()
+        try:
+            trace = self._engine.generate_stream_trace(
+                turn_context.to_request(transcript),
+                on_spoken_text,
+            )
+        except ReasoningRequestError as exc:
+            return _failure_result("invalid_request", exc)
+        except ReasoningConfigurationError as exc:
+            return _failure_result("configuration", exc)
+        except ReasoningBackendUnavailableError as exc:
+            return _failure_result("backend_unavailable", exc)
+        except ReasoningModelUnavailableError as exc:
+            return _failure_result("model_unavailable", exc)
+        except ReasoningTimeoutError as exc:
+            return _failure_result("timeout", exc)
+        except ReasoningGenerationError as exc:
+            return _failure_result("generation", exc)
+        except ReasoningError as exc:
+            return _failure_result("unknown", exc)
+
+        return ReasoningTurnResult(response=trace.guarded_response)
 
 
 def build_reasoning_turn_service(

@@ -36,6 +36,7 @@ def build_voice_concierge_pipeline(
     load_memory: bool = False,
     load_voice_io: bool = False,
     load_runtime_context: bool = True,
+    stream_speech: bool = False,
 ) -> VoiceConciergePipeline:
     """Build the app pipeline with configured local-only component backends."""
 
@@ -62,8 +63,15 @@ def build_voice_concierge_pipeline(
     if load_runtime_context and runtime_context is None:
         runtime_context = LocalRuntimeContextProvider()
 
+    stream_speaker = None
+    if stream_speech and text_to_speech is not None and audio_player is not None:
+        from voice_concierge.voice_output.streaming import StreamingSpeaker
+
+        stream_speaker = StreamingSpeaker(text_to_speech, audio_player)
+
     return VoiceConciergePipeline(
         service,
+        stream_speaker=stream_speaker,
         memory=memory,
         speech_to_text=speech_to_text,
         text_to_speech=text_to_speech,

@@ -60,6 +60,8 @@ from voice_concierge.reasoning.types import (
     ReasoningResponse,
     RuntimeReference,
 )
+from voice_concierge.voice_output.sentences import SentenceAccumulator
+from voice_concierge.voice_output.streaming import StreamingSpeaker
 
 _EMPTY_TRANSCRIPT_RESPONSE = "I didn't catch that. Could you say it again?"
 _STT_FAILED_RESPONSE = "I couldn't transcribe that. Please try again."
@@ -94,6 +96,57 @@ class ReasoningTurnProcessor(Protocol):
         """Return a reasoning result for one transcript and prepared context."""
 
 
+class _StreamingSpeechSink:
+    """Speaks whole sentences as streamed text arrives, within a word budget.
+
+    The spoken word cap is normally applied once the reply is complete, which
+    is how driving mode stays terse. Speaking on the way past means applying it
+    here instead, or a safety limit would only ever constrain text nobody
+    hears.
+    """
+
+    def __init__(self, speaker: StreamingSpeaker, max_words: int) -> None:
+        self._speaker = speaker
+        self._budget = max(1, max_words)
+        self._accumulator = SentenceAccumulator()
+        self._spent = 0
+        self._stopped = False
+
+    def feed(self, text: str) -> None:
+        """Take streamed text and speak any sentences it completes."""
+        if self._stopped:
+            return
+        for sentence in self._accumulator.feed(text):
+            if not self._say(sentence):
+                return
+
+    def flush(self) -> None:
+        """Speak the trailing sentence the stream never terminated."""
+        if self._stopped:
+            return
+        for sentence in self._accumulator.flush():
+            if not self._say(sentence):
+                return
+
+    def _say(self, sentence: str) -> bool:
+        """Speak one sentence; False once the budget is exhausted."""
+        words = sentence.split()
+        remaining = self._budget - self._spent
+        if remaining <= 0:
+            self._stopped = True
+            return False
+
+        if len(words) > remaining:
+            trimmed = " ".join(words[:remaining]).rstrip(".,;:") + "."
+            self._speaker.speak_stream([trimmed])
+            self._stopped = True
+            return False
+
+        self._spent += len(words)
+        self._speaker.speak_stream([sentence])
+        return True
+
+
 class VoiceConciergePipeline:
     """Coordinate context, memory, reasoning, STT, TTS, and playback per turn."""
 
@@ -109,6 +162,7 @@ class VoiceConciergePipeline:
         runtime_context: RuntimeContextProvider | None = None,
         memory_context_limit: int = 3,
         conversation_history_limit: int = DEFAULT_CONVERSATION_HISTORY_LIMIT,
+        stream_speaker: StreamingSpeaker | None = None,
     ) -> None:
         if conversation_history_limit < 0:
             raise ValueError("conversation_history_limit must not be negative.")
@@ -122,6 +176,9 @@ class VoiceConciergePipeline:
         self._runtime_context = runtime_context
         self._memory_context_limit = memory_context_limit
         self._conversation_history_limit = conversation_history_limit
+        # When set, the reply is spoken sentence by sentence as the model
+        # writes it, instead of being synthesised once it is complete.
+        self._stream_speaker = stream_speaker
 
     @property
     def speech_to_text(self) -> SpeechToTextAdapter | None:
@@ -343,11 +400,20 @@ class VoiceConciergePipeline:
             max_words=context_decision.policy.max_words,
             allow_memory_writes=context_decision.policy.memory_scope != "none",
         )
+        spoke_while_generating = False
         try:
-            reasoning_result = self._reasoning.process_transcript(
-                normalized_text,
-                reasoning_context,
-            )
+            if self._can_stream(options):
+                reasoning_result = self._stream_reasoning_turn(
+                    normalized_text,
+                    reasoning_context,
+                    max_words=context_decision.policy.max_words,
+                )
+                spoke_while_generating = True
+            else:
+                reasoning_result = self._reasoning.process_transcript(
+                    normalized_text,
+                    reasoning_context,
+                )
         except Exception as exc:
             reasoning_result = _unexpected_reasoning_failure(exc)
             errors.append("reasoning_failed")
@@ -380,6 +446,7 @@ class VoiceConciergePipeline:
             pending_memory_scope=pending_memory_scope,
         )
         return self._finalize_result(
+            already_spoken=spoke_while_generating,
             state=next_state,
             spoken_response=reasoning_result.spoken_response,
             context_decision=context_decision,
@@ -598,9 +665,44 @@ class VoiceConciergePipeline:
             return ()
         return history[-self._conversation_history_limit :]
 
+    def _can_stream(self, options: AppTurnOptions) -> bool:
+        """Whether this turn can be spoken as the model writes it."""
+        if self._stream_speaker is None or not options.play:
+            return False
+        supports = getattr(self._reasoning, "supports_streaming", None)
+        return bool(supports and supports())
+
+    def _stream_reasoning_turn(
+        self,
+        transcript: str,
+        reasoning_context: ReasoningTurnContext,
+        *,
+        max_words: int,
+    ) -> ReasoningTurnResult:
+        """Reason and speak at the same time, respecting the spoken word cap.
+
+        The cap is normally applied once the reply is complete, which is how
+        driving mode stays terse. Speaking on the way past means applying it as
+        the sentences arrive, otherwise a safety limit would only ever constrain
+        text that nobody hears.
+        """
+        sink = _StreamingSpeechSink(self._stream_speaker, max_words)
+        try:
+            return self._reasoning.stream_transcript(
+                transcript,
+                reasoning_context,
+                on_spoken_text=sink.feed,
+            )
+        finally:
+            # The model rarely ends on whitespace, so the closing sentence is
+            # still held back when the stream closes. Without this the last
+            # thing said is silently dropped from every reply.
+            sink.flush()
+
     def _finalize_result(
         self,
         *,
+        already_spoken: bool = False,
         state: AppPipelineState,
         spoken_response: str,
         context_decision: ContextDecision,
@@ -612,6 +714,20 @@ class VoiceConciergePipeline:
     ) -> AppTurnResult:
         response_audio = None
         updated_errors = list(errors)
+
+        if already_spoken:
+            # The reply left the speakers while it was still being written, so
+            # synthesising it again here would say the whole thing twice.
+            return AppTurnResult(
+                state=state,
+                spoken_response=spoken_response,
+                context_decision=context_decision,
+                transcript=transcript,
+                reasoning_result=reasoning_result,
+                memory_operation=memory_operation or MemoryOperationResult(),
+                response_audio=None,
+                errors=tuple(updated_errors),
+            )
 
         if options.synthesize or options.play:
             if self._text_to_speech is None:

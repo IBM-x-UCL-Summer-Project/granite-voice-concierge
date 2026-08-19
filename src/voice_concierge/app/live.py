@@ -65,6 +65,7 @@ class LiveAppConfig:
     vad_max_wait_s: int = DEFAULT_MAX_WAIT_S
     guided_routines: bool = True
     reminders: bool = True
+    stream_speech: bool = False
 
     def __post_init__(self) -> None:
         if self.wake_word_threshold < 0:
@@ -206,6 +207,7 @@ def build_live_app_pipeline(config: LiveAppConfig) -> VoiceConciergePipeline:
         text_to_speech=text_to_speech,
         audio_player=audio_player,
         load_memory=config.load_memory,
+        stream_speech=config.stream_speech,
     )
 
 
@@ -529,6 +531,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Disable local reminders and timers.",
     )
     parser.add_argument(
+        "--stream-speech",
+        action="store_true",
+        help=(
+            "Speak each sentence as the model writes it, instead of waiting "
+            "for the whole reply. Cuts the silence before an answer starts."
+        ),
+    )
+    parser.add_argument(
         "--no-guided-routines",
         action="store_true",
         help="Answer step-by-step requests normally instead of guiding them.",
@@ -552,6 +562,7 @@ def _config_from_args(args: argparse.Namespace) -> LiveAppConfig:
         vad_max_wait_s=args.vad_max_wait_s,
         guided_routines=not args.no_guided_routines,
         reminders=not args.no_reminders,
+        stream_speech=args.stream_speech,
     )
 
 
