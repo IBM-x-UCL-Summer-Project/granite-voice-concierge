@@ -71,7 +71,10 @@ class TestRecognisingRequests:
         [
             "remind me to stretch in ten minutes",
             "set a timer for five minutes",
+            "set the timer for five minutes",
+            "it says a timer for three minutes",
             "what reminders do i have",
+            "do i have a timer set",
             "cancel all reminders",
         ],
     )
@@ -97,6 +100,25 @@ class TestSettingByVoice:
         assert "10 minutes" in said
         assert len(service.upcoming()) == 1
 
+    def test_setting_the_timer_uses_the_reminder_store(self, handler) -> None:
+        active, service = handler
+
+        said = active.run("set the timer for 5 minutes")
+
+        assert said == "Timer set for 5 minutes."
+        assert len(service.upcoming()) == 1
+
+    def test_misheard_set_timer_request_still_uses_the_reminder_store(
+        self,
+        handler,
+    ) -> None:
+        active, service = handler
+
+        said = active.run("It says a timer for three minutes.")
+
+        assert said == "Timer set for 3 minutes."
+        assert len(service.upcoming()) == 1
+
     def test_a_request_without_a_time_asks_for_one(self, handler) -> None:
         active, service = handler
 
@@ -120,6 +142,14 @@ class TestListingByVoice:
         said = active.run("what reminders do i have")
 
         assert said.startswith("You have one: stretch,")
+
+    def test_natural_timer_question_reads_from_the_store(self, handler) -> None:
+        active, _ = handler
+        active.run("set a timer for 3 minutes")
+
+        said = active.run("Do I have a timer set?")
+
+        assert said.startswith("You have one: 3 minutes,")
 
     def test_several_reminders_are_listed(self, handler) -> None:
         active, _ = handler

@@ -17,7 +17,8 @@
       }
     ],
     "pending_memory_action": null,
-    "pending_memory_scope": null
+    "pending_memory_scope": null,
+    "pending_bulk_memory_delete": false
   },
   "transcript": {
     "text": "Switch to driving mode",

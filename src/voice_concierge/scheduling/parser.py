@@ -29,6 +29,20 @@ REMINDER_TRIGGERS: tuple[str, ...] = (
     "let me know",
 )
 
+_SCHEDULE_REQUEST = re.compile(
+    r"\b(?:set|start)\s+(?:(?:a|the)\s+)?(?:timer|reminder)\b",
+    flags=re.IGNORECASE,
+)
+
+# Whisper can turn the short phrase "set a timer" into "it says a timer".
+# Only repair that leading phrase when the rest still contains an explicit
+# duration, which keeps an ordinary sentence such as "it says a timer is on"
+# out of the scheduling fast path.
+_MISHEARD_TIMER_REQUEST = re.compile(
+    r"^(?:please\s+)?it\s+(?:says|said|sets)\s+(?=(?:a|the)\s+timer\b)",
+    flags=re.IGNORECASE,
+)
+
 _UNITS: dict[str, int] = {
     "second": 1,
     "minute": 60,
@@ -77,16 +91,38 @@ _TIMER_WORDS = re.compile(r"\b(timer|alarm)\b")
 
 #: Words stripped from the front of the remembered text once parsed.
 _LEAD_IN = re.compile(
-    r"^(?:please\s+)?(?:can you\s+)?(?:remind me(?:\s+to)?|set a reminder(?:\s+to)?"
-    r"|set a timer(?:\s+for)?|reminder(?:\s+to|\s+for)?|wake me(?:\s+up)?"
+    r"^(?:please\s+)?(?:can you\s+)?(?:remind me(?:\s+to)?"
+    r"|(?:set|start)\s+(?:(?:a|the)\s+)?timer(?:\s+for)?"
+    r"|(?:set|start)\s+(?:(?:a|the)\s+)?reminder(?:\s+to|\s+for)?"
+    r"|reminder(?:\s+to|\s+for)?|wake me(?:\s+up)?"
     r"|let me know(?:\s+to)?)\s*",
+    flags=re.IGNORECASE,
+)
+
+# A schedule may come before the subject ("remind me in ten minutes to call")
+# or after it ("remind me to call in ten minutes"). The schedule parsers accept
+# both arrangements, so subject extraction must do the same.
+_LEADING_SCHEDULE = re.compile(
+    r"^(?:"
+    r"(?:in|for)\s+(?:half\s+(?:an?\s+)?|(?:\d+|[a-z]+(?:\s+five)?)\s+(?:an?\s+)?)"
+    r"(?:seconds?|minutes?|hours?|days?)"
+    r"|(?:at|by)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?"
+    r"|every\s+(?:"
+    r"(?:\d+|[a-z]+)\s+(?:seconds?|minutes?|hours?)"
+    r"|day|morning|evening|night|" + "|".join(WEEKDAY_NAMES) + r")"
+    r"(?:\s+at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?)?"
+    r")\s+to\s+",
+    flags=re.IGNORECASE,
 )
 
 
 def is_reminder_request(transcript: str) -> bool:
     """True when the transcript is asking for a reminder or timer."""
-    lowered = transcript.casefold()
-    return any(trigger in lowered for trigger in REMINDER_TRIGGERS)
+    normalized = _normalize_spoken_request(transcript)
+    lowered = normalized.casefold()
+    return any(trigger in lowered for trigger in REMINDER_TRIGGERS) or bool(
+        _SCHEDULE_REQUEST.search(normalized)
+    )
 
 
 _HALF = re.compile(r"\b(?:in|for)\s+half\s+(?:an?\s+)?(?P<unit>minute|hour|day)s?\b")
@@ -114,7 +150,7 @@ def parse_reminder(transcript: str, *, now: int) -> Reminder | None:
     `now` is passed in rather than read from the clock so that "in ten minutes"
     is a pure function of its inputs and can be tested exactly.
     """
-    text = transcript.strip()
+    text = _normalize_spoken_request(transcript)
     if not text:
         return None
     lowered = text.casefold()
@@ -129,6 +165,15 @@ def parse_reminder(transcript: str, *, now: int) -> Reminder | None:
         return None  # no time found: the caller asks rather than guessing
     kind = "timer" if _TIMER_WORDS.search(lowered) else "reminder"
     return Reminder(text=_subject(text), schedule=schedule, kind=kind)
+
+
+def _normalize_spoken_request(transcript: str) -> str:
+    """Repair a narrowly scoped speech-recognition error in timer requests."""
+
+    text = transcript.strip()
+    if _MISHEARD_TIMER_REQUEST.search(text) and parse_duration(text) is not None:
+        return _MISHEARD_TIMER_REQUEST.sub("set ", text, count=1)
+    return text
 
 
 def _parse_relative(text: str, now: int) -> Schedule | None:
@@ -242,6 +287,7 @@ def _to_number(token: str) -> int | None:
 def _subject(text: str) -> str:
     """Strip the request wrapper, leaving what the reminder is about."""
     subject = _LEAD_IN.sub("", text.strip(), count=1)
+    subject = _LEADING_SCHEDULE.sub("", subject, count=1)
     subject = re.sub(
         r"\b(?:in|for|at|by)\s+(?:\d+|[a-z]+)(?::\d{2})?\s*"
         r"(?:seconds?|minutes?|hours?|days?|am|pm|a\.m\.|p\.m\.)?\s*$",

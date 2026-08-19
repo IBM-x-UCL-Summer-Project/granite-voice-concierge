@@ -74,6 +74,7 @@ def test_app_pipeline_state_round_trips_through_plain_dict() -> None:
         ),
         pending_memory_action=action,
         pending_memory_scope="list_relevant",
+        pending_bulk_memory_delete=True,
     )
 
     payload = app_pipeline_state_to_dict(state)
@@ -106,6 +107,7 @@ def test_app_pipeline_state_round_trips_through_plain_dict() -> None:
             "requires_confirmation": True,
         },
         "pending_memory_scope": "list_relevant",
+        "pending_bulk_memory_delete": True,
     }
     assert parsed == state
 

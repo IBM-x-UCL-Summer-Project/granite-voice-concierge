@@ -11,6 +11,7 @@ asleep" is an ordinary test rather than something only observable by waiting.
 # Standard library
 import time
 from collections.abc import Callable
+from dataclasses import replace
 
 # Local
 from voice_concierge.scheduling.errors import SchedulingError
@@ -102,6 +103,40 @@ class ReminderService:
         """Remove one reminder, raising if there was nothing to remove."""
         if not self._store.delete(identifier):
             raise SchedulingError(f"No reminder with id {identifier} is set.")
+
+    def edit(
+        self,
+        identifier: int,
+        *,
+        text: str | None = None,
+        due_at: int | None = None,
+    ) -> Reminder:
+        """Change the wording or next due time of one pending reminder."""
+
+        reminder = self._store.get(identifier)
+        if reminder is None or reminder.completed:
+            raise SchedulingError(f"No pending reminder with id {identifier} is set.")
+        updated_text = reminder.text if text is None else text.strip()
+        if not updated_text:
+            raise SchedulingError("A reminder needs something to say.")
+        updated_due_at = reminder.due_at if due_at is None else due_at
+        if not isinstance(updated_due_at, int) or isinstance(updated_due_at, bool):
+            raise SchedulingError("Reminder due_at must be an integer timestamp.")
+        updated = replace(
+            reminder,
+            text=updated_text,
+            schedule=replace(reminder.schedule, due_at=updated_due_at),
+        )
+        return self._store.update(updated)
+
+    def snooze(self, identifier: int, seconds: int) -> Reminder:
+        """Move the next occurrence forward from now by a positive duration."""
+
+        if not isinstance(seconds, int) or isinstance(seconds, bool) or seconds <= 0:
+            raise SchedulingError(
+                "Snooze duration must be a positive number of seconds."
+            )
+        return self.edit(identifier, due_at=self.now() + seconds)
 
     def cancel_all(self) -> int:
         """Remove every reminder, returning how many were removed."""

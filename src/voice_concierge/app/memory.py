@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from threading import RLock
 from typing import TYPE_CHECKING, Protocol
 
 from voice_concierge.context.types import MemoryScope
+from voice_concierge.memory.structured_lists import (
+    canonicalize_structured_list_content,
+)
 from voice_concierge.memory.types import (
     ApplyStructuredListCommand,
     DeleteMemoryCommand,
@@ -34,6 +38,18 @@ if TYPE_CHECKING:
     from voice_concierge.memory.factory import LocalMemoryConfig
 
 
+@dataclass(frozen=True)
+class BulkMemoryDeleteResult:
+    """Outcome and count for one confirmed all-memory deletion."""
+
+    deleted_count: int
+    outcome: MemoryOperationOutcome
+
+    def __post_init__(self) -> None:
+        if self.deleted_count < 0:
+            raise ValueError("Deleted memory count must not be negative.")
+
+
 class MemoryGateway(Protocol):
     """Small app-owned boundary over memory retrieval and confirmed writes."""
 
@@ -52,6 +68,9 @@ class MemoryGateway(Protocol):
         scope: MemoryScope,
     ) -> MemoryOperationOutcome:
         """Apply a previously confirmed memory action."""
+
+    def delete_all(self) -> BulkMemoryDeleteResult:
+        """Delete every saved memory after app-level confirmation."""
 
     def close(self) -> None:
         """Release persistent memory resources."""
@@ -92,6 +111,12 @@ class NullMemoryGateway:
     ) -> MemoryOperationOutcome:
         return MemoryOperationOutcome(MemoryOperationStatus.MEMORY_NOT_CONFIGURED)
 
+    def delete_all(self) -> BulkMemoryDeleteResult:
+        return BulkMemoryDeleteResult(
+            0,
+            MemoryOperationOutcome(MemoryOperationStatus.MEMORY_NOT_CONFIGURED),
+        )
+
     def close(self) -> None:
         """Release no resources for the no-op gateway."""
 
@@ -130,6 +155,13 @@ class MemoryManagerGateway:
             return (shopping_list,) if shopping_list is not None else ()
 
         exact_memories: tuple[MemoryReference, ...] = ()
+        preference_key = _accessibility_preference_key(query)
+        if preference_key is not None and _scope_allows_key(scope, preference_key):
+            preference = _memory_reference(
+                self._manager.get_memory_by_key(preference_key)
+            )
+            if preference is not None:
+                exact_memories = (preference,)
         if scope == "task_relevant_only":
             task_list = _memory_reference(
                 self._manager.get_memory_by_key(TASK_LIST_MEMORY_KEY)
@@ -189,6 +221,55 @@ class MemoryManagerGateway:
             return target_outcome
         command = _memory_command_from_action(action, scope)
         return self._manager.execute_memory_command(command)
+
+    def delete_all(self) -> BulkMemoryDeleteResult:
+        """Delete the current snapshot with revision-safe manager operations."""
+
+        with self._operation_lock:
+            memories = self._manager.get_all_memories()
+            if not memories:
+                return BulkMemoryDeleteResult(
+                    0,
+                    MemoryOperationOutcome(MemoryOperationStatus.NO_CHANGES),
+                )
+
+            deleted_count = 0
+            pending_cleanup = False
+            failed_ids: list[int] = []
+            for memory in memories:
+                outcome = self._manager.delete_memory(
+                    memory.id,
+                    expected_revision=memory.revision,
+                )
+                if outcome.succeeded:
+                    deleted_count += 1
+                    pending_cleanup = pending_cleanup or (
+                        outcome.status
+                        is MemoryOperationStatus.DELETED_PENDING_INDEX_CLEANUP
+                    )
+                else:
+                    failed_ids.append(memory.id)
+
+            if failed_ids:
+                return BulkMemoryDeleteResult(
+                    deleted_count,
+                    MemoryOperationOutcome(
+                        MemoryOperationStatus.DELETE_ERROR,
+                        detail=(
+                            "Could not delete memory IDs "
+                            + ", ".join(str(memory_id) for memory_id in failed_ids)
+                        ),
+                    ),
+                )
+            status = (
+                MemoryOperationStatus.DELETED_PENDING_INDEX_CLEANUP
+                if pending_cleanup
+                else MemoryOperationStatus.DELETED_SUCCESSFULLY
+            )
+            return BulkMemoryDeleteResult(
+                deleted_count,
+                MemoryOperationOutcome(status),
+            )
 
     def _authorize_target(
         self,
@@ -257,6 +338,20 @@ def _storage_metadata(scope: MemoryScope) -> tuple[str, str | None]:
     return metadata[scope]
 
 
+def _accessibility_preference_key(query: str) -> str | None:
+    normalized = " ".join(query.casefold().split())
+    if re.search(
+        r"\b(?:speak|talk|answer)\s+"
+        r"(?:(?:a|one)\s+)?(?:(?:little|bit)\s+)?"
+        r"(?:more\s+slowly|slower)\b",
+        normalized,
+    ):
+        return "preference:accessibility.preferred_pace"
+    if "keep answers short" in normalized or "short answers" in normalized:
+        return "preference:accessibility.verbosity"
+    return None
+
+
 def _memory_command_from_action(
     action: MemoryAction,
     scope: MemoryScope,
@@ -270,6 +365,7 @@ def _memory_command_from_action(
             mutation=StructuredListMutation(
                 list_name=action.list_operation.list_name,
                 items=action.list_operation.items,
+                operation=action.list_operation.operation,
             ),
         )
 
@@ -334,9 +430,17 @@ def _memory_reference(
         memory = value
     else:
         return None
+    content = memory.content
+    list_name = None
+    if memory.memory_key == SHOPPING_LIST_MEMORY_KEY:
+        list_name = "shopping"
+    elif memory.memory_key == TASK_LIST_MEMORY_KEY:
+        list_name = "task"
+    if list_name is not None:
+        content = canonicalize_structured_list_content(content, list_name) or content
     return MemoryReference(
         memory_id=memory.id,
-        content=memory.content,
+        content=content,
         layer=memory.layer,
         revision=memory.revision,
         memory_key=memory.memory_key,
@@ -363,6 +467,14 @@ class MemoryManagerPort(Protocol):
     def execute_memory_command(
         self,
         command: MemoryCommand,
+    ) -> MemoryOperationOutcome: ...
+
+    def get_all_memories(self) -> list[MemoryRecord]: ...
+
+    def delete_memory(
+        self,
+        memory_id: int,
+        expected_revision: int | None = None,
     ) -> MemoryOperationOutcome: ...
 
     def close(self) -> None: ...

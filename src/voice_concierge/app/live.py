@@ -10,6 +10,7 @@ from typing import TextIO
 
 from voice_concierge.app.factory import build_voice_concierge_pipeline
 from voice_concierge.app.pipeline import VoiceConciergePipeline
+from voice_concierge.app.reasoning import AppReasoningConfig
 from voice_concierge.app.reminders import (
     CANCEL_ALL_PHRASES,
     LIST_PHRASES,
@@ -23,6 +24,12 @@ from voice_concierge.reasoning.errors import (
     ReasoningBackendUnavailableError,
     ReasoningConfigurationError,
     ReasoningModelUnavailableError,
+)
+from voice_concierge.reasoning.profiles import (
+    SUPPORTED_REASONING_POLICY_PROFILES,
+    UAT_REASONING_POLICY_PROFILE,
+    ReasoningPolicyProfile,
+    validate_reasoning_policy_profile,
 )
 from voice_concierge.routines.intent import is_routine_request
 from voice_concierge.scheduling.parser import is_reminder_request
@@ -66,6 +73,7 @@ class LiveAppConfig:
     guided_routines: bool = True
     reminders: bool = True
     stream_speech: bool = False
+    policy_profile: ReasoningPolicyProfile = UAT_REASONING_POLICY_PROFILE
 
     def __post_init__(self) -> None:
         if self.wake_word_threshold < 0:
@@ -74,6 +82,7 @@ class LiveAppConfig:
             raise ValueError("vad_max_wait_s must be positive.")
         if self.play and not self.synthesize:
             raise ValueError("play requires synthesize.")
+        validate_reasoning_policy_profile(self.policy_profile)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -203,6 +212,7 @@ def build_live_app_pipeline(config: LiveAppConfig) -> VoiceConciergePipeline:
     text_to_speech = build_text_to_speech() if config.synthesize else None
     audio_player = SoundDevicePlayer() if config.play else None
     return build_voice_concierge_pipeline(
+        AppReasoningConfig(policy_profile=config.policy_profile),
         speech_to_text=build_speech_to_text(),
         text_to_speech=text_to_speech,
         audio_player=audio_player,
@@ -373,7 +383,9 @@ def build_routine_turn_handler(  # pragma: no cover - builds models and devices
     try:
         adapter = build_routine_adapter(
             memory_manager=build_memory_manager(),
-            reasoning_engine=build_reasoning_engine(),
+            reasoning_engine=build_reasoning_engine(
+                policy_profile=config.policy_profile,
+            ),
         )
         # One shared vocabulary spots playback and routine words; the stabilizer
         # keeps a partial-result recognizer from firing twice or on noise.
@@ -543,6 +555,15 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Answer step-by-step requests normally instead of guiding them.",
     )
+    parser.add_argument(
+        "--policy-profile",
+        choices=sorted(SUPPORTED_REASONING_POLICY_PROFILES),
+        default=UAT_REASONING_POLICY_PROFILE,
+        help=(
+            "Reasoning safeguards: uat_relaxed favors natural test responses; "
+            "strict enforces exact provenance metadata."
+        ),
+    )
     return parser
 
 
@@ -563,6 +584,7 @@ def _config_from_args(args: argparse.Namespace) -> LiveAppConfig:
         guided_routines=not args.no_guided_routines,
         reminders=not args.no_reminders,
         stream_speech=args.stream_speech,
+        policy_profile=args.policy_profile,
     )
 
 

@@ -292,7 +292,12 @@ def _apply_accessibility_preferences(
 
     if "keep answers short" in transcript or "short answers" in transcript:
         updated = replace(updated, verbosity="short")
-    if "answer more slowly" in transcript or "speak more slowly" in transcript:
+    if re.search(
+        r"\b(?:speak|talk|answer)\s+"
+        r"(?:(?:a|one)\s+)?(?:(?:little|bit)\s+)?"
+        r"(?:more\s+slowly|slower)\b",
+        transcript,
+    ):
         updated = replace(updated, speech_pace="slow")
 
     return updated

@@ -43,6 +43,11 @@ from voice_concierge.reasoning.models import (
 )
 from voice_concierge.reasoning.output import apply_spoken_word_limit
 from voice_concierge.reasoning.policy import apply_reasoning_policy_guards
+from voice_concierge.reasoning.profiles import (
+    STRICT_REASONING_POLICY_PROFILE,
+    ReasoningPolicyProfile,
+    validate_reasoning_policy_profile,
+)
 from voice_concierge.reasoning.prompting import (
     DEFAULT_PROMPT_VERSION,
     build_granite_messages,
@@ -178,7 +183,7 @@ class _StructuredListOperation(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
 
     list_name: Literal["shopping", "task"]
-    operation: Literal["add_items"]
+    operation: Literal["add_items", "remove_items"]
     items: tuple[str, ...] = Field(min_length=1)
 
     @field_validator("items")
@@ -295,6 +300,7 @@ class OllamaConfig:
     keep_alive: str | float = "5m"
     prompt_version: str = DEFAULT_PROMPT_VERSION
     model_role: Literal["primary", "fallback"] = "primary"
+    policy_profile: ReasoningPolicyProfile = STRICT_REASONING_POLICY_PROFILE
 
     def __post_init__(self) -> None:
         _validate_config_string(self.model, "model")
@@ -304,6 +310,10 @@ class OllamaConfig:
             )
         _validate_config_string(self.host, "host")
         _validate_config_string(self.prompt_version, "prompt_version")
+        try:
+            validate_reasoning_policy_profile(self.policy_profile)
+        except ValueError as exc:
+            raise ReasoningConfigurationError(str(exc)) from exc
         _validate_positive_number(self.timeout_s, "timeout_s")
         _validate_temperature(self.temperature)
         _validate_top_p(self.top_p)
@@ -337,6 +347,7 @@ class OllamaReasoningEngine:
             for message in build_granite_messages(
                 request,
                 prompt_version=self.config.prompt_version,
+                policy_profile=self.config.policy_profile,
             )
         ]
         try:
@@ -367,11 +378,16 @@ class OllamaReasoningEngine:
             "output_format": "structured_json",
             "prompt_id": self._prompt_template.prompt_id,
             "prompt_version": self._prompt_template.version,
+            "policy_profile": self.config.policy_profile,
             **generation_options.as_metadata(),
             **self._extract_metrics(response),
         }
         raw_response = self._parse_response_content(content, metadata)
-        guarded_response = apply_reasoning_policy_guards(request, raw_response)
+        guarded_response = apply_reasoning_policy_guards(
+            request,
+            raw_response,
+            policy_profile=self.config.policy_profile,
+        )
         guarded_response = apply_spoken_word_limit(
             guarded_response,
             request.constraints.max_words,

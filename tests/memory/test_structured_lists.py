@@ -4,6 +4,7 @@ import pytest
 
 from voice_concierge.memory.structured_lists import (
     apply_structured_list_operation,
+    canonicalize_structured_list_content,
     create_structured_list,
     parse_legacy_structured_list,
     parse_structured_list,
@@ -20,6 +21,14 @@ def _shopping_add(*items: str) -> StructuredListMutation:
     return StructuredListMutation(
         list_name="shopping",
         items=items,
+    )
+
+
+def _shopping_remove(*items: str) -> StructuredListMutation:
+    return StructuredListMutation(
+        list_name="shopping",
+        items=items,
+        operation="remove_items",
     )
 
 
@@ -45,6 +54,55 @@ def test_apply_structured_list_operation_rejects_wrong_list_content() -> None:
     operation = _shopping_add("milk")
 
     assert apply_structured_list_operation("Task list: call Mum.", operation) is None
+
+
+def test_remove_items_preserves_the_rest_of_the_list() -> None:
+    assert (
+        apply_structured_list_operation(
+            "Shopping list: milk, wholemeal bread, eggs.",
+            _shopping_remove("Wholemeal bread"),
+        )
+        == "Shopping list: milk, eggs."
+    )
+
+
+def test_legacy_command_wrapper_is_not_treated_as_a_list_item() -> None:
+    content = "Shopping list: I'll add milk, bread."
+    mutation = _shopping_add("eggs")
+
+    assert parse_structured_list(content, mutation) == ("milk", "bread")
+    assert (
+        apply_structured_list_operation(content, mutation)
+        == "Shopping list: milk, bread, eggs."
+    )
+    assert (
+        canonicalize_structured_list_content(content, "shopping")
+        == "Shopping list: milk, bread."
+    )
+
+
+def test_canonicalization_preserves_and_within_one_labelled_item() -> None:
+    assert (
+        canonicalize_structured_list_content(
+            "Task list: review research and development plan.",
+            "task",
+        )
+        == "Task list: review research and development plan."
+    )
+
+
+def test_removing_the_last_item_keeps_an_empty_canonical_list() -> None:
+    operation = _shopping_remove("milk")
+
+    updated = apply_structured_list_operation("Shopping list: milk.", operation)
+
+    assert updated == "Shopping list: empty."
+    assert parse_structured_list(updated, operation) == ()
+
+
+def test_remove_operation_cannot_create_a_missing_list() -> None:
+    with pytest.raises(ValueError, match="only be created by adding"):
+        create_structured_list(_shopping_remove("milk"))
 
 
 def test_parse_structured_list_supports_an_empty_canonical_list() -> None:

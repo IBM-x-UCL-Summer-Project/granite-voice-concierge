@@ -18,6 +18,11 @@ from voice_concierge.reasoning.errors import (
     ReasoningTimeoutError,
 )
 from voice_concierge.reasoning.models import DEFAULT_MODEL_SELECTION_PATH
+from voice_concierge.reasoning.profiles import (
+    STRICT_REASONING_POLICY_PROFILE,
+    ReasoningPolicyProfile,
+    validate_reasoning_policy_profile,
+)
 from voice_concierge.reasoning.prompting import DEFAULT_PROMPT_VERSION
 from voice_concierge.reasoning.types import (
     MemoryReference,
@@ -47,6 +52,7 @@ class ReasoningEngineFactory(Protocol):
         *,
         prompt_version: str,
         timeout_s: float,
+        policy_profile: ReasoningPolicyProfile,
     ) -> ReasoningEngine:
         """Build a reasoning engine from app-level runtime config."""
 
@@ -58,6 +64,10 @@ class AppReasoningConfig:
     selection_path: str | Path = DEFAULT_MODEL_SELECTION_PATH
     prompt_version: str = DEFAULT_PROMPT_VERSION
     timeout_s: float = 120.0
+    policy_profile: ReasoningPolicyProfile = STRICT_REASONING_POLICY_PROFILE
+
+    def __post_init__(self) -> None:
+        validate_reasoning_policy_profile(self.policy_profile)
 
 
 @dataclass(frozen=True)
@@ -215,6 +225,7 @@ def build_reasoning_turn_service(
         runtime_config.selection_path,
         prompt_version=runtime_config.prompt_version,
         timeout_s=runtime_config.timeout_s,
+        policy_profile=runtime_config.policy_profile,
     )
     return ReasoningTurnService(engine)
 

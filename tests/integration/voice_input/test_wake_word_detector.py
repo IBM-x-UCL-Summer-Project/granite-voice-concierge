@@ -1,5 +1,4 @@
 # Standard library
-from collections import defaultdict, deque
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -102,10 +101,7 @@ class TestWakeWordDetectorIntegration:
         detector = WakeWordDetector(
             confidence_threshold=0.3, download_models=False, audio_source=source
         )
-        detector._model.predict = MagicMock()
-        detector._model.prediction_buffer = defaultdict(
-            deque, {"hey_jarvis_v0.1.onnx": deque([0.9])}
-        )
+        detector._model.predict = MagicMock(return_value={"hey_jarvis_v0.1.onnx": 0.9})
         callback = MagicMock()
 
         # Act
@@ -128,10 +124,7 @@ class TestWakeWordDetectorIntegration:
         detector = WakeWordDetector(
             confidence_threshold=0.5, download_models=False, audio_source=source
         )
-        detector._model.predict = MagicMock()
-        detector._model.prediction_buffer = defaultdict(
-            deque, {"hey_jarvis_v0.1.onnx": deque([0.3])}
-        )
+        detector._model.predict = MagicMock(return_value={"hey_jarvis_v0.1.onnx": 0.3})
         callback = MagicMock()
 
         # Act
@@ -155,10 +148,7 @@ class TestWakeWordDetectorIntegration:
         detector = WakeWordDetector(
             confidence_threshold=0.3, download_models=False, audio_source=source
         )
-        detector._model.predict = MagicMock()
-        detector._model.prediction_buffer = defaultdict(
-            deque, {"hey_jarvis_v0.1.onnx": deque([0.9])}
-        )
+        detector._model.predict = MagicMock(return_value={"hey_jarvis_v0.1.onnx": 0.9})
         original_reset = detector._model.reset
         detector._model.reset = MagicMock(side_effect=original_reset)
         callback = MagicMock()

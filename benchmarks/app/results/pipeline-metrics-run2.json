@@ -1,0 +1,214 @@
+{
+  "device": {
+    "date": "2026-08-15 21:20",
+    "chip": "Apple M1 Pro",
+    "cores": 8,
+    "ram_gb": 16.0,
+    "os": "Darwin 26.2",
+    "python": "3.12.6"
+  },
+  "models": {
+    "reasoning": "granite4.1:8b",
+    "embedding": "granite-embedding:278m",
+    "speech_to_text": "faster-whisper base.en",
+    "command_recognizer": "vosk-model-small-en-us-0.15",
+    "text_to_speech": "macOS say (piper is broken on macOS arm64, issue #52)"
+  },
+  "turns": [
+    {
+      "index": 1,
+      "request": "what is the capital of France",
+      "response": "The capital of France is Paris.",
+      "latency_s": 4.513,
+      "peak_rss_app_mb": 508.6,
+      "peak_rss_model_mb": 898.4,
+      "peak_rss_total_mb": 1289.0,
+      "mean_cpu_app": 36.2,
+      "mean_cpu_model": 16.0,
+      "peak_cpu_total": 426.7,
+      "peak_system_used_mb": 9709.1,
+      "baseline_system_used_mb": 6515.0,
+      "model_weights_mb": 6395.8,
+      "model_weights_detail": {
+        "granite4.1:8b": 5836.8,
+        "granite-embedding:278m": 559.0
+      },
+      "attributable_total_mb": 7684.8,
+      "model_processes": 3,
+      "samples": 44
+    },
+    {
+      "index": 2,
+      "request": "remember that I do not like mushrooms",
+      "response": "I can remember that. Please confirm before I save it.",
+      "latency_s": 6.493,
+      "peak_rss_app_mb": 490.7,
+      "peak_rss_model_mb": 652.8,
+      "peak_rss_total_mb": 1143.6,
+      "mean_cpu_app": 26.4,
+      "mean_cpu_model": 9.7,
+      "peak_cpu_total": 433.0,
+      "peak_system_used_mb": 9751.0,
+      "baseline_system_used_mb": 6586.0,
+      "model_weights_mb": 6395.8,
+      "model_weights_detail": {
+        "granite4.1:8b": 5836.8,
+        "granite-embedding:278m": 559.0
+      },
+      "attributable_total_mb": 7539.4,
+      "model_processes": 3,
+      "samples": 63
+    },
+    {
+      "index": 3,
+      "request": "tell me how to make a cup of tea",
+      "response": "To make a cup of tea, boil water, steep a tea bag in hot water for 3-5 minutes, then strain and add milk or sweetener if",
+      "latency_s": 8.753,
+      "peak_rss_app_mb": 476.4,
+      "peak_rss_model_mb": 658.8,
+      "peak_rss_total_mb": 1126.8,
+      "mean_cpu_app": 18.6,
+      "mean_cpu_model": 7.5,
+      "peak_cpu_total": 432.2,
+      "peak_system_used_mb": 9665.9,
+      "baseline_system_used_mb": 6161.0,
+      "model_weights_mb": 6395.8,
+      "model_weights_detail": {
+        "granite4.1:8b": 5836.8,
+        "granite-embedding:278m": 559.0
+      },
+      "attributable_total_mb": 7522.6,
+      "model_processes": 3,
+      "samples": 85
+    },
+    {
+      "index": 4,
+      "request": "what is the capital of France",
+      "response": "The capital of France is Paris.",
+      "latency_s": 4.737,
+      "peak_rss_app_mb": 476.3,
+      "peak_rss_model_mb": 664.8,
+      "peak_rss_total_mb": 1140.6,
+      "mean_cpu_app": 31.9,
+      "mean_cpu_model": 10.3,
+      "peak_cpu_total": 429.1,
+      "peak_system_used_mb": 9673.8,
+      "baseline_system_used_mb": 6711.9,
+      "model_weights_mb": 6395.8,
+      "model_weights_detail": {
+        "granite4.1:8b": 5836.8,
+        "granite-embedding:278m": 559.0
+      },
+      "attributable_total_mb": 7536.4,
+      "model_processes": 3,
+      "samples": 46
+    },
+    {
+      "index": 5,
+      "request": "remember that I do not like mushrooms",
+      "response": "I can remember that. Please confirm before I save it.",
+      "latency_s": 6.606,
+      "peak_rss_app_mb": 465.3,
+      "peak_rss_model_mb": 675.6,
+      "peak_rss_total_mb": 1128.2,
+      "mean_cpu_app": 24.2,
+      "mean_cpu_model": 7.6,
+      "peak_cpu_total": 449.5,
+      "peak_system_used_mb": 9737.5,
+      "baseline_system_used_mb": 6248.5,
+      "model_weights_mb": 6395.8,
+      "model_weights_detail": {
+        "granite4.1:8b": 5836.8,
+        "granite-embedding:278m": 559.0
+      },
+      "attributable_total_mb": 7524.0,
+      "model_processes": 3,
+      "samples": 64
+    },
+    {
+      "index": 6,
+      "request": "tell me how to make a cup of tea",
+      "response": "To make a cup of tea, boil water, steep a tea bag in hot water for 3-5 minutes, then strain and add milk or sweetener if",
+      "latency_s": 6.359,
+      "peak_rss_app_mb": 464.2,
+      "peak_rss_model_mb": 675.6,
+      "peak_rss_total_mb": 1101.1,
+      "mean_cpu_app": 26.4,
+      "mean_cpu_model": 9.4,
+      "peak_cpu_total": 468.2,
+      "peak_system_used_mb": 9622.8,
+      "baseline_system_used_mb": 6679.0,
+      "model_weights_mb": 6395.8,
+      "model_weights_detail": {
+        "granite4.1:8b": 5836.8,
+        "granite-embedding:278m": 559.0
+      },
+      "attributable_total_mb": 7496.9,
+      "model_processes": 3,
+      "samples": 62
+    },
+    {
+      "index": 7,
+      "request": "what is the capital of France",
+      "response": "The capital of France is Paris.",
+      "latency_s": 4.688,
+      "peak_rss_app_mb": 463.8,
+      "peak_rss_model_mb": 660.5,
+      "peak_rss_total_mb": 1124.2,
+      "mean_cpu_app": 33.2,
+      "mean_cpu_model": 9.3,
+      "peak_cpu_total": 438.5,
+      "peak_system_used_mb": 9800.0,
+      "baseline_system_used_mb": 6645.5,
+      "model_weights_mb": 6395.8,
+      "model_weights_detail": {
+        "granite4.1:8b": 5836.8,
+        "granite-embedding:278m": 559.0
+      },
+      "attributable_total_mb": 7520.0,
+      "model_processes": 3,
+      "samples": 46
+    },
+    {
+      "index": 8,
+      "request": "remember that I do not like mushrooms",
+      "response": "I can remember that. Please confirm before I save it.",
+      "latency_s": 8.159,
+      "peak_rss_app_mb": 388.7,
+      "peak_rss_model_mb": 659.5,
+      "peak_rss_total_mb": 1013.4,
+      "mean_cpu_app": 20.0,
+      "mean_cpu_model": 7.0,
+      "peak_cpu_total": 432.9,
+      "peak_system_used_mb": 9838.3,
+      "baseline_system_used_mb": 5624.7,
+      "model_weights_mb": 6395.8,
+      "model_weights_detail": {
+        "granite4.1:8b": 5836.8,
+        "granite-embedding:278m": 559.0
+      },
+      "attributable_total_mb": 7409.2,
+      "model_processes": 3,
+      "samples": 79
+    }
+  ],
+  "summary": {
+    "turns": 8,
+    "latency_s": {
+      "min": 4.513,
+      "mean": 6.288,
+      "max": 8.753,
+      "stdev": 1.596
+    },
+    "peak_rss_mb": {
+      "app": 508.6,
+      "model": 898.4,
+      "total": 1289.0
+    },
+    "peak_cpu_percent_total": 468.2,
+    "peak_system_used_mb": 9838.3,
+    "model_weights_mb": 6395.8,
+    "attributable_total_mb": 7684.8,
+    "model_processes_seen": 3
+  }
+}

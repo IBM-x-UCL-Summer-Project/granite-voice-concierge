@@ -13,6 +13,12 @@ from string import Template
 from types import MappingProxyType
 from typing import Literal
 
+from voice_concierge.reasoning.profiles import (
+    STRICT_REASONING_POLICY_PROFILE,
+    UAT_REASONING_POLICY_PROFILE,
+    ReasoningPolicyProfile,
+    validate_reasoning_policy_profile,
+)
 from voice_concierge.reasoning.types import (
     MemoryReference,
     ReasoningRequest,
@@ -46,6 +52,20 @@ _USER_FIELDS_BY_SCHEMA = {
 }
 _MAX_TRANSCRIPT_CHARS = 1000
 _MAX_SUMMARY_CHARS = 4000
+_UAT_RELAXED_GUIDANCE = (
+    "UAT behavior profile:\n"
+    "- Prioritize a direct, natural, useful answer for ordinary conversation, "
+    "stable general knowledge, explanations, calculations, transformations, "
+    "and supplied recent context.\n"
+    "- Provenance fields describe the best available source; do not turn "
+    "evidence-format uncertainty alone into a refusal.\n"
+    "- Ask a useful clarification when personal or local context is genuinely "
+    "missing.\n"
+    "- Remain honest that live internet information is unavailable offline and "
+    "never claim an action or data change that was not actually executed.\n"
+    "- All confirmation, exact-target, privacy, and memory-write requirements "
+    "above still apply."
+)
 
 
 class PromptTemplateError(ValueError):
@@ -140,9 +160,11 @@ def build_granite_messages(
     request: ReasoningRequest,
     *,
     prompt_version: str = DEFAULT_PROMPT_VERSION,
+    policy_profile: ReasoningPolicyProfile = STRICT_REASONING_POLICY_PROFILE,
 ) -> tuple[ChatMessage, ...]:
     """Render one versioned system/user message pair for a reasoning request."""
 
+    resolved_profile = validate_reasoning_policy_profile(policy_profile)
     prompt = load_prompt_template(prompt_version)
     mode = request.mode.lower()
     mode_policy = prompt.mode_policies.get(
@@ -155,6 +177,8 @@ def build_granite_messages(
         mode_policy=mode_policy,
         voice_first=request.constraints.voice_first,
     )
+    if resolved_profile == UAT_REASONING_POLICY_PROFILE:
+        system_content = f"{system_content}\n{_UAT_RELAXED_GUIDANCE}"
     user_content = Template(prompt.user_template).substitute(
         conversation_summary=_format_conversation_summary(request),
         memories=_format_memories(request.memories),

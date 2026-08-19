@@ -59,6 +59,12 @@ class VoskPhraseRecognizer:
         words = partial.split()
         if not words:
             return None
-        # Reset so the phrase is emitted once per utterance, not once per frame.
-        self._recognizer.Reset()
+        # Keep the hypothesis alive across frames. StableCommandSpotter needs
+        # repeated, unchanged observations to reject a fleeting early guess
+        # before acting on a short command.
         return words[-1]
+
+    def reset(self) -> None:
+        """Discard partial audio when the listening context changes."""
+
+        self._recognizer.Reset()

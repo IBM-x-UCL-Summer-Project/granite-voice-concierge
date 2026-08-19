@@ -21,6 +21,7 @@ def test_app_pipeline_state_defaults_to_home_without_pending_actions() -> None:
     assert state.conversation_history == ()
     assert state.pending_memory_action is None
     assert state.pending_memory_scope is None
+    assert state.pending_bulk_memory_delete is False
 
 
 def test_conversation_turn_stores_one_completed_exchange() -> None:

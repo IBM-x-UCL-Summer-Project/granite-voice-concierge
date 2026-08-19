@@ -126,6 +126,34 @@ class ReminderStore:
             )
             self._connection.commit()
 
+    def update(self, reminder: Reminder) -> Reminder:
+        """Replace the editable fields of one stored reminder."""
+
+        if reminder.identifier is None:
+            raise SchedulingError("An unsaved reminder cannot be updated.")
+        schedule = reminder.schedule
+        with self._lock:
+            cursor = self._connection.execute(
+                "UPDATE reminders SET text = ?, kind = ?, due_at = ?, "
+                "recurrence = ?, interval_seconds = ?, weekday = ? "
+                "WHERE id = ? AND completed = 0",
+                (
+                    reminder.text,
+                    reminder.kind,
+                    schedule.due_at,
+                    schedule.recurrence,
+                    schedule.interval_seconds,
+                    schedule.weekday,
+                    reminder.identifier,
+                ),
+            )
+            self._connection.commit()
+        if cursor.rowcount == 0:
+            raise SchedulingError(
+                f"No pending reminder with id {reminder.identifier} is set."
+            )
+        return reminder
+
     def complete(self, identifier: int) -> None:
         """Mark a reminder as delivered so it does not fire again."""
         with self._lock:

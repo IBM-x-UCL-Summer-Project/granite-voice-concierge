@@ -188,6 +188,8 @@ def test_config_from_args_maps_live_options() -> None:
             "--no-memory",
             "--no-playback",
             "--one-shot",
+            "--policy-profile",
+            "strict",
         ]
     )
 
@@ -200,6 +202,7 @@ def test_config_from_args_maps_live_options() -> None:
     assert config.synthesize is True
     assert config.play is False
     assert config.one_shot is True
+    assert config.policy_profile == "strict"
 
 
 def test_config_from_args_no_tts_disables_playback() -> None:
@@ -214,6 +217,10 @@ def test_config_from_args_no_tts_disables_playback() -> None:
 def test_config_rejects_play_without_synthesis() -> None:
     with pytest.raises(ValueError, match="play requires synthesize"):
         live.LiveAppConfig(synthesize=False, play=True)
+
+
+def test_live_app_defaults_to_relaxed_uat_policy() -> None:
+    assert live.LiveAppConfig().policy_profile == "uat_relaxed"
 
 
 @pytest.mark.parametrize(

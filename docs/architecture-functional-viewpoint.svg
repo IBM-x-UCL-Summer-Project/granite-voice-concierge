@@ -1,0 +1,159 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2000 760" width="2000" height="760" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif">
+  <title>Granite Voice Concierge — Functional Viewpoint</title>
+  <desc>Synchronous turn pipeline fanning out at the turn gate into three handlers that rejoin at speech synthesis, with two event-driven components on their own daemon threads.</desc>
+
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#374151"/>
+    </marker>
+    <marker id="ao" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#c2760c"/>
+    </marker>
+    <marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#16a34a"/>
+    </marker>
+    <marker id="ae" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#be185d"/>
+    </marker>
+    <style>
+      .rl { font-size: 13px; font-weight: 700; fill: #9aa5b4; letter-spacing: .07em; }
+      .re { font-size: 13px; font-weight: 700; fill: #be185d; letter-spacing: .07em; }
+      .bt { font-size: 15.5px; font-weight: 700; fill: #1e3a5f; }
+      .bd { font-size: 12px; fill: #5b6875; }
+      .lp { font-size: 12px; font-weight: 700; fill: #7c3aed; }
+      .lo { font-size: 12px; font-weight: 700; fill: #c2760c; }
+      .lg { font-size: 12px; font-weight: 700; fill: #16a34a; }
+      .le { font-size: 12px; font-weight: 700; fill: #be185d; }
+      .lgd { font-size: 13px; fill: #374151; }
+    </style>
+  </defs>
+
+  <rect width="2000" height="760" fill="#ffffff"/>
+
+  <rect x="30" y="26" width="1940" height="664" rx="12" fill="none" stroke="#9aa5b4" stroke-width="2" stroke-dasharray="10 7"/>
+  <text x="60" y="52" class="rl">SYNCHRONOUS TURN PIPELINE — ONE THREAD</text>
+
+  <!-- ══ pipeline row ══ -->
+  <rect x="70" y="66" width="180" height="80" rx="9" fill="#dbeafe" stroke="#3b82f6" stroke-width="2"/>
+  <text x="160" y="98" class="bt" text-anchor="middle">Microphone Input</text>
+  <text x="160" y="120" class="bd" text-anchor="middle">sounddevice · PyAudio</text>
+
+  <rect x="285" y="66" width="180" height="80" rx="9" fill="#eff6ff" stroke="#1e3a5f" stroke-width="2"/>
+  <text x="375" y="98" class="bt" text-anchor="middle">Wake Word + VAD</text>
+  <text x="375" y="120" class="bd" text-anchor="middle">openWakeWord · Silero</text>
+
+  <rect x="500" y="66" width="180" height="80" rx="9" fill="#eff6ff" stroke="#1e3a5f" stroke-width="2"/>
+  <text x="590" y="98" class="bt" text-anchor="middle">Speech-to-Text</text>
+  <text x="590" y="120" class="bd" text-anchor="middle">faster-whisper</text>
+
+  <rect x="715" y="66" width="180" height="80" rx="9" fill="#f3e8ff" stroke="#9333ea" stroke-width="2.5"/>
+  <text x="805" y="98" class="bt" text-anchor="middle">Turn Gate</text>
+  <text x="805" y="120" class="bd" text-anchor="middle">classifies the request</text>
+
+  <!-- ══ handlers ══ -->
+  <rect x="960" y="66" width="225" height="80" rx="9" fill="#f3e8ff" stroke="#9333ea" stroke-width="2"/>
+  <text x="1072" y="98" class="bt" text-anchor="middle">Context Manager</text>
+  <text x="1072" y="120" class="bd" text-anchor="middle">mode and verbosity</text>
+
+  <rect x="960" y="178" width="225" height="80" rx="9" fill="#ccfbf1" stroke="#0d9488" stroke-width="2"/>
+  <text x="1072" y="210" class="bt" text-anchor="middle">Guided Routines</text>
+  <text x="1072" y="232" class="bd" text-anchor="middle">step-by-step</text>
+
+  <rect x="960" y="290" width="225" height="80" rx="9" fill="#ccfbf1" stroke="#0d9488" stroke-width="2"/>
+  <text x="1072" y="322" class="bt" text-anchor="middle">Reminders &amp; Timers</text>
+  <text x="1072" y="344" class="bd" text-anchor="middle">no model needed</text>
+
+  <!-- ══ reasoning and output ══ -->
+  <rect x="1225" y="66" width="180" height="80" rx="9" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+  <text x="1315" y="98" class="bt" text-anchor="middle">IBM Granite LLM</text>
+  <text x="1315" y="120" class="bd" text-anchor="middle">granite4.1:8b · Ollama</text>
+
+  <rect x="1445" y="66" width="180" height="80" rx="9" fill="#eff6ff" stroke="#1e3a5f" stroke-width="2"/>
+  <text x="1535" y="98" class="bt" text-anchor="middle">Text-to-Speech</text>
+  <text x="1535" y="120" class="bd" text-anchor="middle">macOS say · Piper</text>
+
+  <rect x="1665" y="66" width="180" height="80" rx="9" fill="#dbeafe" stroke="#3b82f6" stroke-width="2"/>
+  <text x="1755" y="98" class="bt" text-anchor="middle">Speaker Output</text>
+  <text x="1755" y="120" class="bd" text-anchor="middle">echo-cancelled</text>
+
+  <!-- ══ pipeline arrows ══ -->
+  <path d="M 250 106 L 285 106" fill="none" stroke="#374151" stroke-width="2.2" marker-end="url(#a)"/>
+  <path d="M 465 106 L 500 106" fill="none" stroke="#374151" stroke-width="2.2" marker-end="url(#a)"/>
+  <path d="M 680 106 L 715 106" fill="none" stroke="#374151" stroke-width="2.2" marker-end="url(#a)"/>
+
+  <!-- fan out -->
+  <path d="M 895 106 L 960 106" fill="none" stroke="#374151" stroke-width="2.2" marker-end="url(#a)"/>
+  <text x="927" y="92" class="lp" text-anchor="middle">ordinary</text>
+  <path d="M 870 146 L 870 200 L 960 200" fill="none" stroke="#374151" stroke-width="2.2" marker-end="url(#a)"/>
+  <text x="878" y="192" class="lp">routine</text>
+  <path d="M 800 146 L 800 330 L 960 330" fill="none" stroke="#374151" stroke-width="2.2" marker-end="url(#a)"/>
+  <text x="808" y="322" class="lp">reminder</text>
+
+  <!-- fan in -->
+  <path d="M 1185 106 L 1225 106" fill="none" stroke="#374151" stroke-width="2.2" marker-end="url(#a)"/>
+  <path d="M 1185 218 L 1205 218 L 1205 126 L 1225 126" fill="none" stroke="#374151" stroke-width="2.2" marker-end="url(#a)"/>
+  <path d="M 1185 330 L 1258 330 A 12 12 0 0 0 1282 330 L 1348 330 A 12 12 0 0 0 1372 330 L 1425 330 L 1425 126 L 1445 126"
+        fill="none" stroke="#374151" stroke-width="2.2" marker-end="url(#a)"/>
+  <path d="M 1405 106 L 1445 106" fill="none" stroke="#374151" stroke-width="2.2" marker-end="url(#a)"/>
+  <path d="M 1625 106 L 1665 106" fill="none" stroke="#374151" stroke-width="2.2" marker-end="url(#a)"/>
+
+  <!-- ══ memory ══ -->
+  <rect x="1180" y="400" width="420" height="84" rx="9" fill="#fef7e6" stroke="#d97706" stroke-width="2.5"/>
+  <text x="1390" y="434" class="bt" text-anchor="middle">On-Device Personal Memory</text>
+  <text x="1390" y="456" class="bd" text-anchor="middle">SQLite + local vector store</text>
+  <text x="1390" y="474" class="bd" text-anchor="middle">granite-embedding:278m</text>
+
+  <path d="M 1270 400 L 1270 146" fill="none" stroke="#c2760c" stroke-width="2.2" marker-end="url(#ao)"/>
+  <text x="1258" y="378" class="lo" text-anchor="end">retrieve</text>
+  <path d="M 1360 146 L 1360 400" fill="none" stroke="#16a34a" stroke-width="2.2" marker-end="url(#ag)"/>
+  <text x="1374" y="378" class="lg">store</text>
+
+  <!-- ══ event-driven region ══ -->
+  <rect x="1340" y="520" width="580" height="150" rx="9" fill="#fdf2f8" stroke="#f9a8d4" stroke-width="2" stroke-dasharray="8 5"/>
+  <text x="1362" y="544" class="re">EVENT-DRIVEN — DAEMON THREADS</text>
+
+  <rect x="1360" y="560" width="280" height="88" rx="9" fill="#ffffff" stroke="#be185d" stroke-width="2" stroke-dasharray="7 4"/>
+  <text x="1500" y="594" class="bt" text-anchor="middle">Command Spotter</text>
+  <text x="1500" y="616" class="bd" text-anchor="middle">Vosk · taps the audio graph</text>
+  <text x="1500" y="634" class="bd" text-anchor="middle">while the assistant speaks</text>
+
+  <rect x="1660" y="560" width="240" height="88" rx="9" fill="#ffffff" stroke="#be185d" stroke-width="2" stroke-dasharray="7 4"/>
+  <text x="1780" y="594" class="bt" text-anchor="middle">Reminder Scheduler</text>
+  <text x="1780" y="616" class="bd" text-anchor="middle">polls the store, fires</text>
+  <text x="1780" y="634" class="bd" text-anchor="middle">outside any turn</text>
+
+  <!-- audio tap -->
+  <path d="M 1845 106 L 1940 106 L 1940 664 L 1500 664 L 1500 648"
+        fill="none" stroke="#be185d" stroke-width="2.2" stroke-dasharray="8 5" marker-end="url(#ae)"/>
+  <text x="1954" y="320" class="le" transform="rotate(-90 1954 320)" text-anchor="middle">audio tap</text>
+
+  <!-- playback and pacing, during any reply -->
+  <path d="M 1610 560 L 1610 176 L 1560 176 L 1560 146"
+        fill="none" stroke="#be185d" stroke-width="2.2" stroke-dasharray="8 5" marker-end="url(#ae)"/>
+  <path d="M 1610 176 L 1700 176 L 1700 146"
+        fill="none" stroke="#be185d" stroke-width="2.2" stroke-dasharray="8 5" marker-end="url(#ae)"/>
+  <circle cx="1610" cy="176" r="4.5" fill="#be185d"/>
+  <text x="1630" y="360" class="le" transform="rotate(-90 1630 360)" text-anchor="middle">stop · pause · continue · slower · faster</text>
+
+  <!-- step commands to the routine runner -->
+  <path d="M 1360 604 L 1100 604 L 1100 385 L 930 385 L 930 342 A 12 12 0 0 1 930 318 L 930 240 L 960 240"
+        fill="none" stroke="#be185d" stroke-width="2.2" stroke-dasharray="8 5" marker-end="url(#ae)"/>
+  <text x="1090" y="377" class="le" text-anchor="end">next · back · repeat</text>
+
+  <!-- scheduler announcement -->
+  <path d="M 1790 560 L 1790 210 L 1622 210 A 12 12 0 0 1 1598 210 L 1500 210 L 1500 146"
+        fill="none" stroke="#be185d" stroke-width="2.2" stroke-dasharray="8 5" marker-end="url(#ae)"/>
+  <text x="1806" y="370" class="le" transform="rotate(-90 1806 370)" text-anchor="middle">due reminder</text>
+
+  <!-- ══ legend ══ -->
+  <g>
+    <line x1="70" y1="726" x2="118" y2="726" stroke="#374151" stroke-width="2.2" marker-end="url(#a)"/>
+    <text x="130" y="731" class="lgd">Synchronous call</text>
+
+    <line x1="300" y1="726" x2="348" y2="726" stroke="#be185d" stroke-width="2.2" stroke-dasharray="8 5" marker-end="url(#ae)"/>
+    <text x="360" y="731" class="lgd">Asynchronous event, crosses a thread boundary</text>
+
+    <path d="M 760 726 L 786 726 A 10 10 0 0 0 806 726 L 832 726" fill="none" stroke="#374151" stroke-width="2.2"/>
+    <text x="844" y="731" class="lgd">Lines cross without connecting</text>
+  </g>
+</svg>
