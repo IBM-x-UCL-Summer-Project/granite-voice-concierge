@@ -38,6 +38,14 @@ _LIST_ADD_LEAD = re.compile(
     r")add\s+",
     flags=re.IGNORECASE,
 )
+_SHOPPING_PURCHASE_LEAD = re.compile(
+    r"^\s*(?:"
+    r"(?:please\s+)?(?:buy|get|pick\s+up)\s+"
+    r"|i\s+(?:want|need|would\s+like)\s+to\s+"
+    r"(?:buy|get|pick\s+up)\s+"
+    r")",
+    flags=re.IGNORECASE,
+)
 _EVIDENCE_TOKEN = re.compile(r"[a-z0-9]+(?:['’][a-z0-9]+)?", flags=re.IGNORECASE)
 _UAT_RELAXED_EVIDENCE_DISPOSITIONS: frozenset[InformationDisposition] = frozenset(
     {
@@ -148,9 +156,7 @@ def apply_reasoning_policy_guards(
 
         return _replace_response(
             response,
-            spoken_response=(
-                f"I found this in local memory: {shopping_list_memory.content}"
-            ),
+            spoken_response=_shopping_list_read_response(shopping_list_memory.content),
             needs_confirmation=False,
             proposed_memory_action=None,
             confidence="high",
@@ -650,6 +656,22 @@ def _shopping_list_memory(
     return None
 
 
+def _shopping_list_read_response(content: str) -> str:
+    match = re.fullmatch(
+        r"\s*shopping\s+list\s*:\s*(.*?)\s*\.?\s*",
+        content,
+        flags=re.IGNORECASE,
+    )
+    if match is None:
+        return f"Your shopping list contains {content.strip()}"
+
+    item_text = match.group(1).strip().removesuffix(".")
+    if not item_text or item_text.casefold() == "empty":
+        return "Your shopping list is empty."
+    items = tuple(item.strip() for item in item_text.split(",") if item.strip())
+    return f"Your shopping list contains {_format_items_for_speech(items)}."
+
+
 def _task_list_memory(memories: tuple[MemoryReference, ...]) -> MemoryReference | None:
     for memory in memories:
         if memory.memory_key == TASK_LIST_MEMORY_KEY:
@@ -674,6 +696,10 @@ def _shopping_items_to_add(
     *,
     mode: str,
 ) -> tuple[str, ...] | None:
+    purchase_lead = _SHOPPING_PURCHASE_LEAD.match(transcript)
+    if purchase_lead is not None:
+        return _split_list_items(transcript[purchase_lead.end() :])
+
     if not re.search(r"\badd\b", text):
         return None
     if "shopping list" not in text and mode.casefold() != "shopping":
@@ -684,7 +710,7 @@ def _shopping_items_to_add(
         return None
     cleaned = transcript[lead.end() :]
     cleaned = re.sub(
-        r"\s+to\s+(?:my|the)\s+(?:shopping\s+)?list[.?!]?\s*$",
+        r"\s+to\s+(?:(?:my|the)\s+)?(?:shopping\s+)?list[.?!]?\s*$",
         "",
         cleaned,
         flags=re.IGNORECASE,
@@ -753,7 +779,11 @@ def _split_list_items(value: str) -> tuple[str, ...] | None:
         value,
         flags=re.IGNORECASE,
     )
-    normalized = tuple(part.strip(" .") for part in parts if part.strip(" ."))
+    normalized = tuple(
+        re.sub(r"^(?:a|an|some)\s+", "", part.strip(" ."), flags=re.IGNORECASE)
+        for part in parts
+        if part.strip(" .")
+    )
     return normalized or None
 
 

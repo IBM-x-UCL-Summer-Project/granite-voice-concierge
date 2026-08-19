@@ -230,9 +230,7 @@ def test_policy_guard_uses_supplied_shopping_list_memory() -> None:
         ),
     )
 
-    assert response.spoken_response == (
-        "I found this in local memory: Shopping list: milk, bread."
-    )
+    assert response.spoken_response == "Your shopping list contains milk and bread."
     assert response.needs_confirmation is False
     assert response.proposed_memory_action is None
     assert response.metadata["policy_guard"] == "supplied_shopping_list_memory"
@@ -739,6 +737,49 @@ def test_policy_guard_does_not_treat_bread_as_read_request() -> None:
         memory_key="list:shopping"
     )
     assert response.metadata["policy_guard"] == "shopping_list_add_confirmation"
+
+
+def test_policy_guard_strips_bare_shopping_list_destination() -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(transcript="Add ice to shopping list."),
+        ReasoningResponse(spoken_response="Okay.", confidence="medium"),
+    )
+
+    assert response.spoken_response == (
+        "I can add ice to your shopping list. Please confirm before I save it."
+    )
+    assert response.proposed_memory_action is not None
+    assert response.proposed_memory_action.list_operation == _add_items(
+        "shopping", "ice"
+    )
+
+
+@pytest.mark.parametrize(
+    ("transcript", "expected_items"),
+    (
+        ("I want to buy apple.", ("apple",)),
+        ("I need to get some milk.", ("milk",)),
+        ("Please buy bread and eggs.", ("bread", "eggs")),
+        (
+            "I would like to pick up an onion, tea, and meat.",
+            ("onion", "tea", "meat"),
+        ),
+    ),
+)
+def test_policy_guard_extracts_items_from_purchase_intent(
+    transcript: str,
+    expected_items: tuple[str, ...],
+) -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(transcript=transcript),
+        ReasoningResponse(spoken_response="Okay.", confidence="medium"),
+    )
+
+    assert response.proposed_memory_action is not None
+    assert response.proposed_memory_action.list_operation == _add_items(
+        "shopping", *expected_items
+    )
+    assert "shopping list" in response.spoken_response
 
 
 @pytest.mark.parametrize(
