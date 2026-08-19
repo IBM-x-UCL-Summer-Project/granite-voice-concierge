@@ -1,0 +1,22 @@
+# Send only files used by Dockerfile. This avoids walking local virtual
+# environments, Git objects, databases, logs, test data, and model caches.
+**
+
+!pyproject.toml
+!requirements.txt
+!requirements-dev.txt
+!entrypoint.sh
+
+!src/
+!src/**
+!web/
+!web/**
+
+# Generated Python files can exist below included source directories.
+**/__pycache__/
+**/*.py[cod]
+
+# Local state must never be baked into the image.
+**/.local/
+**/*.sqlite3
+**/*.db
