@@ -32,8 +32,11 @@ services:
       # container recreation.
       - model-cache:/root/.cache
     environment:
-      # Tell the app where to find Ollama
+      # OLLAMA_API_URL is written to the persisted reasoning selection by the
+      # entrypoint. OLLAMA_HOST is used by the Ollama embedding client.
       - OLLAMA_API_URL=http://ollama:11434
+      - OLLAMA_HOST=http://ollama:11434
+      - REASONING_MODEL=${OLLAMA_MODEL:-granite4.1:8b}
       - PYTHONUNBUFFERED=1
     depends_on:
       ollama:
