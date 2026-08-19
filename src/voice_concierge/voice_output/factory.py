@@ -30,9 +30,33 @@ def build_text_to_speech(
     config_path: str = DEFAULT_CONFIG_PATH,
     *,
     length_scale: float = DEFAULT_LENGTH_SCALE,
+    allow_fallback: bool = True,
 ) -> TextToSpeech:
-    """Build the default local text-to-speech engine for application code."""
-    return PiperTextToSpeech(model_path, config_path, length_scale=length_scale)
+    """Build the default local text-to-speech engine for application code.
+
+    Piper stays the preferred voice, but it raises on every synthesis on macOS
+    arm64 (issue #52), and the app swallowed that and fell silent. Wrapping it
+    means a broken Piper costs one failed utterance rather than a whole session
+    without speech.
+    """
+    piper = PiperTextToSpeech(model_path, config_path, length_scale=length_scale)
+    if not allow_fallback:
+        return piper
+
+    from voice_concierge.voice_output.fallback import FallbackTextToSpeech
+
+    def _spare() -> TextToSpeech:
+        from voice_concierge.voice_output.say import SayTextToSpeech
+
+        return SayTextToSpeech()
+
+    return FallbackTextToSpeech(
+        piper,
+        _spare,
+        on_fallback=lambda exc: print(
+            f"Piper could not speak ({exc}); using the system voice instead."
+        ),
+    )
 
 
 #: The rate the backends' own defaults correspond to, used to convert a rung of
