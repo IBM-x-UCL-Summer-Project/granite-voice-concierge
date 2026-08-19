@@ -257,6 +257,7 @@ def test_detailed_preference_does_not_relax_driving_safety_limit() -> None:
     ("transcript", "expected_scope"),
     (
         ("What is on my shopping list?", "list_relevant"),
+        ("I want to buy apple", "list_relevant"),
         ("Read my to-do list", "task_relevant_only"),
         ("Please update the task list", "task_relevant_only"),
     ),
