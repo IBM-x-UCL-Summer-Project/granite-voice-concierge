@@ -81,6 +81,26 @@ def test_legacy_command_wrapper_is_not_treated_as_a_list_item() -> None:
     )
 
 
+def test_canonicalization_repairs_bare_list_destination_in_saved_item() -> None:
+    assert (
+        canonicalize_structured_list_content(
+            "Shopping list: ice to shopping list.",
+            "shopping",
+        )
+        == "Shopping list: ice."
+    )
+
+
+def test_canonicalization_repairs_destination_on_last_saved_item() -> None:
+    assert (
+        canonicalize_structured_list_content(
+            "Shopping list: milk, bread to my shopping list.",
+            "shopping",
+        )
+        == "Shopping list: milk, bread."
+    )
+
+
 def test_canonicalization_preserves_and_within_one_labelled_item() -> None:
     assert (
         canonicalize_structured_list_content(
