@@ -24,13 +24,13 @@ build:
 
 up:
 	docker compose up -d
-	@echo "✓ Services started"
+	@echo "Services started"
 	@echo "  Web UI: http://127.0.0.1:4173"
 	@echo "  Ollama: http://localhost:11434"
 
 down:
 	docker compose down
-	@echo "✓ Services stopped"
+	@echo "Services stopped"
 
 logs:
 	docker compose logs -f voice-concierge
@@ -58,7 +58,7 @@ test:
 	docker compose exec voice-concierge pytest -v
 
 pull-model:
-	@read -p "Enter model name (e.g., granite3.3:2b): " model; \
+	@read -p "Enter model name: " model; \
 	docker compose exec ollama ollama pull $$model
 
 list-models:
@@ -67,7 +67,7 @@ list-models:
 clean:
 	docker compose down
 	rm -rf data/.local/*
-	@echo "✓ Cleaned"
+	@echo "Cleaned"
 
 rebuild: clean build up
 
@@ -78,6 +78,6 @@ ps:
 dev-up:
 	@echo "Starting in development mode (source code mounted)..."
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
-	@echo "✓ Development services started"
+	@echo "Development services started"
 
 .DEFAULT_GOAL := help
