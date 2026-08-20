@@ -73,12 +73,81 @@ if (-not (Get-Command ollama -ErrorAction SilentlyContinue)) {
     exit 1
 }
 
-try {
-    Invoke-RestMethod -Uri "http://127.0.0.1:11434/api/tags" -TimeoutSec 5 | Out-Null
-} catch {
-    Write-Problem "Native Ollama is not responding on http://127.0.0.1:11434"
-    Write-Problem "Start the Ollama application, or run it bound to all interfaces:"
-    Write-Problem '  $env:OLLAMA_HOST = "0.0.0.0:11434"; ollama serve'
+# Windows PowerShell inherits Internet Explorer's proxy settings, and a proxy
+# configured for a university or company network will happily intercept a
+# request to 127.0.0.1 and fail it. Ollama is local, so never use a proxy here.
+[System.Net.WebRequest]::DefaultWebProxy = $null
+
+function Test-OllamaEndpoint {
+    <#
+        Returns the error from probing one address, or $null when it answered.
+        Both loopback spellings are tried by the caller because Ollama may bind
+        to IPv4 or IPv6 only, and 127.0.0.1 and localhost do not always resolve
+        to the same interface on Windows.
+    #>
+    param([string]$BaseUrl)
+
+    $request = @{ Uri = "$BaseUrl/api/tags"; TimeoutSec = 5 }
+    # PowerShell 7 has -NoProxy; Windows PowerShell 5.1 does not and instead
+    # honours the DefaultWebProxy cleared above. Passing -Proxy $null to 5.1 is
+    # a parameter binding error, so ask before using it.
+    if ((Get-Command Invoke-RestMethod).Parameters.ContainsKey("NoProxy")) {
+        $request.NoProxy = $true
+    }
+
+    try {
+        Invoke-RestMethod @request | Out-Null
+        return $null
+    } catch {
+        return $_.Exception.Message
+    }
+}
+
+$ollamaUrl = $null
+$probeErrors = @()
+foreach ($candidate in @("http://127.0.0.1:11434", "http://localhost:11434")) {
+    $probeError = Test-OllamaEndpoint -BaseUrl $candidate
+    if (-not $probeError) {
+        $ollamaUrl = $candidate
+        break
+    }
+    $probeErrors += "  $candidate -> $probeError"
+}
+
+if (-not $ollamaUrl) {
+    Write-Problem "Native Ollama is not responding."
+    Write-Problem ""
+    Write-Problem "What was tried:"
+    $probeErrors | ForEach-Object { Write-Problem $_ }
+    Write-Problem ""
+
+    # Say which of the two situations this is, rather than making the reader
+    # guess: a stopped Ollama and a blocked request need different fixes.
+    $listening = $null
+    if (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue) {
+        $listening = Get-NetTCPConnection -LocalPort 11434 -State Listen -ErrorAction SilentlyContinue
+    }
+    $running = Get-Process -Name "ollama*" -ErrorAction SilentlyContinue
+
+    if (-not $running) {
+        Write-Problem "No ollama process is running. On Windows, Ollama normally runs"
+        Write-Problem "as a tray application: open Ollama from the Start menu and wait for"
+        Write-Problem "the tray icon to appear, then run this script again."
+        Write-Problem ""
+        Write-Problem "Running 'ollama serve' in a terminal is the alternative to the tray"
+        Write-Problem "application, not an addition to it. It fails with an address-in-use"
+        Write-Problem "error if the tray application is already running."
+    } elseif (-not $listening) {
+        Write-Problem "Ollama is running but nothing is listening on port 11434."
+        Write-Problem "It may be bound to another port. Check with:"
+        Write-Problem "  Get-NetTCPConnection -State Listen | Where-Object OwningProcess -in (Get-Process ollama*).Id"
+    } else {
+        Write-Problem "Ollama is running and port 11434 is open, so the request itself was"
+        Write-Problem "blocked. This is usually a proxy, a VPN, or security software."
+        Write-Problem "Confirm the port answers at all with:"
+        Write-Problem "  curl.exe http://127.0.0.1:11434/api/tags"
+        Write-Problem "If that works, exclude localhost from your proxy or VPN and retry."
+    }
     exit 1
 }
 
@@ -124,9 +193,18 @@ docker compose run --rm --no-deps --entrypoint sh voice-concierge `
 if ($LASTEXITCODE -ne 0) {
     Write-Problem "Docker cannot reach native Ollama."
     Write-Problem "Ollama listens on 127.0.0.1 by default, which the container cannot see."
-    Write-Problem "Set it to listen on all interfaces, then restart Ollama:"
+    Write-Problem ""
+    Write-Problem "If Ollama runs from the system tray, set the variable for your account"
+    Write-Problem "and restart it:"
     Write-Problem '  setx OLLAMA_HOST "0.0.0.0:11434"'
-    Write-Problem "Quit Ollama from the system tray and start it again for this to apply."
+    Write-Problem "Then quit Ollama from the tray and open it again. setx only affects"
+    Write-Problem "processes started afterwards, so the restart is required."
+    Write-Problem ""
+    Write-Problem "If you start Ollama yourself in a terminal instead, set it there:"
+    Write-Problem '  $env:OLLAMA_HOST = "0.0.0.0:11434"; ollama serve'
+    Write-Problem ""
+    Write-Problem "Only do this on a network you trust. Ollama has no authentication, so"
+    Write-Problem "anything able to reach the port can use your models."
     exit 1
 }
 

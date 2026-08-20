@@ -89,10 +89,20 @@ would fail on its first turn.
 
 Bind Ollama to all interfaces and restart it.
 
-On Windows, set it permanently and restart Ollama from the system tray:
+On Windows, Ollama normally runs as a tray application started from the Start
+menu, so set the variable for your account and then restart it:
 
 ```powershell
 setx OLLAMA_HOST "0.0.0.0:11434"
+```
+
+`setx` only affects processes started afterwards, so quit Ollama from the
+system tray and open it again. If you prefer to start the server yourself,
+`ollama serve` is the alternative to the tray application rather than an
+addition to it, and takes the variable directly:
+
+```powershell
+$env:OLLAMA_HOST = "0.0.0.0:11434"; ollama serve
 ```
 
 On macOS and Linux, either export it for a manually started server:
