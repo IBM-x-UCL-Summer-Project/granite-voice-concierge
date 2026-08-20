@@ -1,92 +1,174 @@
-# Windows Docker Guide
+# Windows Docker Support
 
-This guide covers the supported x86-64 Windows deployment. Granite Voice
-Concierge runs as a Linux container in Docker Desktop, while Ollama runs as a
-native Windows application. Compose does not install, start, stop, or upgrade
-Ollama.
+The [main README](../README.md#windows) contains the complete copy/paste
+setup and operation commands. This guide explains the Windows deployment and
+provides error-specific diagnostics.
 
-Windows on Arm is not currently supported because the complete native Python
-and machine-learning dependency set has not been validated for Linux Arm
-containers on Docker Desktop for Windows.
+## Deployment model
 
-## Prerequisites
+The supported Windows deployment is x86-64 Windows with Docker Desktop running
+Linux containers through WSL 2. Windows on Arm has not been validated.
 
-Install and start all of the following before running the quick start:
+- Ollama runs as a native Windows application so it can use the host hardware.
+- Granite Voice Concierge runs in a Linux container.
+- The container reaches Ollama at `host.docker.internal:11434`.
+- The browser reaches the application at `http://127.0.0.1:4173`.
+- Memories and reminders remain in the repository's `data\.local` directory.
+- Speech-model caches remain in the Docker volume `voice-model-cache`.
 
-- a Windows release supported by Docker Desktop;
-- current WSL 2, with hardware virtualisation enabled;
-- Docker Desktop using the WSL 2 backend and Linux containers;
-- Ollama for Windows, running in the taskbar; and
-- Git for Windows and Windows PowerShell 5.1 or newer.
+Docker Desktop documents the current Windows and WSL requirements in its
+[Windows installation guide](https://docs.docker.com/desktop/setup/install/windows-install/)
+and [WSL 2 guide](https://docs.docker.com/desktop/features/wsl/).
 
-Use `wsl --version` to inspect WSL and `wsl --update` from an elevated
-PowerShell session when it needs updating. Docker documents its current Windows
-and WSL requirements in the
-[Docker Desktop installation guide](https://docs.docker.com/desktop/setup/install/windows-install/).
+## Ollama networking and security
 
-The first setup requires internet access for container layers, Python packages,
-Piper, Whisper, Vosk, and Ollama models. Normal operation remains local after
-the required images and models have been downloaded. Model downloads need
-several gigabytes of free disk space; the selected Granite model must also fit
-in available system or GPU memory.
+Ollama normally listens only on Windows loopback. A Linux container cannot use
+its own `127.0.0.1` to reach a Windows service, so the one-time setup in the
+[main README](../README.md#configure-ollama-for-windows-once) configures
+Ollama to listen on `0.0.0.0:11434`.
 
-## Make Ollama reachable from Docker Desktop
+Docker Desktop resolves `host.docker.internal` to the host and proxies the
+container connection. See Docker's
+[host-service networking documentation](https://docs.docker.com/desktop/features/networking/networking-how-tos/#connect-a-container-to-a-service-on-the-host).
 
-Ollama serves `http://127.0.0.1:11434` by default. The host itself can use that
-address, but a Linux container normally needs Ollama to accept connections on a
-non-loopback host interface.
+Listening on `0.0.0.0` also exposes Ollama on Windows network interfaces. Keep
+port `11434` blocked from public and untrusted networks in Windows Defender
+Firewall or the applicable endpoint-security product. Ollama documents its
+Windows environment-variable behavior in the
+[Ollama FAQ](https://docs.ollama.com/faq#setting-environment-variables-on-windows).
 
-Set `OLLAMA_HOST` once for the Windows user from PowerShell:
+## What the launcher does
+
+`scripts\quickstart.ps1`:
+
+1. verifies Docker Desktop, Compose, and native Ollama;
+2. downloads missing Granite reasoning and embedding models;
+3. prepares persistent application directories;
+4. builds the Linux image and normalizes its entrypoint line endings;
+5. verifies container-to-host Ollama connectivity;
+6. starts the application and reports initialization progress; and
+7. opens the local browser interface after the health check reports `ready`.
+
+The initial build downloads container layers, Python packages, speech assets,
+and Ollama models. Later starts reuse the Docker layers, application cache, and
+host Ollama storage.
+
+## Browser voice behavior
+
+The browser captures the Windows microphone and sends audio to the local
+application. The container performs wake-word detection and transcription,
+generates Piper audio, and returns it to the browser for playback.
+
+Allow microphone access for `http://127.0.0.1:4173` in both the browser prompt
+and Windows privacy settings. Use the browser's push-to-talk or wake-word
+controls; the host-native continuous microphone runner is not part of the
+Windows Docker deployment.
+
+## Persistent data
+
+| Data                                   | Location                          | Removed by `docker compose down` |
+| -------------------------------------- | --------------------------------- | -------------------------------- |
+| Memories, reminders, and preferences  | `data\.local`                    | No                               |
+| Whisper, Vosk, and application caches | Docker volume `voice-model-cache` | No                               |
+| Ollama models                          | Native Ollama model directory     | No                               |
+| Container logs                         | Docker logging storage            | Container-dependent              |
+
+`docker compose down -v` deletes `voice-model-cache`. Deleting `data\.local`
+deletes saved user data. Neither action is required for normal updates or
+rebuilds.
+
+## Troubleshooting
+
+### Collect the useful diagnostics
+
+Run these from the repository root in a second PowerShell window:
 
 ```powershell
-[Environment]::SetEnvironmentVariable(
-    "OLLAMA_HOST",
-    "0.0.0.0:11434",
-    "User"
-)
+docker compose ps --all
+Invoke-RestMethod http://127.0.0.1:4173/api/health
+ollama ps
+docker compose logs --tail 200 voice-concierge
 ```
 
-Quit Ollama from its taskbar icon and start it again from the Windows Start menu
-so it inherits the new setting. Confirm the host API responds:
+If the health request cannot connect, the container is still starting or has
+exited. `docker compose ps --all` and the logs distinguish those cases.
+
+### Docker Desktop or WSL is unavailable
 
 ```powershell
+wsl --version
+docker info
+docker compose version
+```
+
+If WSL is outdated, run `wsl --update`, restart Windows, and start Docker
+Desktop. Confirm Docker Desktop is using Linux containers. Follow Docker's
+[Windows installation troubleshooting](https://docs.docker.com/desktop/setup/install/windows-install/)
+for WSL or virtualization errors.
+
+### Native Ollama is unavailable
+
+```powershell
+ollama --version
 Invoke-RestMethod http://127.0.0.1:11434/api/tags
 ```
 
-Binding Ollama to `0.0.0.0` makes it listen on Windows network interfaces, not
-only the loopback interface. Keep TCP port `11434` blocked from public and
-untrusted networks in Windows Defender Firewall. The application container
-reaches it through Docker Desktop's `host.docker.internal` gateway; Ollama does
-not need to be exposed through a Compose port mapping.
+If the command-line tool exists but the API does not respond, fully quit Ollama
+from the taskbar and start it again from the Start menu.
 
-See the [Ollama FAQ](https://docs.ollama.com/faq) for the current Windows
-environment-variable procedure.
+### The host reaches Ollama but the container cannot
 
-## Quick start
-
-Open PowerShell in the repository root. Create the ignored local configuration
-file, then run the Windows launcher:
+Run the same probe as the launcher:
 
 ```powershell
-Copy-Item .env.example .env
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\quickstart.ps1
+docker compose run --rm --no-deps --entrypoint sh voice-concierge `
+    -c 'curl --fail --silent "$OLLAMA_API_URL/api/tags"'
 ```
 
-`-ExecutionPolicy Bypass` applies only to that PowerShell process; it does not
-change the user's persistent execution policy. The launcher:
+If this fails while the host API succeeds:
 
-1. validates Docker Desktop, Compose, and native Ollama;
-2. pulls the configured Granite reasoning model when it is missing;
-3. pulls the local Granite embedding model when it is missing;
-4. creates the persistent data directories;
-5. validates and builds the Linux application image;
-6. verifies that the container can reach host Ollama;
-7. starts the application and waits for local models to initialise; and
-8. opens `http://127.0.0.1:4173` in the default browser.
+1. confirm the user `OLLAMA_HOST` value is `0.0.0.0:11434`;
+2. restart Ollama so it inherits that value;
+3. check Windows Firewall and endpoint-security rules for Docker Desktop; and
+4. temporarily disconnect a VPN to determine whether it is intercepting
+   `host.docker.internal` traffic.
 
-The initial build and startup can take several minutes. To prevent the launcher
-from opening a browser, add `-NoBrowser`. To allow more than the default ten
-minutes for first-start model initialisation, use for example:
+### A model does not download
+
+Update and restart Ollama first. To retry the default models directly against
+the local server:
+
+```powershell
+$previousOllamaHost = $env:OLLAMA_HOST
+$env:OLLAMA_HOST = "http://127.0.0.1:11434"
+try {
+    ollama pull granite4.1:8b
+    ollama pull granite-embedding:278m
+}
+finally {
+    $env:OLLAMA_HOST = $previousOllamaHost
+}
+ollama list
+```
+
+For proxy-controlled networks, configure `HTTPS_PROXY` for Ollama and trust the
+required certificate. Do not set `HTTP_PROXY` for Ollama because it can disrupt
+local client connections. See the [Ollama proxy guidance](https://docs.ollama.com/faq#how-do-i-use-ollama-behind-a-proxy).
+
+### Startup remains at `starting`
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:4173/api/health
+ollama ps
+docker compose logs --tail 200 voice-concierge
+```
+
+`status: starting` means the web service is responding while Ollama loads and
+warms the reasoning model. A cold start is slower than a later start. The
+launcher reports progress every ten seconds and automatically prints logs if
+the application reports `error`, the container exits, or the timeout expires.
+
+To permit a longer first start:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass `
@@ -95,139 +177,32 @@ powershell -NoProfile -ExecutionPolicy Bypass `
     -HealthTimeoutSeconds 1200
 ```
 
-## Voice input and output
+### Logs report `entrypoint.sh: no such file or directory`
 
-Do not add Linux `/dev/snd` mappings on Docker Desktop for Windows. The browser
-captures microphone audio and sends it to the same-origin local application;
-the container performs local wake-word detection and transcription. Piper
-generates response audio in the container and the browser plays it through the
-selected Windows output device.
-
-When prompted by the browser, allow microphone access for
-`http://127.0.0.1:4173`. Windows privacy settings must also allow microphone
-access for desktop applications and the selected browser. The host-native
-continuous microphone runner is not part of the Windows Docker deployment; use
-the browser's push-to-talk or wake-word interface.
-
-## Normal operation
-
-Run these commands from the repository root:
+This indicates an image built from an older revision that retained Windows CRLF
+line endings. Update and rebuild:
 
 ```powershell
-# Show service and health state
-docker compose ps
-Invoke-RestMethod http://127.0.0.1:4173/api/health
-
-# Follow logs; Ctrl-C stops following without stopping the container
-docker compose logs -f voice-concierge
-
-# Stop while retaining application data and downloaded models
-docker compose down
-
-# Start again without rebuilding
-docker compose up -d
+git pull --ff-only
+docker compose build voice-concierge
+docker compose up -d --force-recreate
 ```
 
-Application data persists under `data\.local`. Whisper, Vosk, and related model
-caches persist in the Docker volume `voice-model-cache`. Ollama models remain in
-the native Windows Ollama model directory.
-
-Do not use `docker compose down -v` unless deleting the application model cache
-is intentional. Deleting `data\.local` removes saved memories, reminders,
-preferences, and application logs.
-
-## Troubleshooting
-
-### Docker Desktop is installed but unavailable
-
-Start Docker Desktop, verify it is using Linux containers, then run:
-
-```powershell
-docker info
-docker compose version
-```
-
-Both commands must succeed before starting the application. If Docker reports a
-WSL error, update WSL, restart Windows, and start Docker Desktop again.
-
-### The host responds but the container cannot reach Ollama
-
-First confirm native Ollama is running:
-
-```powershell
-Invoke-RestMethod http://127.0.0.1:11434/api/tags
-```
-
-Then run the same probe used by the launcher:
-
-```powershell
-docker compose run --rm --no-deps --entrypoint sh voice-concierge `
-    -c 'curl --fail --silent "$OLLAMA_API_URL/api/tags"'
-```
-
-If the host check passes but the container check fails, confirm that the user
-`OLLAMA_HOST` value is `0.0.0.0:11434`, fully quit and restart Ollama, and check
-Windows Firewall, VPN, and endpoint-security rules affecting Docker Desktop.
-Docker Desktop documents `host.docker.internal` in its
-[networking guide](https://docs.docker.com/desktop/features/networking/networking-how-tos/).
-
-### Startup remains in starting or unhealthy state
-
-Inspect the application and health state:
-
-```powershell
-docker compose ps
-Invoke-RestMethod http://127.0.0.1:4173/api/health
-ollama ps
-docker compose logs --tail 200 voice-concierge
-```
-
-An API status of `starting` means the container is responding and Ollama is
-loading or warming the reasoning model. The launcher reports that status every
-ten seconds. The first cold start can be substantially slower than later starts.
-A reported `error`, an exited container, or a failed Ollama request is different
-from slow initialisation: resolve the error in the automatically displayed logs,
-then recreate the service with `docker compose up -d --force-recreate`.
-
-### An Ollama model does not download
-
-The launcher prints `Downloading <model> with Ollama` before each automatic
-download. If the download itself fails, update Ollama, fully quit and restart
-it, then rerun the launcher. To retry the default reasoning model directly
-against the local Ollama server:
-
-```powershell
-$previousOllamaHost = $env:OLLAMA_HOST
-$env:OLLAMA_HOST = "http://127.0.0.1:11434"
-try {
-    ollama pull granite4.1:8b
-}
-finally {
-    $env:OLLAMA_HOST = $previousOllamaHost
-}
-```
-
-The temporary process value is intentional: the Ollama application can keep
-binding to `0.0.0.0:11434` for Docker Desktop while the CLI connects to it over
-Windows loopback. Confirm the completed download with
-`ollama list`, then rerun `scripts\quickstart.ps1`.
+Current images normalize the Linux entrypoint during the Docker build.
 
 ### Port 4173 is already in use
-
-Identify the process using it:
 
 ```powershell
 Get-NetTCPConnection -LocalPort 4173 -ErrorAction SilentlyContinue
 ```
 
 Stop the conflicting process or change only the host side of the port mapping
-in `docker-compose.yml`, for example `127.0.0.1:5000:4173`. Continue to bind the
-host side to `127.0.0.1` unless remote access has been deliberately secured.
+in `docker-compose.yml`, for example `127.0.0.1:5000:4173`. Keep the host binding
+on `127.0.0.1` unless a secured remote deployment has been reviewed.
 
-### Corporate proxy or VPN interferes with downloads
+### Docker or model downloads fail behind a proxy
 
-Configure Docker Desktop's proxy settings for image and build downloads. Ollama
-uses `HTTPS_PROXY` for model downloads; do not set `HTTP_PROXY` for Ollama,
-because it can interfere with local client connections. Any private certificate
-authority required by the proxy must be trusted by both Windows and the Docker
-build environment.
+Configure Docker Desktop under **Settings > Resources > Proxies**. Docker's
+[networking guide](https://docs.docker.com/desktop/features/networking/networking-how-tos/)
+describes proxy and VPN behavior. Private certificate authorities must be
+trusted by Windows, Ollama, and the Docker build environment as applicable.

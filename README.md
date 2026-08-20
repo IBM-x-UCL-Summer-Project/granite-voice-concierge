@@ -9,18 +9,9 @@ Normal application processing remains on the local device. Ollama provides
 local model inference, and the application stores approved memories and
 reminders in local persistent storage.
 
-## Project status
-
-This repository is an active prototype, not a certified medical device,
-emergency-response system, or production care service. It should not be relied
-on as the sole means of obtaining urgent help, medical guidance, or safety
-monitoring.
-
-The supported Docker Desktop hosts are Apple Silicon macOS and x86-64 Windows
-using the WSL 2 Linux-container backend. The application runs in a Linux
-container, while Ollama runs natively on the host to retain platform GPU
-acceleration. Windows on Arm and other host platforms require validation before
-they should be considered supported.
+> This is an active prototype, not a medical device or emergency-response
+> system. Do not rely on it as the only way to obtain urgent help or medical
+> guidance.
 
 ## Core capabilities
 
@@ -75,130 +66,181 @@ flowchart LR
 ```
 
 The browser and API are bound to the local machine by default. Ollama is not
-packaged inside the application container; Compose connects to the Ollama
-service running on the host.
+packaged inside the application container; Compose connects to Ollama running
+on the host.
 
-## Quick start
+## Docker setup
 
 ### Prerequisites
 
-- [Docker with Docker Compose](https://docs.docker.com/get-started/get-docker/)
-- [Ollama](https://ollama.com/download)
-- Sufficient local resources for the selected Granite and speech models
+- Git
+- [Docker Desktop](https://docs.docker.com/get-started/get-docker/)
+- [Ollama](https://ollama.com/download), installed and running on the host
+- Sufficient disk space and memory for the selected Granite and speech models
 
-Windows must use Docker Desktop's Linux containers. Ollama remains a native host
-prerequisite on both platforms; Compose does not install or start it.
+Supported hosts are Apple Silicon macOS and x86-64 Windows with Docker Desktop
+using WSL 2 and Linux containers. Windows on Arm has not been validated. The
+first setup requires internet access and downloads several gigabytes; normal
+operation remains local after the images and models are available.
 
-### Start the application
+### Clone the repository
 
-On macOS, from the repository root:
+Run once in Terminal on macOS or PowerShell on Windows:
+
+```text
+git clone https://github.com/IBM-x-UCL-Summer-Project/granite-voice-concierge.git
+cd granite-voice-concierge
+```
+
+Run all remaining commands from this repository root.
+
+### Windows
+
+#### Configure Ollama for Windows once
+
+Run in PowerShell:
+
+```powershell
+[Environment]::SetEnvironmentVariable(
+    "OLLAMA_HOST",
+    "0.0.0.0:11434",
+    "User"
+)
+```
+
+Quit Ollama from its taskbar icon, start it again from the Windows Start menu,
+then verify its local API:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:11434/api/tags
+```
+
+Keep TCP port `11434` blocked from public and untrusted networks. The container
+uses Docker Desktop's `host.docker.internal` address; Compose does not publish
+the Ollama port.
+
+#### Start
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\quickstart.ps1
+```
+
+The launcher creates `.env` when needed, downloads missing Ollama models,
+builds the image, checks host connectivity, starts the container, and waits for
+the application. Open [http://127.0.0.1:4173](http://127.0.0.1:4173) after it
+reports that the application is ready.
+
+#### Verify and operate
+
+```powershell
+# Check status and application health
+docker compose ps
+Invoke-RestMethod http://127.0.0.1:4173/api/health
+
+# Follow logs; press Ctrl-C to stop following
+docker compose logs --tail 100 -f voice-concierge
+
+# Restart the application
+docker compose restart voice-concierge
+
+# Stop while retaining data and model caches
+docker compose down
+
+# Start an existing deployment without rebuilding
+docker compose up -d
+```
+
+#### Update
+
+```powershell
+git pull --ff-only
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\quickstart.ps1
+```
+
+For startup options, data locations, networking details, and error-specific
+diagnostics, see the [Windows Docker guide](docs/windows-docker.md).
+
+### macOS
+
+#### Configure Ollama for macOS once
+
+Run in Terminal:
+
+```bash
+launchctl setenv OLLAMA_HOST "0.0.0.0:11434"
+```
+
+Quit and reopen the Ollama application, then verify its local API:
+
+```bash
+curl --fail http://127.0.0.1:11434/api/tags
+```
+
+#### Start
 
 ```bash
 cp .env.example .env
 ./scripts/quickstart.sh
 ```
 
-On Windows, open PowerShell in the repository root:
+The launcher downloads missing Ollama models, builds the image, checks host
+connectivity, and starts the container. Open
+[http://127.0.0.1:4173](http://127.0.0.1:4173) after startup.
 
-```powershell
-Copy-Item .env.example .env
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\quickstart.ps1
-```
-
-The platform script checks Docker Desktop and native Ollama, downloads missing
-Ollama models, builds the application image, verifies container-to-host
-connectivity, starts the service, and waits for it to become ready. See the
-[Windows Docker guide](docs/windows-docker.md) for prerequisites, one-time
-Ollama configuration, operation, and troubleshooting.
-
-Open `http://127.0.0.1:4173` after startup completes.
-
-Verify the deployment with:
+#### Verify and operate
 
 ```bash
-make ps
-curl http://127.0.0.1:4173/api/health
+# Check status and application health
+docker compose ps
+curl --fail http://127.0.0.1:4173/api/health
+
+# Follow logs; press Ctrl-C to stop following
+docker compose logs --tail 100 -f voice-concierge
+
+# Restart the application
+docker compose restart voice-concierge
+
+# Stop while retaining data and model caches
+docker compose down
+
+# Start an existing deployment without rebuilding
+docker compose up -d
 ```
 
-On Windows, use `docker compose ps` and
-`Invoke-RestMethod http://127.0.0.1:4173/api/health` instead of the Make and
-curl commands.
+Equivalent shortcuts are available through `make ps`, `make logs`, `make down`,
+and `make up`.
 
-Follow application logs with:
+#### Update
 
 ```bash
-make logs
+git pull --ff-only
+./scripts/quickstart.sh
 ```
 
-Stop the application without deleting persistent data:
+## Configuration and local data
 
-```bash
-make down
-```
+Configuration is read from the ignored `.env` file.
 
-The direct Windows equivalents are
-`docker compose logs -f voice-concierge` and `docker compose down`.
+| Variable         | Default                             | Purpose                           |
+| ---------------- | ----------------------------------- | --------------------------------- |
+| `OLLAMA_API_URL` | `http://host.docker.internal:11434` | Ollama address from the container |
+| `OLLAMA_MODEL`   | `granite4.1:8b`                     | Local reasoning model             |
+| `GVC_LOG_LEVEL`  | `INFO`                              | Application logging level         |
 
-For manual startup, host development, troubleshooting, and the complete Make
-target reference, see the
-[development and operations guide](docs/development-guide.md).
+| Data                                  | Location                           |
+| ------------------------------------- | ---------------------------------- |
+| Memories, reminders, and preferences | `data/.local`                      |
+| Whisper, Vosk, and application caches | Docker volume `voice-model-cache` |
+| Ollama models                         | Native host Ollama storage         |
 
-## Configuration
+Normal `docker compose down`, rebuilds, and updates retain these locations.
+Deleting `data/.local` removes saved user data. `docker compose down -v`
+deletes the application model cache. Debug logging can contain prompts and
+responses; enable it only for deliberate local troubleshooting.
 
-Local configuration is read from the ignored `.env` file. Start from
-[`.env.example`](.env.example).
+## Development
 
-| Variable         | Default                             | Purpose                                       |
-| ---------------- | ----------------------------------- | --------------------------------------------- |
-| `OLLAMA_API_URL` | `http://host.docker.internal:11434` | Ollama endpoint reachable from the container. |
-| `OLLAMA_MODEL`   | `granite4.1:8b`                     | Local reasoning model selected at startup.    |
-| `GVC_LOG_LEVEL`  | `INFO`                              | Application diagnostic verbosity.             |
-
-The quick-start workflow installs `granite-embedding:278m` by default. Override
-that one invocation by exporting `OLLAMA_EMBEDDING_MODEL` in the shell before
-running the script.
-
-Do not commit `.env`, credentials, downloaded model weights, generated audio,
-or local user data.
-
-## Data and privacy
-
-The Docker deployment separates application data from model caches:
-
-| Data                                  | Location                    | Persistence                                       |
-| ------------------------------------- | --------------------------- | ------------------------------------------------- |
-| Memories, reminders, and preferences | `./data/.local`             | Bind-mounted and retained across normal rebuilds. |
-| Whisper and application model caches  | Docker volume `voice-model-cache` | Retained until the volume is removed.        |
-| Ollama models                         | Host Ollama data directory  | Managed outside the application container.        |
-| Temporary conversation state          | Application process memory  | Cleared when the session or server is reset.      |
-
-Recorded audio is processed in memory and is not persisted by the normal
-application flow. Browser speech fallback is restricted to voices that the Web
-Speech API identifies as local services.
-
-The default `INFO` logging configuration does not record conversation text.
-Setting `GVC_LOG_LEVEL=DEBUG` includes prompts and responses that may be retained
-by the container logging driver. Enable it only for deliberate local
-troubleshooting.
-
-`make clean` and `make rebuild` delete application state under
-`./data/.local`. Review the
-[persistent-data documentation](docs/development-guide.md#persistent-data)
-before using either command.
-
-## Development and verification
-
-Run the complete test suite in the isolated Docker test image:
-
-```bash
-make test
-```
-
-For host development, create a Python 3.12 environment and install the
-development dependency group as described in the
-[development guide](docs/development-guide.md#host-development-setup).
-
-The standard quality checks are:
+Run the standard checks before review:
 
 ```bash
 python -m black .
@@ -206,37 +248,29 @@ python -m ruff check .
 python -m pytest
 ```
 
-All substantive changes should pass formatting, linting, and relevant tests
-before review.
+The isolated Docker test target is available with `make test`. Host development
+setup and the complete operations reference are in the
+[development guide](docs/development-guide.md).
 
 ## Documentation
 
-| Document                                                       | Purpose                                                                   |
-| -------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| [Development and operations guide](docs/development-guide.md)  | Docker, host setup, configuration, persistence, commands, and testing.    |
-| [Windows Docker guide](docs/windows-docker.md)                  | Windows prerequisites, PowerShell setup, operation, and troubleshooting. |
-| [Local end-to-end setup](docs/app-pipeline-local-e2e-setup.md) | Detailed model, microphone, speech, and live-pipeline setup.              |
-| [Web UI guide](web/README.md)                                  | Browser architecture, API behavior, wake mode, playback, and diagnostics. |
-| [Application/UI contract](docs/app-pipeline-ui-contract.md)    | Serialized request, response, state, and trust boundaries.                |
-| [Local reasoning guide](docs/reasoning/local-reasoning.md)     | Ollama integration, model configuration, and reasoning behavior.          |
-| [Memory design](docs/memory/memory.md)                         | Local memory architecture and behavior.                                   |
-| [Repository structure](docs/repository-structure.md)           | Package and directory responsibilities.                                   |
-| [Development workflow](docs/development-workflow.md)           | Branch, issue, review, and merge conventions.                             |
-| [Python style guide](docs/python-style-guide.md)               | Python formatting and coding conventions.                                 |
+- [Windows Docker support and troubleshooting](docs/windows-docker.md)
+- [Development and operations](docs/development-guide.md)
+- [Local end-to-end setup](docs/app-pipeline-local-e2e-setup.md)
+- [Web interface and browser behavior](web/README.md)
+- [Local reasoning](docs/reasoning/local-reasoning.md)
+- [Memory design](docs/memory/memory.md)
+- [Repository structure](docs/repository-structure.md)
+- [Development workflow](docs/development-workflow.md)
 
 ## Security and responsible use
 
-- The default web binding is local-only. Do not expose the service publicly
-  without authentication, TLS, access controls, and a deployment review.
-- Local inference reduces external data exposure but does not make model output
-  inherently correct. Important information must still be verified.
-- Voice recognition can mishear commands. Destructive and sensitive operations
-  should retain explicit confirmation boundaries.
-- Do not store secrets, credentials, medical records, or other sensitive data
-  unless the deployment and retention controls have been reviewed for that use.
+The web interface binds to `127.0.0.1` by default. Do not expose it publicly
+without authentication, TLS, access controls, and a deployment review. Local
+inference does not make model output inherently correct; verify important
+information. Do not commit `.env`, credentials, model weights, generated audio,
+or local user data.
 
 ## License
 
-This repository does not currently include an open-source license. Do not
-assume permission to redistribute or incorporate the software into another
-project until a license has been selected.
+This project is licensed under the [MIT License](LICENSE).
