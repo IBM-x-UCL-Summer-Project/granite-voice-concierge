@@ -122,28 +122,25 @@ starts the service.
 
 Open `http://127.0.0.1:4173` after startup completes.
 
-Verify the deployment with:
+Once it is running, use whichever column matches your machine. The `make`
+targets are shorthand for the same `docker compose` commands, and Windows has
+no `make` by default.
+
+| Task | macOS and Linux | Windows (PowerShell) |
+| --- | --- | --- |
+| Check the service | `make ps` | `docker compose ps` |
+| Follow the logs | `make logs` | `docker compose logs -f voice-concierge` |
+| Stop, keeping data | `make down` | `docker compose down` |
+| Open a shell in it | `make shell` | `docker compose exec voice-concierge /bin/bash` |
+
+The `docker compose` forms work everywhere, so use them on macOS or Linux too
+if you prefer not to rely on `make`.
+
+Check the application is healthy on any platform with:
 
 ```bash
-docker compose ps
 curl http://127.0.0.1:4173/api/health
 ```
-
-Follow application logs with:
-
-```bash
-docker compose logs -f voice-concierge
-```
-
-Stop the application without deleting persistent data:
-
-```bash
-docker compose down
-```
-
-On macOS and Linux the `Makefile` wraps these as `make ps`, `make logs` and
-`make down`. Windows has no `make` by default, so the `docker compose` commands
-above are the portable form.
 
 For manual startup, host development, troubleshooting, and the complete Make
 target reference, see the
