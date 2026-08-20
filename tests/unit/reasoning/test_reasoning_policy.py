@@ -757,10 +757,10 @@ def test_policy_guard_strips_bare_shopping_list_destination() -> None:
 @pytest.mark.parametrize(
     ("transcript", "mode", "expected_items"),
     (
-        ("I want to buy apple.", "home", ("apple",)),
-        ("I'd like to purchase tea.", "home", ("tea",)),
+        ("I want to buy apple.", "shopping", ("apple",)),
+        ("I'd like to purchase tea.", "shopping", ("tea",)),
         ("I need to get some milk.", "shopping", ("milk",)),
-        ("Please buy bread and eggs.", "home", ("bread", "eggs")),
+        ("Please buy bread and eggs.", "shopping", ("bread", "eggs")),
         (
             "I would like to pick up an onion, tea, and meat.",
             "shopping",
@@ -791,9 +791,12 @@ def test_policy_guard_extracts_items_from_purchase_intent(
         "Please get help.",
         "I need to get ready.",
         "Please pick up my parcel.",
+        "I want to buy apple.",
+        "I need to buy some time.",
+        "Please buy into the idea.",
     ),
 )
-def test_policy_guard_does_not_treat_ambiguous_acquisition_as_shopping(
+def test_policy_guard_requires_shopping_context_for_implicit_acquisition(
     transcript: str,
 ) -> None:
     response = apply_reasoning_policy_guards(

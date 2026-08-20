@@ -28,7 +28,6 @@ from voice_concierge.memory_contracts import (
     SHOPPING_LIST_MEMORY_KEY,
     TASK_LIST_MEMORY_KEY,
 )
-from voice_concierge.reasoning.list_intents import shopping_purchase_remainder
 from voice_concierge.reasoning.types import (
     MemoryAction,
     MemoryReference,
@@ -87,8 +86,6 @@ def retrieval_scope_for_turn(
         return "none"
     normalized = " ".join(transcript.casefold().split())
     if "shopping list" in normalized:
-        return "list_relevant"
-    if shopping_purchase_remainder(normalized) is not None:
         return "list_relevant"
     if re.search(r"\b(?:task|to-do|todo)\s+list\b", normalized):
         return "task_relevant_only"

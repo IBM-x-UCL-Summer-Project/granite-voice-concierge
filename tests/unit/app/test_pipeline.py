@@ -257,12 +257,11 @@ def test_detailed_preference_does_not_relax_driving_safety_limit() -> None:
     ("transcript", "expected_scope"),
     (
         ("What is on my shopping list?", "list_relevant"),
-        ("I want to buy apple", "list_relevant"),
         ("Read my to-do list", "task_relevant_only"),
         ("Please update the task list", "task_relevant_only"),
     ),
 )
-def test_structured_list_and_direct_purchase_routes_retrieval_outside_list_mode(
+def test_explicit_structured_list_routes_retrieval_outside_list_mode(
     transcript: str,
     expected_scope: str,
 ) -> None:
@@ -282,9 +281,12 @@ def test_structured_list_and_direct_purchase_routes_retrieval_outside_list_mode(
         "Please get help",
         "I need to get ready",
         "Please pick up my parcel",
+        "I want to buy apple",
+        "I need to buy some time",
+        "Please buy into the idea",
     ),
 )
-def test_ambiguous_acquisition_keeps_default_retrieval_scope(
+def test_implicit_acquisition_keeps_default_retrieval_scope_outside_shopping(
     transcript: str,
 ) -> None:
     memory = FakeMemory()

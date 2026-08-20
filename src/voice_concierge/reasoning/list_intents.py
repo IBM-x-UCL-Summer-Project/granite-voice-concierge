@@ -27,16 +27,19 @@ def shopping_purchase_remainder(
     *,
     shopping_context: bool = False,
 ) -> str | None:
-    """Return item wording only when the purchase intent is unambiguous.
+    """Return item wording for an acquisition inside shopping context.
 
-    ``buy`` and ``purchase`` express a purchase without relying on UI mode.
-    ``get`` and ``pick up`` are general-purpose phrases (for example, "get
-    help" or "pick up a parcel"), so deterministic list mutation accepts them
-    only when the caller already knows the turn is in a shopping context.
+    Purchase wording alone is not a reliable request to mutate a shopping list:
+    phrases such as "buy some time" and "buy into the idea" are not list items.
+    The active shopping mode supplies the missing intent boundary. Explicit
+    list commands are recognized separately and remain available in every mode.
     """
 
+    if not shopping_context:
+        return None
+
     lead = _DIRECT_PURCHASE_LEAD.match(transcript)
-    if lead is None and shopping_context:
+    if lead is None:
         lead = _CONTEXTUAL_ACQUISITION_LEAD.match(transcript)
     if lead is None:
         return None
