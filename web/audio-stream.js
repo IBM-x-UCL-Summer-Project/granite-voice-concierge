@@ -29,7 +29,7 @@ function encodePcmStreamFrame(samples, sequence) {
   return buffer;
 }
 
-class PcmWebSocketStream {
+class PcmWebSocketStreamImplementation {
   constructor({ mode, onResult, onError, onDrop = () => {} }) {
     this.mode = mode;
     this.onResult = onResult;
@@ -291,6 +291,6 @@ class PcmWebSocketStream {
 }
 
 window.GraniteAudioStreaming = {
-  PcmWebSocketStream,
+  PcmWebSocketStream: PcmWebSocketStreamImplementation,
   encodePcmStreamFrame,
 };
