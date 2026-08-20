@@ -59,9 +59,12 @@ RUN groupadd --gid "${APP_GID}" app \
         /home/app/.cache \
     && chown -R app:app .local /home/app
 
-# Copy entrypoint script
+# Normalize inside the Linux image as well as enforcing LF through
+# .gitattributes. Existing Windows worktrees can retain a CRLF copy of an
+# unchanged script after pulling the attributes file for the first time.
 COPY entrypoint.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/entrypoint.sh
+RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh \
+    && chmod +x /usr/local/bin/entrypoint.sh
 
 ENV HOME=/home/app \
     XDG_CACHE_HOME=/home/app/.cache

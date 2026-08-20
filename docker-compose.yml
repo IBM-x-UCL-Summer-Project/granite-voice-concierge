@@ -17,7 +17,8 @@ services:
       # container recreation.
       - voice-model-cache:/home/app/.cache
     environment:
-      # Ollama runs natively on the host so macOS can use Metal acceleration.
+      # Ollama runs natively on macOS and Windows so it can use host GPU
+      # acceleration without requiring GPU passthrough into Docker Desktop.
       # The entrypoint also writes this URL to the reasoning model selection.
       - OLLAMA_API_URL=${OLLAMA_API_URL:-http://host.docker.internal:11434}
       - OLLAMA_HOST=${OLLAMA_API_URL:-http://host.docker.internal:11434}
@@ -38,7 +39,22 @@ services:
       - --voice-io
       - --log-level
       - ${GVC_LOG_LEVEL:-INFO}
-    # For live voice mode, uncomment below:
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import json, urllib.request;
+          response = urllib.request.urlopen("http://127.0.0.1:4173/api/health", timeout=3);
+          raise SystemExit(0 if json.load(response).get("status") == "ready" else 1)
+      interval: 15s
+      timeout: 5s
+      start_period: 5m
+      retries: 8
+    # Direct audio-device mappings are available only on native Linux. Docker
+    # Desktop users capture and play audio through the local browser interface.
+    # For native-Linux live voice mode, uncomment below:
     # devices:
     #   - /dev/snd:/dev/snd
     #   - /dev/dsp:/dev/dsp
