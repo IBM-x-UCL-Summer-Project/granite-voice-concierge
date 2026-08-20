@@ -6,6 +6,7 @@ services:
       args:
         APP_UID: ${APP_UID:-10001}
         APP_GID: ${APP_GID:-10001}
+        PIPER_VOICE: ${GVC_TTS_VOICE:-en_GB-alan-medium}
     container_name: granite-voice-concierge
     ports:
       - "127.0.0.1:4173:4173"
@@ -37,6 +38,14 @@ services:
       - --audio-stream-port
       - "4174"
       - --voice-io
+      - --stt-model
+      - ${GVC_STT_MODEL:-base.en}
+      - --stt-device
+      - ${GVC_STT_DEVICE:-cpu}
+      - --stt-compute-type
+      - ${GVC_STT_COMPUTE_TYPE:-int8}
+      - --tts-voice
+      - ${GVC_TTS_VOICE:-en_GB-alan-medium}
       - --log-level
       - ${GVC_LOG_LEVEL:-INFO}
     healthcheck:

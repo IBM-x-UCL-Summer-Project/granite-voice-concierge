@@ -2,6 +2,7 @@
 
 # Standard library
 import logging
+import re
 import shutil
 import subprocess
 import sys
@@ -36,12 +37,33 @@ def _default_piper_executable() -> str:
 
 # Piper defaults tuned for older-adult listeners
 _MODULE_DIR = Path(__file__).resolve().parent
-DEFAULT_MODEL_PATH: str = str(_MODULE_DIR / "en_GB-alan-medium.onnx")
-DEFAULT_CONFIG_PATH: str = str(_MODULE_DIR / "en_GB-alan-medium.onnx.json")
+DEFAULT_VOICE: str = "en_GB-alan-medium"
+DEFAULT_MODEL_DIRECTORY: Path = _MODULE_DIR
+DEFAULT_MODEL_PATH: str = str(DEFAULT_MODEL_DIRECTORY / f"{DEFAULT_VOICE}.onnx")
+DEFAULT_CONFIG_PATH: str = str(DEFAULT_MODEL_DIRECTORY / f"{DEFAULT_VOICE}.onnx.json")
 DEFAULT_LENGTH_SCALE: float = 1.2  # >1 slows speech; 1.2 suits older adults
 MIN_LENGTH_SCALE: float = 0.5  # fast
 MAX_LENGTH_SCALE: float = 2.5  # slow
 DEFAULT_PIPER_EXECUTABLE: str = _default_piper_executable()
+_VOICE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_]+-[A-Za-z0-9_]+-[A-Za-z0-9_]+$")
+
+
+def resolve_piper_voice_paths(
+    voice: str = DEFAULT_VOICE,
+    model_directory: Path | str = DEFAULT_MODEL_DIRECTORY,
+) -> tuple[str, str]:
+    """Return the model and config paths for a safe Piper voice identifier."""
+
+    if not isinstance(voice, str) or not _VOICE_NAME_PATTERN.fullmatch(voice):
+        raise ValueError(
+            "Piper voice must use <language>-<name>-<quality>, for example "
+            "'en_GB-alan-medium'."
+        )
+    directory = Path(model_directory).expanduser()
+    return (
+        str(directory / f"{voice}.onnx"),
+        str(directory / f"{voice}.onnx.json"),
+    )
 
 
 class PiperTextToSpeech:

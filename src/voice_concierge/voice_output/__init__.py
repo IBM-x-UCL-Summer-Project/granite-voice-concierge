@@ -24,9 +24,12 @@ from voice_concierge.voice_output.pacing import (
 from voice_concierge.voice_output.piper import (
     DEFAULT_CONFIG_PATH,
     DEFAULT_LENGTH_SCALE,
+    DEFAULT_MODEL_DIRECTORY,
     DEFAULT_MODEL_PATH,
     DEFAULT_PIPER_EXECUTABLE,
+    DEFAULT_VOICE,
     PiperTextToSpeech,
+    resolve_piper_voice_paths,
 )
 from voice_concierge.voice_output.say import (
     DEFAULT_SAY_EXECUTABLE,
@@ -44,9 +47,11 @@ __all__ = [
     "acknowledgement",
     "DEFAULT_CONFIG_PATH",
     "DEFAULT_LENGTH_SCALE",
+    "DEFAULT_MODEL_DIRECTORY",
     "DEFAULT_MODEL_PATH",
     "DEFAULT_PIPER_EXECUTABLE",
     "DEFAULT_SAY_EXECUTABLE",
+    "DEFAULT_VOICE",
     "DeterministicTextToSpeechFake",
     "FallbackTextToSpeech",
     "PiperTextToSpeech",
@@ -56,4 +61,5 @@ __all__ = [
     "TextToSpeechError",
     "TextToSpeechSynthesisError",
     "build_text_to_speech",
+    "resolve_piper_voice_paths",
 ]

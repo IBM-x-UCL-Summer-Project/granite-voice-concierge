@@ -246,11 +246,35 @@ git pull --ff-only
 
 Configuration is read from the ignored `.env` file.
 
-| Variable         | Default                             | Purpose                           |
-| ---------------- | ----------------------------------- | --------------------------------- |
-| `OLLAMA_API_URL` | `http://host.docker.internal:11434` | Ollama address from the container |
-| `OLLAMA_MODEL`   | `granite4.1:8b`                     | Local reasoning model             |
-| `GVC_LOG_LEVEL`  | `INFO`                              | Application logging level         |
+| Variable               | Default                             | Purpose                                  |
+| ---------------------- | ----------------------------------- | ---------------------------------------- |
+| `OLLAMA_API_URL`       | `http://host.docker.internal:11434` | Ollama address from the container        |
+| `OLLAMA_MODEL`         | `granite4.1:8b`                     | Local reasoning model                    |
+| `GVC_STT_MODEL`        | `base.en`                           | faster-whisper model name, ID, or path   |
+| `GVC_STT_DEVICE`       | `cpu`                               | CTranslate2 inference device             |
+| `GVC_STT_COMPUTE_TYPE` | `int8`                              | CTranslate2 inference precision          |
+| `GVC_TTS_VOICE`        | `en_GB-alan-medium`                 | Piper voice built into the Docker image  |
+| `GVC_LOG_LEVEL`        | `INFO`                              | Application logging level                |
+
+`GVC_STT_MODEL` is passed through to faster-whisper, so installations can use
+smaller or larger built-in names such as `tiny.en`, `small.en`, `medium.en`,
+`large-v3`, `turbo`, and `distil-large-v3`, a compatible Hugging Face model ID,
+or a converted local model directory. The selected model downloads into the
+persistent `voice-model-cache` on first use. An explicitly selected model is
+never silently replaced with a smaller one if loading fails.
+
+`GVC_TTS_VOICE` uses Piper's `<language>-<name>-<quality>` identifiers. The
+quick-start build downloads only the selected voice into the image. After
+changing it, rerun the quick-start script or `docker compose build`. To inspect
+the upstream catalogue from an installed development environment:
+
+```bash
+python -m voice_concierge.voice_output.download_models --list
+```
+
+Piper voice files have individual model cards and may use different licences.
+Review the selected voice's model card before redistributing an image containing
+it.
 
 | Data                                  | Location                          |
 | ------------------------------------- | --------------------------------- |

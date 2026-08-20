@@ -62,6 +62,39 @@ class TestBuildTextToSpeech:
     @pytest.mark.unit
     @patch(
         "voice_concierge.voice_output.factory._find_macos_say_executable",
+        return_value=None,
+    )
+    @patch("voice_concierge.voice_output.factory.FallbackTextToSpeech")
+    @patch("voice_concierge.voice_output.factory.PiperTextToSpeech")
+    def test_resolves_selected_voice_in_model_directory(
+        self,
+        mock_piper: patch,
+        mock_fallback: patch,
+        _mock_find_say: patch,
+        tmp_path,
+    ) -> None:
+        """A voice identifier resolves its matching model/config pair."""
+        build_text_to_speech(
+            voice="en_US-lessac-medium",
+            model_directory=tmp_path,
+        )
+
+        mock_piper.assert_called_once_with(
+            str(tmp_path / "en_US-lessac-medium.onnx"),
+            str(tmp_path / "en_US-lessac-medium.onnx.json"),
+            length_scale=DEFAULT_LENGTH_SCALE,
+        )
+        mock_fallback.assert_called_once_with(mock_piper.return_value)
+
+    @pytest.mark.unit
+    def test_rejects_unpaired_explicit_model_path(self) -> None:
+        """An explicit model cannot accidentally use another voice's config."""
+        with pytest.raises(ValueError, match="must be supplied together"):
+            build_text_to_speech(model_path="voice.onnx")
+
+    @pytest.mark.unit
+    @patch(
+        "voice_concierge.voice_output.factory._find_macos_say_executable",
         return_value="/usr/bin/say",
     )
     @patch("voice_concierge.voice_output.factory.FallbackTextToSpeech")

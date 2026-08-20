@@ -16,21 +16,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Keep the Piper voice assets in the image without transferring them through
-# the build context. This layer depends only on the base system packages, so
-# application source and Python dependency changes do not download it again.
-RUN mkdir -p src/voice_concierge/voice_output \
-    && curl --fail --location --retry 3 \
-        --output src/voice_concierge/voice_output/en_GB-alan-medium.onnx \
-        https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alan/medium/en_GB-alan-medium.onnx \
-    && echo "0a309668932205e762801f1efc2736cd4b0120329622adf62be09e56339d3330  src/voice_concierge/voice_output/en_GB-alan-medium.onnx" \
-        | sha256sum --check --strict \
-    && curl --fail --location --retry 3 \
-        --output src/voice_concierge/voice_output/en_GB-alan-medium.onnx.json \
-        https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alan/medium/en_GB-alan-medium.onnx.json \
-    && echo "c0f0d124e5895c00e7c03b35dcc8287f319a6998a365b182deb5c8e752ee8c1e  src/voice_concierge/voice_output/en_GB-alan-medium.onnx.json" \
-        | sha256sum --check --strict
-
 # Copy project metadata before source so dependency installation remains cached
 # across normal application edits.
 COPY pyproject.toml requirements.txt requirements-dev.txt ./
@@ -41,6 +26,14 @@ RUN pip install --no-cache-dir \
         --index-url https://download.pytorch.org/whl/cpu \
         torch torchaudio \
     && python -c 'import subprocess, sys, tomllib; dependencies = tomllib.load(open("pyproject.toml", "rb"))["project"]["dependencies"]; subprocess.check_call([sys.executable, "-m", "pip", "install", "--no-cache-dir", *dependencies])'
+
+# Keep the selected Piper voice in its own cached layer. Changing the voice
+# rebuilds only this inexpensive model layer, not the Python dependencies.
+ARG PIPER_VOICE=en_GB-alan-medium
+RUN mkdir -p src/voice_concierge/voice_output \
+    && python -m piper.download_voices \
+        --download-dir src/voice_concierge/voice_output \
+        "${PIPER_VOICE}"
 
 # Source changes should not invalidate the expensive dependency layer.
 COPY src ./src

@@ -160,6 +160,37 @@ docker compose exec voice-concierge printenv REASONING_MODEL
 docker compose exec voice-concierge printenv OLLAMA_API_URL
 ```
 
+### Speech models and Piper voices
+
+Docker reads the local speech selections from `.env`:
+
+```env
+GVC_STT_MODEL=base.en
+GVC_STT_DEVICE=cpu
+GVC_STT_COMPUTE_TYPE=int8
+GVC_TTS_VOICE=en_GB-alan-medium
+```
+
+`GVC_STT_MODEL` accepts any model identifier supported by faster-whisper,
+including larger choices such as `small.en`, `medium.en`, `large-v3`, `turbo`,
+and `distil-large-v3`. It can also be a compatible Hugging Face identifier or a
+converted model directory. The model is downloaded on first load and retained
+in the `voice-model-cache` Docker volume. Device and compute type are passed
+directly to CTranslate2; unsupported combinations fail with the existing typed
+STT startup error rather than changing the requested model.
+
+The Docker build downloads the selected Piper voice into the application image.
+Changing `GVC_TTS_VOICE` therefore requires another `docker compose build`.
+List the upstream voice catalogue and download voices for a host-native run with:
+
+```bash
+python -m voice_concierge.voice_output.download_models --list
+python -m voice_concierge.voice_output.download_models en_US-lessac-medium
+```
+
+Every Piper voice can have its own licence. Check the voice's upstream
+`MODEL_CARD` before distributing it with the application.
+
 ### Logging
 
 The container defaults to `GVC_LOG_LEVEL=INFO` and does not create an
@@ -349,6 +380,9 @@ python -m voice_concierge.app.web --demo
 python -m voice_concierge.app.web --voice-io --no-memory
 python -m voice_concierge.app.web --voice-io --no-wake-word
 python -m voice_concierge.app.web --voice-io --policy-profile strict
+python -m voice_concierge.app.web --voice-io \
+  --stt-model turbo --stt-device cpu --stt-compute-type int8 \
+  --tts-voice en_US-lessac-medium
 ```
 
 The interactive web and live runners default to the `uat_relaxed` reasoning
@@ -392,6 +426,8 @@ python -m voice_concierge.app.live --device-index <index>
 python -m voice_concierge.app.live --no-memory --no-playback
 python -m voice_concierge.app.live --no-guided-routines
 python -m voice_concierge.app.live --policy-profile strict
+python -m voice_concierge.app.live \
+  --stt-model small.en --tts-voice en_US-lessac-medium
 ```
 
 ### Voice output fallback

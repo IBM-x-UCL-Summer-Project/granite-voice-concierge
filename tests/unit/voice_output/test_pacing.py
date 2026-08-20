@@ -184,6 +184,17 @@ class TestBackendBuilders:
         assert slow.length_scale > reference.length_scale
         assert fast.length_scale < reference.length_scale
 
+    def test_piper_builder_uses_selected_voice(self, tmp_path) -> None:
+        from voice_concierge.voice_output.factory import piper_backend_builder
+
+        backend = piper_backend_builder(
+            voice="en_US-lessac-medium",
+            model_directory=tmp_path,
+        )(PACE_LADDER[0])
+
+        assert backend._model_path == str(tmp_path / "en_US-lessac-medium.onnx")
+        assert backend._config_path == str(tmp_path / "en_US-lessac-medium.onnx.json")
+
     def test_say_takes_words_per_minute_directly(self) -> None:
         from voice_concierge.voice_output.factory import say_backend_builder
 

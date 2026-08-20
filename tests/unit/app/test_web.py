@@ -34,6 +34,7 @@ from voice_concierge.app.reminders import ReminderTurnHandler
 from voice_concierge.app.serialization import app_pipeline_state_to_dict
 from voice_concierge.app.smoke import SmokeReasoningService, build_smoke_pipeline
 from voice_concierge.app.types import AppPipelineState
+from voice_concierge.app.voice_io import VoiceIOConfig
 from voice_concierge.app.web import PipelineWebServer
 from voice_concierge.app.web_features import (
     WebFeatureServices,
@@ -338,6 +339,60 @@ def test_web_application_uses_relaxed_uat_policy_by_default(
     try:
         assert built_pipeline is pipeline
         assert captured["config"].policy_profile == "uat_relaxed"
+    finally:
+        features.close()
+        pipeline.close()
+
+
+def test_web_application_builds_selected_voice_backends(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    pipeline = build_smoke_pipeline()
+    selected = VoiceIOConfig(
+        stt_model="turbo",
+        stt_device="cuda",
+        stt_compute_type="float16",
+        tts_voice="en_US-lessac-medium",
+        tts_model_directory=tmp_path,
+    )
+    calls: list[tuple[str, VoiceIOConfig]] = []
+    speech_to_text = object()
+    text_to_speech = object()
+
+    monkeypatch.setattr(
+        web_module,
+        "build_configured_speech_to_text",
+        lambda config: calls.append(("stt", config)) or speech_to_text,
+    )
+    monkeypatch.setattr(
+        web_module,
+        "build_configured_text_to_speech",
+        lambda config: calls.append(("tts", config)) or text_to_speech,
+    )
+
+    def fake_build_pipeline(_config=None, **kwargs: object):
+        assert kwargs["speech_to_text"] is speech_to_text
+        assert kwargs["text_to_speech"] is text_to_speech
+        return pipeline
+
+    monkeypatch.setattr(
+        web_module,
+        "build_voice_concierge_pipeline",
+        fake_build_pipeline,
+    )
+
+    built_pipeline, features = web_module.build_web_application(
+        load_memory=False,
+        load_voice_io=True,
+        voice_io_config=selected,
+        load_reminders=False,
+        load_guided_routines=False,
+    )
+
+    try:
+        assert built_pipeline is pipeline
+        assert calls == [("stt", selected), ("tts", selected)]
     finally:
         features.close()
         pipeline.close()

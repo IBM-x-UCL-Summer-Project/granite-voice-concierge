@@ -49,6 +49,28 @@ class TestPiperTextToSpeechSynthesize:
         assert Path(DEFAULT_CONFIG_PATH).parent == module_dir
 
     @pytest.mark.unit
+    def test_voice_paths_are_resolved_without_path_traversal(
+        self, tmp_path: Path
+    ) -> None:
+        """Voice selection produces a matching model/config pair."""
+        model_path, config_path = piper_module.resolve_piper_voice_paths(
+            "en_US-lessac-medium", tmp_path
+        )
+
+        assert Path(model_path) == tmp_path / "en_US-lessac-medium.onnx"
+        assert Path(config_path) == tmp_path / "en_US-lessac-medium.onnx.json"
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "voice",
+        ("", "../voice", "voice.onnx", "en_GB-alan"),
+    )
+    def test_voice_paths_reject_invalid_identifiers(self, voice: str) -> None:
+        """Only catalogue-style identifiers can influence model filenames."""
+        with pytest.raises(ValueError, match="Piper voice"):
+            piper_module.resolve_piper_voice_paths(voice)
+
+    @pytest.mark.unit
     @patch("voice_concierge.voice_output.piper.subprocess.run")
     def test_returns_captured_audio_from_piper_output(self, mock_run: patch) -> None:
         """synthesize() reads Piper's WAV output into a CapturedAudio."""
