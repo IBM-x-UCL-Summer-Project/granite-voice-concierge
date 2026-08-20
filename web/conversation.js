@@ -1,5 +1,31 @@
 // Conversation message and confirmation rendering.
 
+// Turn errors the assistant already explains out loud. When it has just said
+// "I didn't catch that", repeating "empty_transcript" in a red card tells the
+// user nothing and makes a handled situation look like a crash.
+const SELF_EXPLAINED_ERRORS = new Set(["empty_transcript"]);
+
+// Plain-English replacements for the rest. These are conditions a user can act
+// on, so they say what happened and what still works.
+const ERROR_NOTICES = {
+  stt_failed: "I couldn't make out any speech. Try again, or type instead.",
+  tts_failed: "Speech isn't available, so this reply is text only.",
+  playback_failed: "The reply couldn't be played aloud, but the text is above.",
+  reasoning_failed: "I had trouble working out a reply. Please try again.",
+  memory_retrieval_failed: "I couldn't check what I've remembered for this reply.",
+  memory_action_failed: "I couldn't save that to memory.",
+  runtime_context_failed: "I couldn't check the time or device details.",
+};
+
+function describeTurnErrors(errors) {
+  const notices = [];
+  for (const code of errors || []) {
+    if (SELF_EXPLAINED_ERRORS.has(code)) continue;
+    notices.push(ERROR_NOTICES[code] || `Something went wrong (${code}).`);
+  }
+  return notices;
+}
+
 function renderState() {
   elements.modeSelect.value = state.pipeline.context.mode;
   document.querySelectorAll("[data-capability]").forEach((element) => {
@@ -46,10 +72,11 @@ function appendMessage(role, text, options = {}) {
   if (options.confirmation) {
     appendConfirmation(options.confirmation);
   }
-  if (options.errors?.length) {
+  const notices = describeTurnErrors(options.errors);
+  if (notices.length) {
     const error = document.createElement("div");
     error.className = "error-card";
-    error.textContent = `Recoverable pipeline error: ${options.errors.join(", ")}. The spoken response remains available.`;
+    error.textContent = notices.join(" ");
     elements.conversation.appendChild(error);
   }
   article.scrollIntoView({ behavior: "smooth", block: "nearest" });

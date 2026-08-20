@@ -157,7 +157,8 @@ function renderConversationHistory(response = null) {
       audio: response.audio,
     });
   } else if (response?.errors.length && !responseWasRecorded) {
-    appendPipelineError(`Recoverable pipeline error: ${response.errors.join(", ")}.`);
+    const notices = describeTurnErrors(response.errors);
+    if (notices.length) appendPipelineError(notices.join(" "));
   }
   if (!response) {
     if (state.pipeline.context.pending_mode) appendConfirmation("mode");
