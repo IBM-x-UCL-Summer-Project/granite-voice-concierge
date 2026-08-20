@@ -232,6 +232,9 @@ git pull --ff-only
 ./scripts/quickstart.sh
 ```
 
+For Docker configuration, routine operations, diagnostics, and development
+workflows, see the [development guide](docs/development-guide.md).
+
 ## Configuration and local data
 
 Configuration is read from the ignored `.env` file.

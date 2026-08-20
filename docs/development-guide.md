@@ -1,304 +1,165 @@
 # Development and Operations Guide
 
-This guide contains the detailed setup, runtime, testing, and maintenance
-instructions for Granite Voice Concierge. For the project overview and primary
-quick start, see the [root README](../README.md).
+This guide covers the Docker and host-development commands that are intentionally
+kept out of the main [README](../README.md). Docker is the recommended way to run
+the browser application. Ollama remains on the host so it can use native hardware
+acceleration.
 
-## Contents
+The supported Docker Desktop hosts are Apple Silicon macOS and x86-64 Windows
+with WSL 2 and Linux containers. The web service is bound to
+`127.0.0.1:4173`; it is not designed for unauthenticated network exposure.
 
-- [Reference deployment](#reference-deployment)
-- [Docker setup](#docker-setup)
-- [Configuration](#configuration)
-- [Persistent data](#persistent-data)
-- [Make command reference](#make-command-reference)
-- [Docker development and tests](#docker-development-and-tests)
-- [Host development setup](#host-development-setup)
-- [Runtime entry points](#runtime-entry-points)
-- [Feature-specific tools](#feature-specific-tools)
-- [Quality checks](#quality-checks)
+## Docker workflow
 
-## Reference deployment
+### First start
 
-Docker is the recommended way to run the browser UI and application services.
-The application image contains Python 3.12, native audio libraries, the
-machine-learning stack, and the Piper voice model. Ollama runs on the host so
-it can use the host's available hardware acceleration.
+Install and start Docker Desktop and Ollama, then run from the repository root.
 
-The supported Docker Desktop environments are Apple Silicon macOS and x86-64
-Windows with the WSL 2 Linux-container backend. The container itself is Linux
-and currently uses `python:3.12-slim` as its base image. Ollama remains native
-on the host so it can use platform GPU acceleration. Windows on Arm and other
-Docker hosts require validation before they are treated as supported targets.
-
-The Compose service binds the web application to `127.0.0.1:4173`. This is a
-local-only development deployment. Do not expose it to a network without an
-appropriate authentication, TLS, and reverse-proxy design.
-
-## Docker setup
-
-### Prerequisites
-
-Install and start:
-
-- [Docker with the Compose plugin](https://docs.docker.com/get-started/get-docker/)
-- [Ollama](https://ollama.com/download)
-
-### Quick start
-
-On macOS, copy the environment template and run the Bash setup script from the
-repository root:
+macOS:
 
 ```bash
 cp .env.example .env
 ./scripts/quickstart.sh
 ```
 
-On Windows, use the native PowerShell setup script:
+Windows:
 
 ```powershell
-Copy-Item .env.example .env
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\quickstart.ps1
 ```
 
-The script:
+The launchers download missing Ollama models, build the image, verify that the
+container can reach Ollama, start the service, and wait for the application
+health endpoint. Larger speech models can make the first start take several
+minutes. Open `http://127.0.0.1:4173` only after the launcher reports readiness.
 
-1. checks Docker, Compose, and native Ollama;
-2. downloads the configured reasoning and embedding models;
-3. builds the application image;
-4. verifies that the container can reach Ollama; and
-5. starts the application service and waits for its health check to report
-   readiness.
+Windows networking and troubleshooting are covered separately in the
+[Windows Docker guide](windows-docker.md).
 
-The Windows launcher additionally opens the local UI. See the
-[Windows Docker guide](windows-docker.md) for WSL 2 and Docker Desktop
-prerequisites, the required host Ollama binding, Windows Firewall guidance,
-browser audio, and troubleshooting.
+### Routine commands
 
-A cold image build can take several minutes because it installs the
-machine-learning and audio stack and downloads the Piper voice model. Cached
-rebuilds should be substantially faster.
+| Task | macOS/Linux | Direct Compose equivalent |
+| --- | --- | --- |
+| Start existing deployment | `make up` | `docker compose up -d` |
+| Stop and retain data | `make down` | `docker compose down` |
+| Build the runtime image | `make build` | `docker compose build` |
+| Follow logs | `make logs` | `docker compose logs -f voice-concierge` |
+| Show service status | `make ps` | `docker compose ps` |
+| Open a container shell | `make shell` | `docker compose exec voice-concierge bash` |
+| List Ollama models | `make list-models` | `ollama list` |
 
-When startup completes, open `http://127.0.0.1:4173`.
-
-### Manual start
-
-The following commands use a Unix shell and apply to macOS and Linux. Windows
-users should use the PowerShell launcher and direct `docker compose` commands
-documented in the [Windows Docker guide](windows-docker.md).
-
-If Ollama is not already accepting container connections, start it in the
-first terminal:
+After pulling repository changes, rerun the platform quick-start script. For a
+normal source or Piper-voice change, this is equivalent to:
 
 ```bash
-OLLAMA_HOST=0.0.0.0:11434 ollama serve
+docker compose up -d --build
 ```
 
-Leave it running, then use a second terminal for the models and application:
+Changing only the faster-whisper selection does not require an image rebuild,
+but the service must be recreated:
 
 ```bash
-ollama pull granite4.1:8b
-ollama pull granite-embedding:278m
-make build
-make up
-make logs
+docker compose up -d --force-recreate voice-concierge
 ```
 
-If the Ollama desktop application is already listening and Docker can reach
-it, a second Ollama server is unnecessary. Binding Ollama to
-`0.0.0.0:11434` permits Docker to connect, but also broadens the listening
-interface. Do not publish that port through a router or expose it to an
-untrusted network.
-
-Use `Ctrl-C` to stop following the logs; the application container continues
-running in the background.
-
-Check the service and application health with:
+### Health and startup diagnostics
 
 ```bash
-make ps
-curl http://127.0.0.1:4173/api/health
+docker compose ps
+curl --fail http://127.0.0.1:4173/api/health
+docker compose logs --tail 100 voice-concierge
+ollama ps
 ```
 
-Stop the application while retaining persistent data with:
+The Bash launcher waits for readiness for 600 seconds by default. Override this
+only when a particularly large model needs longer:
 
 ```bash
-make down
+GVC_HEALTH_TIMEOUT_SECONDS=1200 ./scripts/quickstart.sh
 ```
+
+If the health endpoint says `ready` but the browser still shows its startup
+screen, reload the page and inspect the browser console. A healthy backend and a
+stuck overlay normally indicate a client-side script error rather than model
+initialisation.
 
 ## Configuration
 
-The checked-in `.env.example` documents the supported environment variables.
-Copy it to the ignored `.env` file before changing local values.
+Copy `.env.example` to the ignored `.env` file and edit local selections there.
+The launchers and Compose read the same values.
 
-The quick-start script imports this file for its native Ollama commands, while
-preserving values explicitly exported in the shell. Compose reads the same file
-when it resolves the container configuration.
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `OLLAMA_API_URL` | `http://host.docker.internal:11434` | Ollama address seen by the container |
+| `OLLAMA_MODEL` | `granite4.1:8b` | Reasoning model |
+| `OLLAMA_EMBEDDING_MODEL` | `granite-embedding:278m` | Memory embedding model |
+| `GVC_STT_MODEL` | `base.en` | faster-whisper model name, model ID, or local path |
+| `GVC_STT_DEVICE` | `cpu` | CTranslate2 inference device |
+| `GVC_STT_COMPUTE_TYPE` | `int8` | CTranslate2 compute type |
+| `GVC_TTS_VOICE` | `en_GB-alan-medium` | Piper voice embedded during the Docker build |
+| `GVC_LOG_LEVEL` | `INFO` | Application log detail |
 
-### Reasoning model
-
-The default reasoning model is `granite4.1:8b` and the default embedding model
-used by the quick-start workflow is `granite-embedding:278m`.
-
-```env
-OLLAMA_API_URL=http://host.docker.internal:11434
-OLLAMA_MODEL=granite4.1:8b
-```
-
-After changing the reasoning model, download it with native Ollama and recreate
-the application container:
-
-```bash
-ollama pull granite4.1:8b
-docker compose up -d --build --force-recreate voice-concierge
-```
-
-Confirm the effective configuration and available models with:
+Inspect the resolved Compose configuration before troubleshooting unexpected
+values:
 
 ```bash
 docker compose config
-ollama list
-docker compose exec voice-concierge printenv REASONING_MODEL
-docker compose exec voice-concierge printenv OLLAMA_API_URL
 ```
 
-### Speech models and Piper voices
+### Speech models and voices
 
-Docker reads the local speech selections from `.env`:
+`GVC_STT_MODEL` is passed directly to faster-whisper. Examples include
+`small.en`, `medium.en`, `large-v3`, `turbo`, and `distil-large-v3`. Downloaded
+models persist in the `voice-model-cache` Docker volume. CPU with `int8` is the
+portable Docker default; unsupported device and compute combinations fail
+explicitly instead of silently changing models.
 
-```env
-GVC_STT_MODEL=base.en
-GVC_STT_DEVICE=cpu
-GVC_STT_COMPUTE_TYPE=int8
-GVC_TTS_VOICE=en_GB-alan-medium
-```
-
-`GVC_STT_MODEL` accepts any model identifier supported by faster-whisper,
-including larger choices such as `small.en`, `medium.en`, `large-v3`, `turbo`,
-and `distil-large-v3`. It can also be a compatible Hugging Face identifier or a
-converted model directory. The model is downloaded on first load and retained
-in the `voice-model-cache` Docker volume. Device and compute type are passed
-directly to CTranslate2; unsupported combinations fail with the existing typed
-STT startup error rather than changing the requested model.
-
-The Docker build downloads the selected Piper voice into the application image.
-Changing `GVC_TTS_VOICE` therefore requires another `docker compose build`.
-List the upstream voice catalogue and download voices for a host-native run with:
+Changing `GVC_TTS_VOICE` requires an image rebuild because the selected Piper
+voice is stored in the image. For host-native development, list and download
+voices with:
 
 ```bash
 python -m voice_concierge.voice_output.download_models --list
 python -m voice_concierge.voice_output.download_models en_US-lessac-medium
 ```
 
-Every Piper voice can have its own licence. Check the voice's upstream
-`MODEL_CARD` before distributing it with the application.
+Review a voice's upstream `MODEL_CARD` licence before distributing it.
 
 ### Logging
 
-The container defaults to `GVC_LOG_LEVEL=INFO` and does not create an
-application log file. Use `make logs` to follow its standard output. Setting
-`GVC_LOG_LEVEL=DEBUG` enables detailed diagnostics, including prompts and
-responses; Docker's logging driver may retain that output. Treat DEBUG as an
-explicit, temporary troubleshooting mode rather than a normal runtime default.
-
-### Container user on Linux
-
-The application process runs as an unprivileged `app` user. Docker Desktop maps
-bind-mount ownership automatically. On native Linux, set `APP_UID` and `APP_GID`
-in `.env` to the owner of `./data/.local` before building if the defaults do not
-match:
-
-```bash
-id -u
-id -g
-```
-
-### Port configuration
-
-The default host port is `4173`. To expose the UI on a different local port,
-change only the host side of the mapping in `docker-compose.yml`:
-
-```yaml
-ports:
-  - '127.0.0.1:5000:4173'
-```
-
-Then recreate the service and open `http://127.0.0.1:5000`:
-
-```bash
-docker compose up -d --force-recreate voice-concierge
-```
-
-Changing the binding from `127.0.0.1` to `0.0.0.0` is not merely a port
-change: it exposes the service to the network. Do that only as part of a
-deliberate deployment design with appropriate security controls.
+Use `make logs` for normal diagnostics. Set `GVC_LOG_LEVEL=DEBUG` temporarily
+when detailed request, routing, and timing information is required. Debug output
+can contain conversation text and may be retained by Docker's logging driver.
 
 ## Persistent data
 
-Application preferences, memories, and reminders persist in `./data/.local`,
-which is bind-mounted at `/app/.local`. Optional file diagnostics also live
-below that directory only when `--log-file` is explicitly configured.
-Downloaded Whisper and other application model caches persist in the
-`voice-model-cache` Docker volume. Native Ollama owns its models outside Docker.
+| Data | Location |
+| --- | --- |
+| Preferences, memories, reminders, optional logs | `./data/.local` |
+| Whisper and Hugging Face caches | Docker volume `voice-model-cache` |
+| Ollama models | Native Ollama storage |
+| Piper voice | Runtime Docker image |
 
-A normal shutdown or rebuild retains application data:
-
-```bash
-make down
-make build
-make up
-```
+`make down`, image rebuilds, and ordinary container recreation retain this data.
 
 > **Data-loss warning:** `make clean` deletes everything below
-> `./data/.local`, including memories, reminders, preferences, and logs.
-> `make rebuild` invokes `make clean` and deletes the same data. Use these
-> targets only when a factory reset is intentional.
+> `./data/.local`. `make rebuild` invokes `make clean`. Use either only for an
+> intentional factory reset.
 
-`docker compose down -v` removes named Docker volumes, including the
-application model cache. It does not delete the bind-mounted
-`./data/.local` directory, but should still be used only when volume removal
-is intentional.
+`docker compose down -v` removes the named speech-model cache volume but does
+not delete `./data/.local`.
 
-## Make command reference
+## Development workflows
 
-Run `make help` to display the primary targets.
+### Docker development
 
-The Make targets are convenience commands for macOS and Linux development.
-Windows PowerShell users should use the equivalent `docker compose` commands in
-the [Windows Docker guide](windows-docker.md); GNU Make is not a Windows runtime
-prerequisite.
-
-| Command                 | Purpose                                                              |
-| ----------------------- | -------------------------------------------------------------------- |
-| `make build`            | Build the runtime image.                                             |
-| `make up`               | Start the application container in the background.                   |
-| `make down`             | Stop and remove containers while retaining persistent data.          |
-| `make logs`             | Follow the application container logs.                               |
-| `make shell`            | Open Bash inside the running application container.                  |
-| `make ps`               | Show the current Compose service status.                             |
-| `make test`             | Build the isolated test target and run the full suite.               |
-| `make dev-up`           | Start the test target with repository files mounted.                 |
-| `make pull-model`       | Prompt for and download a model through native Ollama.               |
-| `make list-models`      | List models available to native Ollama.                              |
-| `make live`             | Run live voice mode on macOS using `.venv` and the host microphone.  |
-| `make live-no-wakeword` | Run host live mode without wake-word detection.                      |
-| `make live-no-memory`   | Run host live mode without persistent memory or playback.            |
-| `make clean`            | Delete application state below `data/.local` after stopping Compose. |
-| `make rebuild`          | Delete application state, rebuild the image, and start Compose.      |
-
-## Docker development and tests
-
-Build the dedicated test target and run the full suite in a fresh container:
+Run the isolated Docker test target with:
 
 ```bash
 make test
 ```
 
-The test target contains development tools, tests, benchmark modules, and
-checked-in documentation fixtures. These are not added to the normal runtime
-image.
-
-Start the web service with source, tests, benchmarks, documentation, and web
-assets mounted from the host with:
+For development with repository files mounted into the test image:
 
 ```bash
 make dev-up
@@ -311,38 +172,19 @@ edits:
 docker compose restart voice-concierge
 ```
 
-### Container entrypoint
+### Host development
 
-`entrypoint.sh` is an internal container startup wrapper. Docker runs it
-automatically to:
-
-1. create local-state directories;
-2. update the configured Ollama host and model selection;
-3. wait briefly for Ollama; and
-4. execute the Compose command.
-
-Running `./entrypoint.sh` directly without a command does not start the
-application. It also creates `.local` relative to the current host directory
-rather than using Docker's `data/.local` mount.
-
-## Host development setup
-
-Host development requires Python 3.12 or later and the PortAudio development
-library used by `pyaudio`.
-
-On macOS:
+Host development requires Python 3.12 or later and PortAudio.
 
 ```bash
+# macOS
 brew install portaudio
-```
 
-On Debian or Ubuntu:
-
-```bash
+# Debian or Ubuntu
 sudo apt-get install portaudio19-dev
 ```
 
-Create the development environment:
+Create the environment:
 
 ```bash
 python -m venv .venv
@@ -350,152 +192,29 @@ source .venv/bin/activate
 python -m pip install -r requirements-dev.txt
 ```
 
-Dependencies are declared in `pyproject.toml`. `requirements.txt` and
-`requirements-dev.txt` are thin editable-install shims for the runtime and
-development dependency groups.
-
-The complete model and audio setup is documented in the
-[local end-to-end setup guide](app-pipeline-local-e2e-setup.md).
-
-Run repository benchmark tools as modules from the repository root:
+Run the browser application or direct microphone loop:
 
 ```bash
-python -m benchmarks.reasoning.benchmark run --engine fake
-```
-
-## Runtime entry points
-
-### Browser application
-
-Run the pipeline-connected web application on the host with:
-
-```bash
-source .venv/bin/activate
 python -m voice_concierge.app.web --voice-io
-```
-
-Useful variants:
-
-```bash
-python -m voice_concierge.app.web --demo
-python -m voice_concierge.app.web --voice-io --no-memory
-python -m voice_concierge.app.web --voice-io --no-wake-word
-python -m voice_concierge.app.web --voice-io --policy-profile strict
-python -m voice_concierge.app.web --voice-io \
-  --stt-model turbo --stt-device cpu --stt-compute-type int8 \
-  --tts-voice en_US-lessac-medium
-```
-
-The interactive web and live runners default to the `uat_relaxed` reasoning
-profile for controlled testing. It retains memory, deletion, privacy,
-confirmation, exact-target, and current-information controls while avoiding
-unhelpful failures caused only by imperfect provenance metadata. Use
-`--policy-profile strict` for fail-closed provenance enforcement.
-
-For detailed local diagnostics:
-
-```bash
-python -m voice_concierge.app.web --voice-io \
-  --log-level DEBUG \
-  --log-file .local/logs/web.log
-```
-
-DEBUG logs include prompts, responses, feature routing, local-data operations,
-playback state, voice state, and pipeline timings. Encoded audio bodies are
-represented by their size rather than copied into logs.
-
-The command above deliberately persists conversation text in the specified
-file. Do not use it as the default service configuration, and remove the file
-when the diagnostic record is no longer required.
-
-See the [web UI guide](../web/README.md) for the browser architecture, API
-contract, wake mode, playback behavior, and diagnostic details.
-
-### Live voice application
-
-Run the host microphone loop after completing the local end-to-end setup:
-
-```bash
 python -m voice_concierge.app.live
 ```
 
-Useful variants:
+Both entry points accept the speech selections documented above:
 
 ```bash
-python -m voice_concierge.app.live --no-wake-word
-python -m voice_concierge.app.live --device-index <index>
-python -m voice_concierge.app.live --no-memory --no-playback
-python -m voice_concierge.app.live --no-guided-routines
-python -m voice_concierge.app.live --policy-profile strict
-python -m voice_concierge.app.live \
-  --stt-model small.en --tts-voice en_US-lessac-medium
+python -m voice_concierge.app.web --voice-io \
+  --stt-model small.en \
+  --stt-device cpu \
+  --stt-compute-type int8 \
+  --tts-voice en_US-lessac-medium
 ```
 
-### Voice output fallback
+For microphone permissions, native audio dependencies, model prefetching, and
+live-mode checks, use the [local end-to-end setup guide](app-pipeline-local-e2e-setup.md).
 
-Spoken responses use Piper first. When the server runs directly on macOS and
-Piper fails, it retries with the native `say` command. If server-side synthesis
-still fails, the browser can use a locally installed speech-synthesis voice.
+### Quality checks
 
-Docker containers cannot call the host's `say` command, so containerized runs
-fall back directly from Piper to local browser speech. If no local browser
-voice is available, the response remains readable as text.
-
-## Feature-specific tools
-
-### Guided routines
-
-Explicitly asking to be guided through a task starts a step-by-step routine.
-The assistant reads each step, keeps listening while it speaks, and advances
-after a quiet interval.
-
-| Spoken command              | Effect                                        |
-| --------------------------- | --------------------------------------------- |
-| `next`, `back`, or `repeat` | Move through the routine.                     |
-| `pause` or `continue`       | Hold or resume the routine.                   |
-| `stop`                      | End the routine.                              |
-| `slower` or `faster`        | Change the speaking pace and repeat the step. |
-
-Barge-in during host playback uses the optional macOS voice-processing unit
-for acoustic echo cancellation. Install the `macos-aec` extra when developing
-that path. Without it, the application falls back to normal response handling.
-
-### Reminders and timers
-
-Manage reminders through the application or command line:
-
-```bash
-python -m voice_concierge.scheduling
-python -m voice_concierge.scheduling add "remind me to stretch in 10 minutes"
-python -m voice_concierge.scheduling cancel 3
-python -m voice_concierge.scheduling watch
-```
-
-Reminders are stored under `.local/reminders/` and work offline. A reminder
-missed while the application was stopped is announced after the next start.
-See the [scheduling package guide](../src/voice_concierge/scheduling/README.md).
-
-### Memory and privacy tools
-
-Review, correct, export, and remove stored memories:
-
-```bash
-python -m voice_concierge.privacy
-python -m voice_concierge.privacy list -v
-python -m voice_concierge.privacy export
-python -m voice_concierge.privacy edit 3 "likes tea, not coffee"
-python -m voice_concierge.privacy delete 3
-python -m voice_concierge.privacy forget-all
-```
-
-Memories and their search index are stored under `.local/memory/`. Recorded
-audio and conversation history are not persisted by the normal application
-flow. Explicit DEBUG diagnostics can contain conversation text as described
-above. See the [privacy package guide](../src/voice_concierge/privacy/README.md).
-
-## Quality checks
-
-Run the standard host checks before handing over a substantive change:
+Run the standard host checks before handing over substantive changes:
 
 ```bash
 python -m black .
@@ -503,14 +222,19 @@ python -m ruff check .
 python -m pytest
 ```
 
-The Docker equivalent builds the isolated test image and runs the full suite:
+Browser startup and audio tests live under `tests/browser`:
 
 ```bash
-make test
+cd tests/browser
+npm test
 ```
 
-Repository conventions and pull-request expectations are documented in:
+## Further reference
 
+- [Web UI architecture and API](../web/README.md)
+- [Browser audio testing](browser-audio-testing.md)
+- [Windows Docker guide](windows-docker.md)
+- [Local reasoning](reasoning/local-reasoning.md)
 - [Development workflow](development-workflow.md)
 - [Python style guide](python-style-guide.md)
 - [Repository structure](repository-structure.md)
