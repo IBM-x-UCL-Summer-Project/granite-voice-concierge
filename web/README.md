@@ -46,20 +46,32 @@ microphone once to start recording and again to transcribe and send it. The
 resampled in the browser and sent only to the same-origin local server, where
 the existing openWakeWord model listens for **Hey Jarvis**. After detection,
 the browser records until a local silence threshold is reached, sends the
-utterance through Whisper and the normal application pipeline, plays the Piper
+utterance through Whisper and the normal application pipeline, plays the spoken
 response, then opens a short follow-up listening window before resuming
 wake-word listening. The dedicated wake screen also provides push-to-talk and
 cancel controls. Wake sensitivity, allowed mid-request pauses, the follow-up
 window, and maximum request length can be changed in that screen or Personalise.
+The pinned header remains interactive while wake mode is open, so Local data,
+Personalise, theme, and wake-mode controls stay available without ending the
+hands-free session. The conversation workspace remains covered by the wake view.
 Only one browser tab owns the stateful detector at a time. Use `--no-wake-word`
 to keep push-to-talk voice I/O while disabling continuous wake-word mode.
 
-The **Voice first** setting automatically plays every Piper response; **Push to
-talk** automatically plays only responses to microphone turns; **Text first**
-keeps playback manual; **Wake word** opens the dedicated hands-free view after
-setup. The browser unlocks one reusable response-audio element during the
-initiating click or key action so delayed local Piper responses can still play
-under browser autoplay rules.
+Spoken responses use Piper first. When the server runs directly on macOS and
+Piper fails, it retries with the native `say` command. If neither server-side
+voice produces audio, the UI can use the browser's speech-synthesis voice as a
+last fallback. A Docker container cannot call the host's `say` command, so its
+chain is Piper then browser speech. To preserve local data control, the browser
+fallback only selects a voice the Web Speech API marks as a local service.
+Installed voices vary by device and browser; the response always remains
+readable as text when no local voice is available.
+
+The **Voice first** setting automatically plays every spoken response; **Push
+to talk** automatically plays only responses to microphone turns; **Text
+first** keeps playback manual; **Wake word** opens the dedicated hands-free
+view after setup. The browser unlocks one reusable response-audio element
+during the initiating click or key action so delayed local responses can still
+play under browser autoplay rules.
 
 Persistent local memory is enabled by default. To run without it:
 
@@ -108,6 +120,8 @@ python -m voice_concierge.app.web --voice-io \
 DEBUG mode includes prompts, responses, selected feature/reasoning routes,
 memory and reminder operations, startup/STT/request timings, wake and barge-in
 detections, browser connection state, voice capture, and response playback.
+The example therefore persists conversation text and should be used only for
+deliberate local troubleshooting, not as the normal service configuration.
 Each browser API request sends a client request ID which the backend returns as
 `X-Request-ID`, making the browser event and server-side pipeline entries easy
 to correlate. Raw WAV/PCM base64 bodies are represented by their character
@@ -178,6 +192,7 @@ Additional same-origin endpoints support the connected local features:
 - memory edit/delete/forget-all under `POST /api/privacy/memories/...`;
 - reminder create/edit/snooze/cancel/cancel-all under
   `POST /api/reminders/...`;
+- fixed-text local speech-chain testing under `POST /api/speech/preview`;
 - wake-word start/frame/stop under `POST /api/wake-word/...`;
 - guided-routine command start/frame/reset/stop under
   `POST /api/routine-command/...`;
@@ -233,7 +248,8 @@ submitting empty follow-up turns.
 On the first visit, the UI opens a four-step setup for:
 
 - microphone and speaker selection;
-- speech rate and volume, with local voice preview;
+- speech rate and volume, with a Piper-first local voice-chain test and explicit
+  offline browser fallback;
 - wake-word sensitivity, pause/follow-up/request timing, and wake-word,
   voice-first, push-to-talk, or text-first control;
 - response length and spoken confirmation preferences.

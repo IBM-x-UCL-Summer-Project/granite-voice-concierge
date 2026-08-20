@@ -1,7 +1,7 @@
-import os
 import sys
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -214,14 +214,12 @@ class ContextManagerTest(unittest.TestCase):
         """Regression test for Issue #38: Speaking pace persistence."""
         decision = self.manager.handle("Answer more slowly", ContextState())
 
-        save_context_state(decision.state)
+        with TemporaryDirectory() as directory:
+            state_path = Path(directory) / "context-state.json"
+            save_context_state(decision.state, state_path)
 
-        loaded_state = load_context_state()
-        self.assertEqual(loaded_state.accessibility.speech_pace, "slow")
-
-        test_file_path = ".voice_concierge_state.json"
-        if os.path.exists(test_file_path):
-            os.remove(test_file_path)
+            loaded_state = load_context_state(state_path)
+            self.assertEqual(loaded_state.accessibility.speech_pace, "slow")
 
     def test_confirmation_substring_collision_regression(self) -> None:
         """Regression test for Issue #35: Substring-based confirmation."""

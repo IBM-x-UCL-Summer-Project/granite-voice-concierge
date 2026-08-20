@@ -19,6 +19,30 @@ POLICY_PATH = REPOSITORY_ROOT / "web" / "playback-policy.js"
         ({}, True),
         ({"voiceOutput": False}, False),
         ({"audioAvailable": False}, False),
+        (
+            {
+                "voiceOutput": True,
+                "audioAvailable": False,
+                "browserFallbackAvailable": True,
+            },
+            True,
+        ),
+        (
+            {
+                "voiceOutput": False,
+                "audioAvailable": False,
+                "browserFallbackAvailable": True,
+            },
+            True,
+        ),
+        (
+            {
+                "audioAvailable": False,
+                "browserFallbackAvailable": True,
+                "interactionMode": "text_first",
+            },
+            False,
+        ),
         ({"confirmationRequired": True, "speakConfirmations": False}, False),
         ({"interactionMode": "text_first"}, False),
         ({"interactionMode": "push_to_talk", "isAudioTurn": False}, False),
@@ -34,6 +58,7 @@ def test_automatic_playback_policy(changes: dict[str, object], expected: bool) -
     values = {
         "voiceOutput": True,
         "audioAvailable": True,
+        "browserFallbackAvailable": False,
         "confirmationRequired": False,
         "speakConfirmations": True,
         "interactionMode": "voice_first",

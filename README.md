@@ -1,163 +1,224 @@
-# granite-voice-concierge
+# Granite Voice Concierge
 
-Offline, voice-first IBM Granite assistant prototype for independent living.
+Granite Voice Concierge is an offline-first, voice-first assistant prototype
+designed to support independent living. It combines local IBM Granite
+reasoning with speech recognition, speech synthesis, reminders, guided
+routines, and user-controlled memory in a browser-based interface.
 
-## Development Setup
+Normal application processing remains on the local device. Ollama provides
+local model inference, and the application stores approved memories and
+reminders in local persistent storage.
 
-The audio stack needs the PortAudio system library (for `pyaudio`): on macOS
-`brew install portaudio`, on Debian/Ubuntu `sudo apt-get install portaudio19-dev`.
+## Project status
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements-dev.txt
+This repository is an active prototype, not a certified medical device,
+emergency-response system, or production care service. It should not be relied
+on as the sole means of obtaining urgent help, medical guidance, or safety
+monitoring.
+
+The reference deployment is currently Apple Silicon macOS with Docker Desktop
+and native Ollama. The application runs in a Linux container, while Ollama runs
+on the host to retain Apple Metal acceleration. Other host platforms require
+validation before they should be considered supported.
+
+## Core capabilities
+
+| Area                 | Capability                                                                                       |
+| -------------------- | ------------------------------------------------------------------------------------------------ |
+| Local reasoning      | Runs IBM Granite models locally through Ollama.                                                  |
+| Voice interaction    | Supports push-to-talk, wake-word mode, silence detection, and local transcription.               |
+| Speech output        | Uses Piper with platform-appropriate local fallbacks and browser playback controls.              |
+| Personal memory      | Stores approved preferences and facts locally with review, edit, export, and deletion controls.  |
+| Reminders and timers | Creates, edits, snoozes, repeats, and cancels locally persisted reminders.                       |
+| Guided routines      | Provides paced, step-by-step guidance with pause, repeat, navigation, and speed controls.        |
+| Context modes        | Adapts response behavior for home, cooking, shopping, driving, and accessibility needs.          |
+| Browser interface    | Provides conversation, voice capture, local-data management, settings, and diagnostic workflows. |
+
+## Design principles
+
+- **Local by default:** normal reasoning, speech processing, memory, and
+  scheduling do not require a cloud service after models are installed.
+- **User-controlled memory:** memory mutations require explicit application
+  flows, and stored items remain reviewable and removable.
+- **Graceful degradation:** text remains available when microphone,
+  transcription, or speech output components are unavailable.
+- **Safety-aware interaction:** destructive actions require confirmation, and
+  urgent safety language follows deterministic local handling.
+- **Replaceable boundaries:** application-owned interfaces isolate model,
+  storage, speech, and external-service implementations.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    Browser[Browser UI and microphone]
+
+    subgraph Container[Linux application container]
+        Web[Web UI and local HTTP API]
+        Pipeline[Application pipeline]
+        Voice[Wake word, VAD, Whisper, and Piper]
+        Services[Memory, reminders, routines, and privacy tools]
+    end
+
+    Ollama[Native Ollama and IBM Granite]
+    Data[(Bind-mounted local data)]
+    Cache[(Docker model cache)]
+
+    Browser <--> Web
+    Web <--> Pipeline
+    Pipeline <--> Voice
+    Pipeline <--> Services
+    Pipeline <--> Ollama
+    Services <--> Data
+    Voice <--> Cache
 ```
 
-Dependencies are declared in `pyproject.toml` — `[project.dependencies]` for the
-runtime stack and `[project.optional-dependencies].dev` for tooling.
-`requirements.txt` (`-e .`) and `requirements-dev.txt` (`-e .[dev]`) are thin shims
-onto those, so the command above installs the `voice_concierge` package in editable
-mode with the dev tools. Run repository benchmark tools as modules from the
-repository root:
+The browser and API are bound to the local machine by default. Ollama is not
+packaged inside the application container; Compose connects to the Ollama
+service running on the host.
+
+## Quick start
+
+### Prerequisites
+
+- [Docker with Docker Compose](https://docs.docker.com/get-started/get-docker/)
+- [Ollama](https://ollama.com/download)
+- Sufficient local resources for the selected Granite and speech models
+
+The current quick-start script is designed for macOS with Docker Desktop and
+native Ollama.
+
+### Start the application
+
+From the repository root:
 
 ```bash
-python -m benchmarks.reasoning.benchmark run --engine fake
+cp .env.example .env
+./scripts/quickstart.sh
 ```
 
-Run the local live voice loop after completing the local E2E setup:
+The script checks the host services, downloads the configured Ollama models,
+builds the application image, verifies container-to-host connectivity, and
+starts the service.
+
+Open `http://127.0.0.1:4173` after startup completes.
+
+Verify the deployment with:
 
 ```bash
-python -m voice_concierge.app.live
+make ps
+curl http://127.0.0.1:4173/api/health
 ```
 
-Useful manual variants:
+Follow application logs with:
 
 ```bash
-python -m voice_concierge.app.live --no-wake-word
-python -m voice_concierge.app.live --device-index <index>
-python -m voice_concierge.app.live --no-memory --no-playback
-python -m voice_concierge.app.live --no-guided-routines
-python -m voice_concierge.app.live --policy-profile strict
+make logs
 ```
 
-### Guided routines
-
-Explicitly asking to be walked through something (for example, "guide me through
-making pasta") starts a guided routine instead of a one-shot answer. Ordinary
-requests for a recipe or a list of steps remain normal answers. The assistant
-reads a step, keeps listening while it speaks, and moves on by itself if you
-stay quiet, so it works with your hands busy. Unrelated and urgent requests can
-interrupt the routine without losing its place.
-
-While a step is being read, or in the quiet window after it:
-
-| Say | Effect |
-| --- | --- |
-| `next` / `back` / `repeat` | move through the routine |
-| `pause` / `continue` | hold and resume; a paused routine will not auto-advance |
-| `stop` | end the routine |
-| `slower` / `faster` | change the speaking pace and re-read the step |
-
-Barge-in during playback uses the macOS voice-processing unit for echo
-cancellation, so the assistant does not hear its own speech as a command. It
-needs the `macos-aec` extra; without it the app falls back to answering
-normally. Use `--no-guided-routines` to switch the behaviour off.
-
-### Browser UI
-
-Run the pipeline-connected browser UI:
+Stop the application without deleting persistent data:
 
 ```bash
-source .venv/bin/activate
-python -m voice_concierge.app.web
+make down
 ```
 
-Add `--voice-io` for browser recording/STT, response TTS, and hands-free
-**Hey Jarvis** wake-word mode. Persistent local memory is enabled by default;
-use `--no-memory` for a memory-free run. Use `--demo` to review the UI without
-Ollama and audio models. If the virtual
-environment has not been installed yet, run
-`python -m pip install -e .` after activating it. See
-[the web UI guide](web/README.md) for details.
+For manual startup, host development, troubleshooting, and the complete Make
+target reference, see the
+[development and operations guide](docs/development-guide.md).
 
-The interactive web and live runners default to the `uat_relaxed` reasoning
-profile during controlled testing. It favors useful ordinary answers when the
-model's provenance metadata is imperfect, while retaining offline/live-data
-honesty and all memory, deletion, privacy, confirmation, and exact-target
-controls. Use `--policy-profile strict` to restore fail-closed provenance
-enforcement. Programmatic reasoning construction remains strict by default.
+## Configuration
 
-For the complete local browser path with diagnostic logs:
+Local configuration is read from the ignored `.env` file. Start from
+[`.env.example`](.env.example).
+
+| Variable         | Default                             | Purpose                                       |
+| ---------------- | ----------------------------------- | --------------------------------------------- |
+| `OLLAMA_API_URL` | `http://host.docker.internal:11434` | Ollama endpoint reachable from the container. |
+| `OLLAMA_MODEL`   | `granite4.1:8b`                     | Local reasoning model selected at startup.    |
+| `GVC_LOG_LEVEL`  | `INFO`                              | Application diagnostic verbosity.             |
+
+The quick-start workflow installs `granite-embedding:278m` by default. Override
+that one invocation by exporting `OLLAMA_EMBEDDING_MODEL` in the shell before
+running the script.
+
+Do not commit `.env`, credentials, downloaded model weights, generated audio,
+or local user data.
+
+## Data and privacy
+
+The Docker deployment separates application data from model caches:
+
+| Data                                  | Location                    | Persistence                                       |
+| ------------------------------------- | --------------------------- | ------------------------------------------------- |
+| Memories, reminders, and preferences | `./data/.local`             | Bind-mounted and retained across normal rebuilds. |
+| Whisper and application model caches  | Docker volume `voice-model-cache` | Retained until the volume is removed.        |
+| Ollama models                         | Host Ollama data directory  | Managed outside the application container.        |
+| Temporary conversation state          | Application process memory  | Cleared when the session or server is reset.      |
+
+Recorded audio is processed in memory and is not persisted by the normal
+application flow. Browser speech fallback is restricted to voices that the Web
+Speech API identifies as local services.
+
+The default `INFO` logging configuration does not record conversation text.
+Setting `GVC_LOG_LEVEL=DEBUG` includes prompts and responses that may be retained
+by the container logging driver. Enable it only for deliberate local
+troubleshooting.
+
+`make clean` and `make rebuild` delete application state under
+`./data/.local`. Review the
+[persistent-data documentation](docs/development-guide.md#persistent-data)
+before using either command.
+
+## Development and verification
+
+Run the complete test suite in the isolated Docker test image:
 
 ```bash
-python -m voice_concierge.app.web --voice-io \
-  --log-level DEBUG \
-  --log-file .local/logs/web.log
+make test
 ```
 
-DEBUG mode correlates browser and server requests and records prompts,
-responses, feature routing, local-data operations, playback/voice state, and
-pipeline timings. Encoded audio bodies are represented by their size instead
-of being copied into the log.
+For host development, create a Python 3.12 environment and install the
+development dependency group as described in the
+[development guide](docs/development-guide.md#host-development-setup).
 
-The browser supports push-to-talk and wake-word capture, an automatic follow-up
-listening window, adjustable wake timing and sensitivity, automatic Piper
-response playback, startup and per-turn waiting states, and temporary chat JSON
-export. The header remains available while a long conversation scrolls, and an
-extended temporary display transcript (up to 200 completed exchanges) is kept
-separately from the shorter model context window. Reminder and guided-routine
-requests are routed to their local services, due reminders appear in the open
-browser, and **Local data** exposes
-memory review/edit/delete/export plus reminder edit/snooze/cancel controls.
-Guided routines automatically advance after each spoken step and accept the
-same no-wake control words as the CLI, including pause, continue, next, back,
-repeat, slower, faster, and stop.
-**New conversation** clears only transient conversation context; approved
-memories and scheduled reminders remain. Continuous wake-word listening remains
-available through the live runner.
-
-## Reminders and timers
-
-Set one-off or repeating reminders by voice ("set a timer for ten minutes",
-"remind me to take my pills every day at 8"), or from the command line:
+The standard quality checks are:
 
 ```bash
-python -m voice_concierge.scheduling                   # what is set
-python -m voice_concierge.scheduling add "remind me to stretch in 10 minutes"
-python -m voice_concierge.scheduling cancel 3
-python -m voice_concierge.scheduling watch             # announce as they fall due
+python -m black .
+python -m ruff check .
+python -m pytest
 ```
 
-Reminders are stored at `.local/reminders/` and work offline. One missed while
-the assistant was not running is announced on the next start rather than
-skipped. Use `--no-reminders` to switch the feature off. See
-[the scheduling package](src/voice_concierge/scheduling/README.md).
+All substantive changes should pass formatting, linting, and relevant tests
+before review.
 
-## Memory and privacy centre
+## Documentation
 
-Review, correct and remove what the assistant has stored about you:
+| Document                                                       | Purpose                                                                   |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| [Development and operations guide](docs/development-guide.md)  | Docker, host setup, configuration, persistence, commands, and testing.    |
+| [Local end-to-end setup](docs/app-pipeline-local-e2e-setup.md) | Detailed model, microphone, speech, and live-pipeline setup.              |
+| [Web UI guide](web/README.md)                                  | Browser architecture, API behavior, wake mode, playback, and diagnostics. |
+| [Application/UI contract](docs/app-pipeline-ui-contract.md)    | Serialized request, response, state, and trust boundaries.                |
+| [Local reasoning guide](docs/reasoning/local-reasoning.md)     | Ollama integration, model configuration, and reasoning behavior.          |
+| [Memory design](docs/memory/memory.md)                         | Local memory architecture and behavior.                                   |
+| [Repository structure](docs/repository-structure.md)           | Package and directory responsibilities.                                   |
+| [Development workflow](docs/development-workflow.md)           | Branch, issue, review, and merge conventions.                             |
+| [Python style guide](docs/python-style-guide.md)               | Python formatting and coding conventions.                                 |
 
-```bash
-python -m voice_concierge.privacy              # what is stored, and what is not
-python -m voice_concierge.privacy list -v      # review stored memories
-python -m voice_concierge.privacy export       # take a copy as JSON
-python -m voice_concierge.privacy edit 3 "likes tea, not coffee"
-python -m voice_concierge.privacy delete 3     # asks first
-python -m voice_concierge.privacy forget-all   # asks you to type DELETE
-```
+## Security and responsible use
 
-Memories and their search index are kept under `.local/memory/`. Recorded audio,
-conversation history and spoken preferences are never written to disk. See
-[the privacy package](src/voice_concierge/privacy/README.md) for details.
+- The default web binding is local-only. Do not expose the service publicly
+  without authentication, TLS, access controls, and a deployment review.
+- Local inference reduces external data exposure but does not make model output
+  inherently correct. Important information must still be verified.
+- Voice recognition can mishear commands. Destructive and sensitive operations
+  should retain explicit confirmation boundaries.
+- Do not store secrets, credentials, medical records, or other sensitive data
+  unless the deployment and retention controls have been reviewed for that use.
 
-## Project Documentation
+## License
 
-- [Repository Structure Guide](docs/repository-structure.md)
-- [Development Workflow Guide](docs/development-workflow.md)
-- [Python Style Guide](docs/python-style-guide.md)
-- [App Pipeline Local E2E Setup](docs/app-pipeline-local-e2e-setup.md)
-
-## Reasoning Documentation
-
-- [Local Reasoning Guide](docs/reasoning/local-reasoning.md)
-- [Recommended Default Model](docs/reasoning/recommended-default-model.md)
+This repository does not currently include an open-source license. Do not
+assume permission to redistribute or incorporate the software into another
+project until a license has been selected.

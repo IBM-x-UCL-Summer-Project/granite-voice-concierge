@@ -17,6 +17,10 @@ _LEGACY_LIST_ADD_LEAD = re.compile(
     r")add\s+",
     flags=re.IGNORECASE,
 )
+_LEGACY_LIST_DESTINATION = re.compile(
+    r"\s+to\s+(?:(?:my|the)\s+)?" r"(?:(?:shopping|task|to-do|todo)\s+)?list\s*$",
+    flags=re.IGNORECASE,
+)
 
 
 def create_structured_list(mutation: StructuredListMutation) -> str:
@@ -114,7 +118,7 @@ def parse_legacy_structured_list(
         return _split_legacy_items(canonical.group(1))
 
     addition = re.fullmatch(
-        rf"add\s+(.+?)\s+to\s+(?:my|the)\s+{name_pattern}\.?",
+        rf"add\s+(.+?)\s+to\s+(?:(?:my|the)\s+)?{name_pattern}\.?",
         text,
         flags=re.IGNORECASE,
     )
@@ -149,10 +153,15 @@ def _normalize_legacy_command_items(items: tuple[str, ...]) -> tuple[str, ...]:
 
     if not items:
         return items
-    normalized_first = _LEGACY_LIST_ADD_LEAD.sub("", items[0], count=1).strip(" .")
-    if not normalized_first or normalized_first == items[0]:
-        return items
-    return (normalized_first, *items[1:])
+    normalized: list[str] = []
+    for index, item in enumerate(items):
+        cleaned = item
+        if index == 0:
+            cleaned = _LEGACY_LIST_ADD_LEAD.sub("", cleaned, count=1)
+        cleaned = _LEGACY_LIST_DESTINATION.sub("", cleaned).strip(" .")
+        if cleaned:
+            normalized.append(cleaned)
+    return tuple(normalized)
 
 
 def _render(label: str, items: tuple[str, ...]) -> str:

@@ -122,6 +122,21 @@ class TestSayTextToSpeechSynthesize:
             SayTextToSpeech().synthesize("hello")
 
     @pytest.mark.unit
+    @patch("voice_concierge.voice_output.say.subprocess.run")
+    def test_unreadable_output_raises_synthesis_error(self, mock_run: patch) -> None:
+        """Malformed say output remains inside the typed fallback boundary."""
+
+        def _write_invalid_wav(command, **kwargs):
+            output_path = Path(command[command.index("-o") + 1])
+            output_path.write_bytes(b"not a WAV file")
+            return None
+
+        mock_run.side_effect = _write_invalid_wav
+
+        with pytest.raises(TextToSpeechSynthesisError, match="unreadable WAV"):
+            SayTextToSpeech().synthesize("hello")
+
+    @pytest.mark.unit
     def test_satisfies_text_to_speech_protocol(self) -> None:
         """SayTextToSpeech satisfies the runtime-checkable protocol."""
         assert isinstance(SayTextToSpeech(), TextToSpeech)

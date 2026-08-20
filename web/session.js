@@ -93,6 +93,7 @@ function autoSizeInput() {
 }
 
 function updateSendState() {
+  const wakeModeOpen = elements.wakeWordScreen.open;
   elements.send.disabled = state.running
     || Boolean(state.recorder)
     || state.connection !== "ready"
@@ -108,11 +109,22 @@ function updateSendState() {
   elements.newConversation.disabled = state.running || state.connection !== "ready";
   elements.exportChat.disabled = state.running
     || state.sessionHistory.length === 0;
-  elements.wakeWordButton.disabled = state.running
+  elements.wakeWordButton.disabled = !wakeModeOpen && (
+    state.running
     || Boolean(state.recorder)
-    || state.wakeWord.active
     || state.connection !== "ready"
-    || !state.capabilities.wake_word;
+    || !state.capabilities.wake_word
+  );
+  elements.wakeWordButton.setAttribute("aria-pressed", String(wakeModeOpen));
+  elements.wakeWordButton.setAttribute(
+    "aria-label",
+    wakeModeOpen ? "Close hands-free wake mode" : "Open hands-free wake mode",
+  );
+  elements.wakeWordButton.title = wakeModeOpen
+    ? "Close hands-free wake-word mode"
+    : state.capabilities.wake_word
+      ? "Open hands-free wake-word mode"
+      : "Run the server with --voice-io to enable wake-word mode";
 }
 
 function renderConversationHistory(response = null) {
@@ -324,9 +336,6 @@ async function connectPipeline({ silent = false } = {}) {
     elements.microphoneButton.title = state.capabilities.voice_input
       ? "Start voice input"
       : "Run the server with --voice-io to enable voice input";
-    elements.wakeWordButton.title = state.capabilities.wake_word
-      ? "Open hands-free wake-word mode"
-      : "Run the server with --voice-io to enable wake-word mode";
     const wakeChoice = elements.setupForm.querySelector(
       '[name="interaction_mode"][value="wake_word"]',
     );

@@ -4,12 +4,14 @@
   function shouldAutoPlayResponse({
     voiceOutput,
     audioAvailable,
+    browserFallbackAvailable,
     confirmationRequired,
     speakConfirmations,
     interactionMode,
     isAudioTurn,
   }) {
-    if (!voiceOutput || !audioAvailable) return false;
+    const serverAudioAvailable = voiceOutput && audioAvailable;
+    if (!serverAudioAvailable && !browserFallbackAvailable) return false;
     if (confirmationRequired && !speakConfirmations) return false;
     if (interactionMode === "text_first") return false;
     if (interactionMode === "push_to_talk") return Boolean(isAudioTurn);

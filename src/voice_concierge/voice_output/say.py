@@ -85,11 +85,16 @@ class SayTextToSpeech:
     def _read_wav(path: Path) -> CapturedAudio:
         # NOTE: mirrors PiperTextToSpeech._read_wav; worth extracting to a shared
         # helper if a third backend is added.
-        with wave.open(str(path), "rb") as wav_file:
-            channels = wav_file.getnchannels()
-            sample_rate = wav_file.getframerate()
-            sample_width = wav_file.getsampwidth()
-            frames = wav_file.readframes(wav_file.getnframes())
+        try:
+            with wave.open(str(path), "rb") as wav_file:
+                channels = wav_file.getnchannels()
+                sample_rate = wav_file.getframerate()
+                sample_width = wav_file.getsampwidth()
+                frames = wav_file.readframes(wav_file.getnframes())
+        except (OSError, wave.Error) as exc:
+            raise TextToSpeechSynthesisError(
+                "say produced an unreadable WAV file."
+            ) from exc
         if sample_width != 2:
             raise TextToSpeechSynthesisError(
                 f"Expected 16-bit PCM audio from say, got {sample_width * 8}-bit."

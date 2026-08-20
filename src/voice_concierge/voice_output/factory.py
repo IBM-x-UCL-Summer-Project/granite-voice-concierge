@@ -1,10 +1,13 @@
 """Construction helpers for text-to-speech backends."""
 
 # Standard library
+import shutil
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
 # Local
+from voice_concierge.voice_output.fallback import FallbackTextToSpeech
 from voice_concierge.voice_output.interfaces import TextToSpeech
 from voice_concierge.voice_output.pace_store import (
     DEFAULT_PACE_PATH,
@@ -23,6 +26,13 @@ from voice_concierge.voice_output.piper import (
     DEFAULT_MODEL_PATH,
     PiperTextToSpeech,
 )
+from voice_concierge.voice_output.say import DEFAULT_SAY_EXECUTABLE, SayTextToSpeech
+
+
+def _find_macos_say_executable() -> str | None:
+    if sys.platform != "darwin":
+        return None
+    return shutil.which(DEFAULT_SAY_EXECUTABLE)
 
 
 def build_text_to_speech(
@@ -31,8 +41,18 @@ def build_text_to_speech(
     *,
     length_scale: float = DEFAULT_LENGTH_SCALE,
 ) -> TextToSpeech:
-    """Build the default local text-to-speech engine for application code."""
-    return PiperTextToSpeech(model_path, config_path, length_scale=length_scale)
+    """Build Piper with the native macOS voice as an available fallback."""
+    piper = PiperTextToSpeech(model_path, config_path, length_scale=length_scale)
+    say_executable = _find_macos_say_executable()
+    if say_executable is None:
+        # Keep Piper behind the fallback boundary even when it is the only
+        # server-side backend. The wrapper rejects silent output so callers can
+        # signal the browser speech fallback instead of returning a silent WAV.
+        return FallbackTextToSpeech(piper)
+    return FallbackTextToSpeech(
+        piper,
+        SayTextToSpeech(executable=say_executable),
+    )
 
 
 #: The rate the backends' own defaults correspond to, used to convert a rung of

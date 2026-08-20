@@ -7,7 +7,24 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+import voice_concierge.memory.memory_validator as memory_validator_module
 from voice_concierge.memory.memory_validator import MemoryType, MemoryValidator
+
+
+def test_validator_uses_configured_ollama_host(monkeypatch):
+    captured = {}
+
+    def fake_client(*, host):
+        captured["host"] = host
+        return object()
+
+    monkeypatch.setenv("OLLAMA_HOST", "http://host.docker.internal:11434")
+    monkeypatch.setattr(memory_validator_module, "Client", fake_client)
+
+    validator = MemoryValidator()
+
+    assert validator.host == "http://host.docker.internal:11434"
+    assert captured["host"] == "http://host.docker.internal:11434"
 
 
 class TestMemoryClassification:

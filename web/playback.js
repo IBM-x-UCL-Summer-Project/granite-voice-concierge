@@ -8,18 +8,63 @@ function effectiveSpeechRate(settings, includePipelinePace = true) {
   return Number(settings.speech_rate) * pipelineFactor;
 }
 
+let cachedLocalBrowserVoice = null;
+
+function localBrowserSpeechVoice() {
+  if (!("speechSynthesis" in window)
+      || typeof window.SpeechSynthesisUtterance !== "function") {
+    return null;
+  }
+  const localVoices = window.speechSynthesis.getVoices()
+    .filter((voice) => voice.localService);
+  cachedLocalBrowserVoice = localVoices.find(
+    (voice) => voice.default && voice.lang.toLowerCase().startsWith("en"),
+  ) || localVoices.find((voice) => voice.lang.toLowerCase().startsWith("en"))
+    || localVoices.find((voice) => voice.default)
+    || localVoices[0]
+    || null;
+  return cachedLocalBrowserVoice;
+}
+
+function browserSpeechAvailable() {
+  return Boolean(localBrowserSpeechVoice());
+}
+
+function playbackIdleLabel(button) {
+  return button?.dataset.playbackIdleLabel || (state.capabilities.voice_output
+    ? "Play response"
+    : "Play browser voice");
+}
+
+function playbackActiveLabel(button) {
+  return button?.dataset.playbackActiveLabel || "Stop response";
+}
+
+function setPlaybackButtonLabel(button, label) {
+  if (!button) return;
+  button.setAttribute("aria-label", label);
+  button.lastChild.textContent = ` ${label}`;
+}
+
+if ("speechSynthesis" in window) {
+  localBrowserSpeechVoice();
+  window.speechSynthesis.addEventListener?.("voiceschanged", localBrowserSpeechVoice);
+}
+
 async function speakText(
   text,
   settings = state.settings,
   includePipelinePace = settings === state.settings,
   button = null,
 ) {
-  if (!("speechSynthesis" in window)) {
-    showToast("Voice preview is unavailable in this browser");
+  const browserVoice = localBrowserSpeechVoice();
+  if (!browserVoice) {
+    showToast("No offline browser voice is available on this device");
     return;
   }
   stopPlayback({ preserveVoiceCommands: true });
-  const utterance = new SpeechSynthesisUtterance(text);
+  const utterance = new window.SpeechSynthesisUtterance(text);
+  utterance.voice = browserVoice;
   utterance.rate = effectiveSpeechRate(settings, includePipelinePace);
   utterance.volume = Number(settings.volume) / 100;
   let resolveCompletion;
@@ -38,18 +83,23 @@ async function speakText(
   diagnostics.info("playback_prepared", {
     kind: "browser_speech",
     text,
+    voice: browserVoice.name,
+    language: browserVoice.lang,
     speech_rate: utterance.rate,
     volume: utterance.volume,
   });
   if (button) {
     button.classList.add("is-playing");
-    button.setAttribute("aria-label", "Stop assistant response");
-    button.lastChild.textContent = " Stop response";
+    setPlaybackButtonLabel(button, playbackActiveLabel(button));
   }
   utterance.onend = () => {
     if (state.playback === playback) stopPlayback({ reason: "natural_completion" });
   };
-  utterance.onerror = () => {
+  utterance.onerror = (event) => {
+    diagnostics.error("browser_speech_failed", {
+      error: event.error || "unknown",
+    });
+    showToast("Browser voice playback failed; the response is still available as text");
     if (state.playback === playback) stopPlayback({ reason: "browser_speech_error" });
   };
   await startVoiceCommandListening();
@@ -91,12 +141,7 @@ function stopPlayback({ preserveVoiceCommands = false, reason = "requested" } = 
     URL.revokeObjectURL(playback.url);
   }
   playback.button?.classList.remove("is-playing");
-  if (playback.button) {
-    playback.button.setAttribute("aria-label", "Play assistant response");
-    playback.button.lastChild.textContent = state.capabilities.voice_output
-      ? " Play response"
-      : " Play browser voice";
-  }
+  setPlaybackButtonLabel(playback.button, playbackIdleLabel(playback.button));
   playback.resolveCompletion?.();
   diagnostics.info("playback_stopped", {
     kind: playback.kind,
@@ -112,10 +157,7 @@ function pausePlayback() {
   if (playback.kind === "speech") window.speechSynthesis.pause();
   else playback.audio.pause();
   playback.paused = true;
-  if (playback.button) {
-    playback.button.setAttribute("aria-label", "Resume assistant response");
-    playback.button.lastChild.textContent = " Resume response";
-  }
+  setPlaybackButtonLabel(playback.button, "Resume response");
   diagnostics.info("playback_paused", {
     kind: playback.kind,
     position_seconds: playback.kind === "audio" ? playback.audio.currentTime : null,
@@ -138,10 +180,7 @@ async function resumePlayback() {
     }
   }
   playback.paused = false;
-  if (playback.button) {
-    playback.button.setAttribute("aria-label", "Stop assistant response");
-    playback.button.lastChild.textContent = " Stop response";
-  }
+  setPlaybackButtonLabel(playback.button, playbackActiveLabel(playback.button));
   diagnostics.info("playback_resumed", {
     kind: playback.kind,
     position_seconds: playback.kind === "audio" ? playback.audio.currentTime : null,
@@ -171,7 +210,11 @@ function unlockResponsePlayback() {
   });
 }
 
-async function playResponse(button) {
+async function playResponse(
+  button,
+  settings = state.settings,
+  includePipelinePace = settings === state.settings,
+) {
   if (state.playback?.button === button) {
     if (state.playback.paused) {
       await resumePlayback();
@@ -186,7 +229,12 @@ async function playResponse(button) {
     showToast(state.capabilities.voice_output
       ? "Piper audio is unavailable for this response; using the browser voice"
       : "Using the browser voice; start the server with --voice-io for Piper");
-    await speakText(button.fallbackText || "", state.settings, true, button);
+    await speakText(
+      button.fallbackText || "",
+      settings,
+      includePipelinePace,
+      button,
+    );
     return;
   }
 
@@ -197,11 +245,11 @@ async function playResponse(button) {
   state.responseAudioElement = audio;
   audio.muted = false;
   audio.src = url;
-  audio.volume = Number(state.settings.volume) / 100;
-  audio.playbackRate = effectiveSpeechRate(state.settings);
-  if (state.settings.speaker_id !== "default" && typeof audio.setSinkId === "function") {
+  audio.volume = Number(settings.volume) / 100;
+  audio.playbackRate = effectiveSpeechRate(settings, includePipelinePace);
+  if (settings.speaker_id !== "default" && typeof audio.setSinkId === "function") {
     try {
-      await audio.setSinkId(state.settings.speaker_id);
+      await audio.setSinkId(settings.speaker_id);
     } catch {
       showToast("The selected speaker is unavailable; using the system default");
     }
@@ -227,8 +275,7 @@ async function playResponse(button) {
     playback_rate: audio.playbackRate,
   });
   button.classList.add("is-playing");
-  button.setAttribute("aria-label", "Stop assistant response");
-  button.lastChild.textContent = " Stop response";
+  setPlaybackButtonLabel(button, playbackActiveLabel(button));
   audio.onended = () => {
     if (state.playback === playback) stopPlayback({ reason: "natural_completion" });
   };
@@ -246,9 +293,12 @@ async function playResponse(button) {
 }
 
 function shouldAutoPlayResponse(response, isAudioTurn) {
+  const ttsFailed = Array.isArray(response?.errors)
+    && response.errors.includes("tts_failed");
   return playbackPolicyAllows({
     voiceOutput: state.capabilities.voice_output,
     audioAvailable: Boolean(response?.audio?.wav_base64),
+    browserFallbackAvailable: ttsFailed && browserSpeechAvailable(),
     confirmationRequired: Boolean(confirmationKind(response)),
     speakConfirmations: state.settings.speak_confirmations,
     interactionMode: state.wakeWord.active

@@ -275,6 +275,30 @@ def test_explicit_structured_list_routes_retrieval_outside_list_mode(
     ]
 
 
+@pytest.mark.parametrize(
+    "transcript",
+    (
+        "Please get help",
+        "I need to get ready",
+        "Please pick up my parcel",
+        "I want to buy apple",
+        "I need to buy some time",
+        "Please buy into the idea",
+    ),
+)
+def test_implicit_acquisition_keeps_default_retrieval_scope_outside_shopping(
+    transcript: str,
+) -> None:
+    memory = FakeMemory()
+    pipeline = VoiceConciergePipeline(FakeReasoning(), memory=memory)
+
+    pipeline.process_transcript(transcript)
+
+    assert memory.retrieve_calls == [
+        {"query": transcript, "scope": "personal_relevant", "limit": 3}
+    ]
+
+
 def test_driving_mode_still_blocks_explicit_list_retrieval() -> None:
     memory = FakeMemory()
     pipeline = VoiceConciergePipeline(FakeReasoning(), memory=memory)
