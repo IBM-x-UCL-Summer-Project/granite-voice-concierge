@@ -173,6 +173,41 @@ function updateRangeOutputs() {
   elements.wakeMaximumRequestOutput.textContent = `${elements.wakeMaximumRequest.value} sec`;
 }
 
+async function previewAssistantVoice() {
+  collectSettingsDraft();
+  const previewText = "Hello. This is how Granite will sound.";
+  const button = elements.previewVoice;
+
+  if (state.playback?.button === button) {
+    stopPlayback();
+    return;
+  }
+
+  if (!state.capabilities.voice_output) {
+    showToast("Local Piper voice is unavailable; using the offline browser voice");
+    await speakText(previewText, state.settingsDraft, false, button);
+    return;
+  }
+
+  button.disabled = true;
+  button.lastChild.textContent = " Preparing local voice…";
+  try {
+    const preview = await requestVoicePreview();
+    button.responseAudio = preview.audio;
+    button.fallbackText = preview.text || previewText;
+    button.disabled = false;
+    await playResponse(button, state.settingsDraft, false);
+  } catch (error) {
+    button.disabled = false;
+    button.lastChild.textContent = ` ${playbackIdleLabel(button)}`;
+    diagnostics.warning("local_voice_preview_failed", {
+      error_message: error.message,
+    });
+    showToast("Piper preview failed; using the offline browser voice");
+    await speakText(previewText, state.settingsDraft, false, button);
+  }
+}
+
 function populateWakeQuickSettings(settings) {
   elements.wakeQuickSensitivity.value = settings.wake_word_sensitivity;
   elements.wakeQuickPause.value = settings.wake_end_pause_seconds;

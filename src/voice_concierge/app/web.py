@@ -37,6 +37,7 @@ from voice_concierge.app.serialization import (
     app_turn_options_from_dict,
     app_turn_request_from_dict,
     app_turn_result_to_dict,
+    captured_audio_to_dict,
 )
 from voice_concierge.app.types import AppPipelineState, ConversationTurn
 from voice_concierge.app.web_features import (
@@ -108,6 +109,7 @@ WAKE_TIMING_METRICS = frozenset(
     }
 )
 SESSION_COOKIE_NAME = "granite_session"
+VOICE_PREVIEW_TEXT = "Hello. This is how Granite will sound."
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_WEB_DIRECTORY = REPOSITORY_ROOT / "web"
 LOGGER = logging.getLogger("voice_concierge.web")
@@ -756,6 +758,7 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
     def _handle_control_post(self, path: str) -> bool:
         known_paths = {
             "/api/session/reset",
+            "/api/speech/preview",
             "/api/privacy/memories/edit",
             "/api/privacy/memories/delete",
             "/api/privacy/memories/forget-all",
@@ -790,6 +793,9 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
                 return True
             if path == "/api/diagnostics/wake-timing":
                 self._handle_wake_timing_post(payload)
+                return True
+            if path == "/api/speech/preview":
+                self._handle_speech_preview_post()
                 return True
             if path.startswith("/api/wake-word/"):
                 self._handle_wake_word_post(path, payload)
@@ -847,6 +853,33 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
                 },
             )
         return True
+
+    def _handle_speech_preview_post(self) -> None:
+        """Synthesize a fixed setup phrase without creating a conversation turn."""
+
+        text_to_speech = self.server.pipeline.text_to_speech
+        if text_to_speech is None:
+            self._feature_unavailable(
+                "voice_output",
+                "Local speech output is disabled. Restart the server with --voice-io.",
+            )
+            return
+        try:
+            audio = text_to_speech.synthesize(VOICE_PREVIEW_TEXT)
+        except Exception:
+            LOGGER.exception("web_speech_preview_failed")
+            self._feature_unavailable(
+                "voice_output_failed",
+                "Local speech synthesis failed.",
+            )
+            return
+        self._write_json(
+            HTTPStatus.OK,
+            {
+                "text": VOICE_PREVIEW_TEXT,
+                "audio": captured_audio_to_dict(audio),
+            },
+        )
 
     def _handle_client_diagnostic_post(self, payload: Mapping[str, Any]) -> None:
         """Mirror browser activity into the local DEBUG diagnostic stream."""

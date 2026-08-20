@@ -51,6 +51,9 @@ response, then opens a short follow-up listening window before resuming
 wake-word listening. The dedicated wake screen also provides push-to-talk and
 cancel controls. Wake sensitivity, allowed mid-request pauses, the follow-up
 window, and maximum request length can be changed in that screen or Personalise.
+The pinned header remains interactive while wake mode is open, so Local data,
+Personalise, theme, and wake-mode controls stay available without ending the
+hands-free session. The conversation workspace remains covered by the wake view.
 Only one browser tab owns the stateful detector at a time. Use `--no-wake-word`
 to keep push-to-talk voice I/O while disabling continuous wake-word mode.
 
@@ -189,6 +192,7 @@ Additional same-origin endpoints support the connected local features:
 - memory edit/delete/forget-all under `POST /api/privacy/memories/...`;
 - reminder create/edit/snooze/cancel/cancel-all under
   `POST /api/reminders/...`;
+- fixed-text local speech-chain testing under `POST /api/speech/preview`;
 - wake-word start/frame/stop under `POST /api/wake-word/...`;
 - guided-routine command start/frame/reset/stop under
   `POST /api/routine-command/...`;
@@ -244,7 +248,8 @@ submitting empty follow-up turns.
 On the first visit, the UI opens a four-step setup for:
 
 - microphone and speaker selection;
-- speech rate and volume, with local voice preview;
+- speech rate and volume, with a Piper-first local voice-chain test and explicit
+  offline browser fallback;
 - wake-word sensitivity, pause/follow-up/request timing, and wake-word,
   voice-first, push-to-talk, or text-first control;
 - response length and spoken confirmation preferences.

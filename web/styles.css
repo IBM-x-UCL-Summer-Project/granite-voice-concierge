@@ -163,6 +163,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
   cursor: pointer;
 }
 .settings-button:hover { border-color: var(--line-strong); background: var(--paper-strong); color: var(--ink); }
+.settings-button[aria-pressed="true"] { border-color: var(--line-strong); background: var(--paper-strong); color: var(--ink); }
 .settings-button svg { width: 15px; height: 15px; }
 
 .workspace {
@@ -290,7 +291,7 @@ h3 { font-size: 17px; }
 .startup-mark span:nth-child(2) { height: 40px; animation-delay: 130ms; }
 .startup-mark span:nth-child(3) { animation-delay: 260ms; }
 
-.wake-word-screen { width: 100vw; max-width: none; height: calc(100vh - 76px); max-height: none; margin: 76px 0 0; padding: 0; border: 0; position: fixed; inset: 0; overflow: hidden; color: #f7f7ef; background: radial-gradient(circle at 50% 48%, rgba(187, 255, 77, 0.12), transparent 26rem), linear-gradient(145deg, #11140f, #19231b 56%, #111918); }
+.wake-word-screen { z-index: 35; width: 100vw; max-width: none; height: calc(100vh - 76px); max-height: none; margin: 76px 0 0; padding: 0; border: 0; position: fixed; inset: 0; overflow: hidden; color: #f7f7ef; background: radial-gradient(circle at 50% 48%, rgba(187, 255, 77, 0.12), transparent 26rem), linear-gradient(145deg, #11140f, #19231b 56%, #111918); }
 .wake-word-screen::backdrop { background: transparent; }
 .wake-word-screen::before { content: ""; position: absolute; inset: 0; opacity: 0.3; background-image: linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px); background-size: 42px 42px; }
 .wake-word-close { z-index: 3; position: absolute; top: 28px; left: 30px; min-height: 38px; padding: 0 13px; display: inline-flex; align-items: center; gap: 7px; border: 1px solid rgba(255,255,255,0.18); border-radius: 999px; background: rgba(255,255,255,0.06); color: inherit; font-size: 10px; cursor: pointer; }
@@ -431,6 +432,7 @@ h3 { font-size: 17px; }
 .range-scale { display: flex; justify-content: space-between; color: var(--quiet); font-size: 8px; }
 .preview-button { display: inline-flex; align-items: center; gap: 7px; margin-top: 24px; border: 1px solid var(--line-strong); background: var(--paper-strong); }
 .preview-button:hover { background: var(--canvas); }
+.preview-button:disabled { cursor: wait; opacity: 0.65; }
 .preview-button svg { width: 15px; height: 15px; }
 .preference-group { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 27px 0 0; padding: 0; border: 0; }
 .interaction-options { grid-template-columns: repeat(4, minmax(0, 1fr)); }

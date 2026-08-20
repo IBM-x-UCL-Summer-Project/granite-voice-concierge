@@ -70,7 +70,10 @@ elements.themeButton.addEventListener("click", () => {
 
 elements.newConversation.addEventListener("click", startNewConversation);
 elements.exportChat.addEventListener("click", exportChat);
-elements.wakeWordButton.addEventListener("click", startWakeWordMode);
+elements.wakeWordButton.addEventListener("click", () => {
+  if (elements.wakeWordScreen.open) stopWakeWordMode();
+  else startWakeWordMode();
+});
 elements.wakeConversationToggle.addEventListener("click", () => {
   state.settings.wake_show_conversation = !state.settings.wake_show_conversation;
   window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(state.settings));
@@ -190,10 +193,7 @@ elements.setupNext.addEventListener("click", () => {
   renderSetupStep();
 });
 elements.detectDevices.addEventListener("click", findAudioDevices);
-elements.previewVoice.addEventListener("click", () => {
-  collectSettingsDraft();
-  speakText("Hello. This is how Granite will sound.", state.settingsDraft);
-});
+elements.previewVoice.addEventListener("click", previewAssistantVoice);
 elements.setupForm.addEventListener("input", () => {
   collectSettingsDraft();
   if (state.setupStep === setupSteps.length - 1) updateSetupReview();

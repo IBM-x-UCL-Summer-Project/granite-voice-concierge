@@ -8,7 +8,7 @@
       content="Granite Voice Concierge local conversation interface"
     />
     <title>Granite Voice Concierge</title>
-    <link rel="stylesheet" href="./styles.css?v=20260817-4" />
+    <link rel="stylesheet" href="./styles.css?v=20260820-2" />
   </head>
   <body>
     <div class="app-shell">
@@ -31,7 +31,7 @@
         </div>
 
         <div class="topbar-actions">
-          <button class="settings-button" id="wake-word-button" type="button" disabled>
+          <button class="settings-button" id="wake-word-button" type="button" aria-pressed="false" disabled>
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z" />
               <path d="M5 11v1a7 7 0 0 0 14 0v-1M12 19v2M9 21h6" />
@@ -305,9 +305,9 @@
                 <input id="voice-volume" name="volume" type="range" min="0" max="100" value="80" step="5" aria-label="Volume" />
                 <div class="range-scale"><span>Quiet</span><span>Loud</span></div>
               </div>
-              <button class="preview-button" id="preview-voice" type="button">
+              <button class="preview-button" id="preview-voice" type="button" data-playback-idle-label="Test local voice" data-playback-active-label="Stop voice test" aria-label="Test local Piper voice">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5Z" /><path d="M15 9.5c.7.7 1 1.5 1 2.5s-.3 1.8-1 2.5M18 7c1.4 1.4 2 3 2 5s-.6 3.6-2 5" /></svg>
-                Preview browser voice
+                Test local voice
               </button>
             </section>
 
@@ -464,15 +464,15 @@
     <script src="./wake-capture-policy.js?v=20260820"></script>
     <script src="./app-context.js?v=20260820-1"></script>
     <script src="./diagnostics.js?v=20260820-1"></script>
-    <script src="./settings.js?v=20260820-1"></script>
+    <script src="./settings.js?v=20260820-2"></script>
     <script src="./conversation.js?v=20260820-1"></script>
-    <script src="./api-client.js?v=20260820-1"></script>
-    <script src="./playback.js?v=20260820-1"></script>
+    <script src="./api-client.js?v=20260820-2"></script>
+    <script src="./playback.js?v=20260820-2"></script>
     <script src="./voice-input.js?v=20260820-1"></script>
     <script src="./voice-commands.js?v=20260820-1"></script>
-    <script src="./wake-word.js?v=20260820-1"></script>
-    <script src="./session.js?v=20260820-1"></script>
+    <script src="./wake-word.js?v=20260820-2"></script>
+    <script src="./session.js?v=20260820-2"></script>
     <script src="./local-data.js?v=20260820-1"></script>
-    <script src="./app.js?v=20260820-1"></script>
+    <script src="./app.js?v=20260820-3"></script>
   </body>
 </html>
