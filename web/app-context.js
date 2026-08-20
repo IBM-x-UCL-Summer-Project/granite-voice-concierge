@@ -112,6 +112,7 @@ const state = {
     stream: null,
     generation: 0,
     starting: false,
+    processingCommand: false,
   },
   playback: null,
   responseAudioElement: null,

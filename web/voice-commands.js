@@ -40,7 +40,7 @@ async function startVoiceCommandListening() {
   try {
     const stream = new PcmWebSocketStream({
       mode: "voice_command",
-      onResult: handleVoiceCommandStreamResult,
+      onResult: (result) => handleVoiceCommandStreamResult(result, generation),
       onError: (error) => {
         if (generation !== state.voiceCommands.generation) return;
         diagnostics.error("voice_command_stream_failed", {
@@ -135,27 +135,44 @@ function syncVoiceCommandListening() {
 }
 
 function enqueueVoiceCommandFrame(samples) {
-  if (!voiceCommandContextActive() || !state.voiceCommands.serverActive) return;
+  if (!voiceCommandContextActive()
+      || !state.voiceCommands.serverActive
+      || state.voiceCommands.processingCommand) return;
   if (state.routine.awaiting_confirmation
       && !state.routine.confirmationReady
       && !state.playback) return;
   state.voiceCommands.stream?.push(samples);
 }
 
-async function handleVoiceCommandStreamResult(result) {
-  const generation = state.voiceCommands.generation;
+async function handleVoiceCommandStreamResult(result, generation) {
   if (!result.command
       || !voiceCommandContextActive()
-      || generation !== state.voiceCommands.generation) return;
-  diagnostics.info("voice_command_detected", {
-    command: result.command,
-    phrase: result.phrase,
-    confidence: result.confidence,
-    server_processing_ms: result.processing_ms,
-    target: state.routine.active ? "routine" : "playback",
-  });
-  if (state.routine.active) await handleRoutineVoiceCommand(result.command);
-  else await handlePlaybackVoiceCommand(result.command);
+      || generation !== state.voiceCommands.generation
+      || state.voiceCommands.processingCommand) return;
+
+  state.voiceCommands.processingCommand = true;
+  const stream = state.voiceCommands.stream;
+  resetVoiceCommandFrameBuffer();
+  try {
+    // Reset both sides of the stream at the trusted command boundary. Audio
+    // arriving while the command is handled is discarded by
+    // enqueueVoiceCommandFrame, so the tail of one utterance cannot become a
+    // second command after the recognizer cooldown expires.
+    await stream?.reset();
+    if (!voiceCommandContextActive()
+        || generation !== state.voiceCommands.generation) return;
+    diagnostics.info("voice_command_detected", {
+      command: result.command,
+      phrase: result.phrase,
+      confidence: result.confidence,
+      server_processing_ms: result.processing_ms,
+      target: state.routine.active ? "routine" : "playback",
+    });
+    if (state.routine.active) await handleRoutineVoiceCommand(result.command);
+    else await handlePlaybackVoiceCommand(result.command);
+  } finally {
+    state.voiceCommands.processingCommand = false;
+  }
 }
 
 async function handlePlaybackVoiceCommand(command) {

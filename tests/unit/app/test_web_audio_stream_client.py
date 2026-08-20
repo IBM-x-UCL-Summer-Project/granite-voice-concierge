@@ -143,6 +143,29 @@ const encodeFrame = window.GraniteAudioStreaming.encodePcmStreamFrame;
   await new Promise((resolve) => setImmediate(resolve));
   resetting.stop();
 
+  const commandResults = [];
+  const commandStream = new StreamClient({
+    mode: "voice_command",
+    onResult: (result) => commandResults.push(result.sequence),
+    onError: (error) => { throw error; },
+  });
+  const commandStarted = commandStream.start();
+  const commandSocket = FakeWebSocket.instances[2];
+  commandSocket.open();
+  commandSocket.receive({
+    type: "started",
+    mode: "voice_command",
+    sample_rate: 16000,
+  });
+  await commandStarted;
+  commandStream.push(new Float32Array(1599));
+  const commandMessagesBeforeFullFrame = commandSocket.sent.length;
+  commandStream.push(new Float32Array(1));
+  const commandFrame = new DataView(commandSocket.sent[1]);
+  commandSocket.receive({ type: "frame", sequence: 0, command: null });
+  await new Promise((resolve) => setImmediate(resolve));
+  commandStream.stop();
+
   const encoded = new DataView(
     encodeFrame(new Float32Array([-1, -0.5, 0, 0.5, 1]), 99),
   );
@@ -172,6 +195,9 @@ const encodeFrame = window.GraniteAudioStreaming.encodePcmStreamFrame;
     dropped,
     results,
     staleResults,
+    commandMessagesBeforeFullFrame,
+    commandFrameBytes: commandFrame.byteLength,
+    commandResults,
     encodedSequence: encoded.getUint32(0, false),
     encodedSamples: Array.from(
       { length: 5 },
@@ -211,6 +237,9 @@ def test_stream_client_uses_binary_protocol_and_bounded_queue() -> None:
     assert result["dropped"] == [1]
     assert result["results"] == [0]
     assert result["staleResults"] == []
+    assert result["commandMessagesBeforeFullFrame"] == 1
+    assert result["commandFrameBytes"] == 4 + 1600 * 2
+    assert result["commandResults"] == [0]
 
 
 def test_stream_client_encodes_little_endian_pcm_and_aborts_pending_start() -> None:

@@ -1,6 +1,7 @@
 // Bounded, acknowledged binary PCM transport for continuous local listening.
 
 const AUDIO_STREAM_FRAME_SAMPLES = 3200;
+const VOICE_COMMAND_STREAM_FRAME_SAMPLES = 1600;
 const AUDIO_STREAM_HEADER_BYTES = 4;
 const AUDIO_STREAM_MAX_QUEUED_FRAMES = 3;
 const AUDIO_STREAM_MAX_BUFFERED_BYTES = 64 * 1024;
@@ -32,6 +33,9 @@ function encodePcmStreamFrame(samples, sequence) {
 class PcmWebSocketStreamImplementation {
   constructor({ mode, onResult, onError, onDrop = () => {} }) {
     this.mode = mode;
+    this.frameSampleCount = mode === "voice_command"
+      ? VOICE_COMMAND_STREAM_FRAME_SAMPLES
+      : AUDIO_STREAM_FRAME_SAMPLES;
     this.onResult = onResult;
     this.onError = onError;
     this.onDrop = onDrop;
@@ -90,8 +94,8 @@ class PcmWebSocketStreamImplementation {
       this.partialChunks.push(samples);
       this.partialSampleCount += samples.length;
     }
-    while (this.partialSampleCount >= AUDIO_STREAM_FRAME_SAMPLES) {
-      this.#queueFrame(this.#takeSamples(AUDIO_STREAM_FRAME_SAMPLES));
+    while (this.partialSampleCount >= this.frameSampleCount) {
+      this.#queueFrame(this.#takeSamples(this.frameSampleCount));
     }
     this.#pump();
   }
