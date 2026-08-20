@@ -230,6 +230,11 @@ __marimo__/
 *.wav
 *.mp3
 
+# Browser test dependencies and reports
+tests/browser/node_modules/
+tests/browser/playwright-report/
+tests/browser/test-results/
+
 
 # Ignore downloaded TTS models
 *.onnx

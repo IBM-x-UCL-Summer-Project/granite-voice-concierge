@@ -1,0 +1,11 @@
+{
+  "name": "granite-voice-concierge-browser-audio-tests",
+  "private": true,
+  "scripts": {
+    "install:browsers": "playwright install chromium firefox webkit",
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1"
+  }
+}

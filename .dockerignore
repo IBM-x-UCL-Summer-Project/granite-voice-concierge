@@ -21,6 +21,9 @@
 # Generated Python files can exist below included source directories.
 **/__pycache__/
 **/*.py[cod]
+tests/browser/node_modules/
+tests/browser/playwright-report/
+tests/browser/test-results/
 
 # Download the large Piper model in a cached Docker layer instead of sending
 # it through Docker Desktop's slow macOS build-context file sharing.
