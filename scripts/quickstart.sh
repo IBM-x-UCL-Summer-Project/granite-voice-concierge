@@ -61,17 +61,49 @@ fi
 echo "Native Ollama is ready"
 echo ""
 
+# OLLAMA_HOST is read by the server as the address to bind and by the CLI as the
+# address to reach. Someone who set it to 0.0.0.0 so the container could connect
+# has also pointed their CLI at 0.0.0.0, where "ollama show" can report a model
+# missing that is really present. Pin the CLI to loopback for the calls below.
+caller_ollama_host="${OLLAMA_HOST:-}"
+export OLLAMA_HOST="http://127.0.0.1:11434"
+
+# Make sure one model is present locally, pulling it if it is not. A failed pull
+# stops the script: continuing would build and start everything only for the
+# first turn to fail with a missing model.
+ensure_model() {
+    model_name="$1"
+    if ollama show "$model_name" > /dev/null 2>&1; then
+        return 0
+    fi
+
+    echo "Downloading $model_name (first run only)..."
+    if ! ollama pull "$model_name"; then
+        echo ""
+        echo "Could not download $model_name."
+        echo ""
+        echo "Check the name exists and that there is disk space for it:"
+        echo "  ollama pull $model_name"
+        echo "  ollama list"
+        echo ""
+        echo "To use a smaller model instead, set it and run this script again:"
+        echo "  OLLAMA_MODEL=granite4.1:3b ./scripts/quickstart.sh"
+        exit 1
+    fi
+}
+
 # Models are owned by native Ollama and remain outside the Docker image.
 export OLLAMA_MODEL="${OLLAMA_MODEL:-granite4.1:8b}"
-if ! ollama show "$OLLAMA_MODEL" > /dev/null 2>&1; then
-    echo "Downloading $OLLAMA_MODEL (first run only)..."
-    ollama pull "$OLLAMA_MODEL"
-fi
+ensure_model "$OLLAMA_MODEL"
 
 export OLLAMA_EMBEDDING_MODEL="${OLLAMA_EMBEDDING_MODEL:-granite-embedding:278m}"
-if ! ollama show "$OLLAMA_EMBEDDING_MODEL" > /dev/null 2>&1; then
-    echo "Downloading $OLLAMA_EMBEDDING_MODEL (first run only)..."
-    ollama pull "$OLLAMA_EMBEDDING_MODEL"
+ensure_model "$OLLAMA_EMBEDDING_MODEL"
+
+# The container needs the host address, not the loopback one used above.
+if [ -n "$caller_ollama_host" ]; then
+    export OLLAMA_HOST="$caller_ollama_host"
+else
+    unset OLLAMA_HOST
 fi
 
 # Creating the bind-mount source on the host avoids Docker creating a root-owned

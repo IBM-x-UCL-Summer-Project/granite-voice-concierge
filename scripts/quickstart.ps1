@@ -154,20 +154,52 @@ if (-not $ollamaUrl) {
 Write-Step "Native Ollama is ready"
 Write-Step ""
 
-# Models are owned by native Ollama and stay outside the Docker image.
-if (-not $env:OLLAMA_MODEL) { $env:OLLAMA_MODEL = "granite4.1:8b" }
-ollama show $env:OLLAMA_MODEL *> $null
-if ($LASTEXITCODE -ne 0) {
-    Write-Step "Downloading $($env:OLLAMA_MODEL) (first run only)..."
-    ollama pull $env:OLLAMA_MODEL
+# OLLAMA_HOST is read by the server as the address to bind and by the CLI as
+# the address to reach. Anyone who set it to 0.0.0.0 so the container could
+# connect has also pointed their CLI at 0.0.0.0, where "ollama show" can report
+# a model missing that is really present. Pin the CLI to loopback for the calls
+# below, whatever the user set globally, and restore it afterwards.
+$callerOllamaHost = $env:OLLAMA_HOST
+$env:OLLAMA_HOST = $ollamaUrl
+
+function Confirm-OllamaModel {
+    <#
+        Make sure one model is present locally, pulling it if it is not.
+        A failed pull stops the script here: continuing would build and start
+        everything only for the first turn to fail with a missing model.
+    #>
+    param([string]$Name)
+
+    ollama show $Name *> $null
+    if ($LASTEXITCODE -eq 0) {
+        return
+    }
+
+    Write-Step "Downloading $Name (first run only)..."
+    ollama pull $Name
+    if ($LASTEXITCODE -ne 0) {
+        Write-Problem ""
+        Write-Problem "Could not download $Name."
+        Write-Problem ""
+        Write-Problem "Check the name exists and that there is disk space for it:"
+        Write-Problem "  ollama pull $Name"
+        Write-Problem "  ollama list"
+        Write-Problem ""
+        Write-Problem "To use a smaller model instead, set it and run this script again:"
+        Write-Problem '  $env:OLLAMA_MODEL = "granite4.1:3b"; .\scripts\quickstart.ps1'
+        exit 1
+    }
 }
 
+# Models are owned by native Ollama and stay outside the Docker image.
+if (-not $env:OLLAMA_MODEL) { $env:OLLAMA_MODEL = "granite4.1:8b" }
+Confirm-OllamaModel -Name $env:OLLAMA_MODEL
+
 if (-not $env:OLLAMA_EMBEDDING_MODEL) { $env:OLLAMA_EMBEDDING_MODEL = "granite-embedding:278m" }
-ollama show $env:OLLAMA_EMBEDDING_MODEL *> $null
-if ($LASTEXITCODE -ne 0) {
-    Write-Step "Downloading $($env:OLLAMA_EMBEDDING_MODEL) (first run only)..."
-    ollama pull $env:OLLAMA_EMBEDDING_MODEL
-}
+Confirm-OllamaModel -Name $env:OLLAMA_EMBEDDING_MODEL
+
+# The container needs the host address, not the loopback one used above.
+$env:OLLAMA_HOST = $callerOllamaHost
 
 # Creating the bind-mount sources on the host keeps existing application state
 # and matches what the shell script does.
