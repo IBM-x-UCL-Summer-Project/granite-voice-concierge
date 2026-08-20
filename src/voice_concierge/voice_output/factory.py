@@ -1,10 +1,13 @@
 """Construction helpers for text-to-speech backends."""
 
 # Standard library
+import shutil
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
 # Local
+from voice_concierge.voice_output.fallback import FallbackTextToSpeech
 from voice_concierge.voice_output.interfaces import TextToSpeech
 from voice_concierge.voice_output.pace_store import (
     DEFAULT_PACE_PATH,
@@ -23,6 +26,13 @@ from voice_concierge.voice_output.piper import (
     DEFAULT_MODEL_PATH,
     PiperTextToSpeech,
 )
+from voice_concierge.voice_output.say import DEFAULT_SAY_EXECUTABLE, SayTextToSpeech
+
+
+def _find_macos_say_executable() -> str | None:
+    if sys.platform != "darwin":
+        return None
+    return shutil.which(DEFAULT_SAY_EXECUTABLE)
 
 
 def build_text_to_speech(
@@ -30,32 +40,18 @@ def build_text_to_speech(
     config_path: str = DEFAULT_CONFIG_PATH,
     *,
     length_scale: float = DEFAULT_LENGTH_SCALE,
-    allow_fallback: bool = True,
 ) -> TextToSpeech:
-    """Build the default local text-to-speech engine for application code.
-
-    Piper stays the preferred voice, but it raises on every synthesis on macOS
-    arm64 (issue #52), and the app swallowed that and fell silent. Wrapping it
-    means a broken Piper costs one failed utterance rather than a whole session
-    without speech.
-    """
+    """Build Piper with the native macOS voice as an available fallback."""
     piper = PiperTextToSpeech(model_path, config_path, length_scale=length_scale)
-    if not allow_fallback:
-        return piper
-
-    from voice_concierge.voice_output.fallback import FallbackTextToSpeech
-
-    def _spare() -> TextToSpeech:
-        from voice_concierge.voice_output.say import SayTextToSpeech
-
-        return SayTextToSpeech()
-
+    say_executable = _find_macos_say_executable()
+    if say_executable is None:
+        # Keep Piper behind the fallback boundary even when it is the only
+        # server-side backend. The wrapper rejects silent output so callers can
+        # signal the browser speech fallback instead of returning a silent WAV.
+        return FallbackTextToSpeech(piper)
     return FallbackTextToSpeech(
         piper,
-        _spare,
-        on_fallback=lambda exc: print(
-            f"Piper could not speak ({exc}); using the system voice instead."
-        ),
+        SayTextToSpeech(executable=say_executable),
     )
 
 

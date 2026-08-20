@@ -62,7 +62,8 @@ async function startWakeWordMode() {
   });
 
   unlockResponsePlayback();
-  if (!elements.wakeWordScreen.open) elements.wakeWordScreen.showModal();
+  if (!elements.wakeWordScreen.open) elements.wakeWordScreen.show();
+  updateSendState();
   setWakeWordView("starting", {
     title: "Preparing wake mode",
     status: "Opening the local microphone…",

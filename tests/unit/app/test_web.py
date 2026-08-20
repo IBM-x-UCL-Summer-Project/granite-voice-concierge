@@ -183,6 +183,58 @@ def test_health_reports_pipeline_capabilities() -> None:
     }
 
 
+def test_speech_preview_uses_configured_local_synthesizer() -> None:
+    class FakeSpeech:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def synthesize(self, text: str) -> CapturedAudio:
+            self.calls.append(text)
+            return CapturedAudio(samples=np.ones(160, dtype=np.int16))
+
+    speech = FakeSpeech()
+    pipeline = VoiceConciergePipeline(
+        SmokeReasoningService(),
+        text_to_speech=speech,
+    )
+
+    with running_server(pipeline) as base_url:
+        response = read_json(f"{base_url}/api/speech/preview", payload={})
+
+    assert speech.calls == ["Hello. This is how Granite will sound."]
+    assert response["text"] == speech.calls[0]
+    assert response["audio"]["wav_base64"]
+
+
+def test_speech_preview_reports_when_local_voice_is_disabled() -> None:
+    with running_server() as base_url:
+        with pytest.raises(HTTPError) as error:
+            read_json(f"{base_url}/api/speech/preview", payload={})
+        response = json.load(error.value)
+
+    assert error.value.code == 503
+    assert response["error"]["code"] == "voice_output"
+
+
+def test_speech_preview_reports_local_synthesis_failure() -> None:
+    class FailingSpeech:
+        def synthesize(self, text: str) -> CapturedAudio:
+            raise RuntimeError("synthesis failed")
+
+    pipeline = VoiceConciergePipeline(
+        SmokeReasoningService(),
+        text_to_speech=FailingSpeech(),
+    )
+
+    with running_server(pipeline) as base_url:
+        with pytest.raises(HTTPError) as error:
+            read_json(f"{base_url}/api/speech/preview", payload={})
+        response = json.load(error.value)
+
+    assert error.value.code == 503
+    assert response["error"]["code"] == "voice_output_failed"
+
+
 def test_debug_health_enables_browser_diagnostic_forwarding() -> None:
     with running_server(diagnostics_enabled=True) as base_url:
         response = read_json(f"{base_url}/api/health")
@@ -282,12 +334,12 @@ def test_static_ui_disables_browser_cache() -> None:
             cache_control = response.headers.get("Cache-Control")
 
     assert cache_control == "no-store"
-    assert "./playback-policy.js?v=20260817" in html
-    assert "./wake-capture-policy.js?v=20260817" in html
+    assert "./playback-policy.js?v=20260820" in html
+    assert "./wake-capture-policy.js?v=20260820" in html
     for name in WEB_APPLICATION_SCRIPTS:
-        assert f"./{name}?v=20260817-" in html
-    assert "./app.js?v=20260817-6" in html
-    assert "./styles.css?v=20260817-4" in html
+        assert f"./{name}?v=20260820-" in html
+    assert "./app.js?v=20260820-3" in html
+    assert "./styles.css?v=20260820-2" in html
 
 
 def test_browser_never_persists_conversation_state() -> None:
@@ -297,6 +349,23 @@ def test_browser_never_persists_conversation_state() -> None:
     assert "localStorage.removeItem(LEGACY_PIPELINE_STORAGE_KEY)" in script
     assert 'connection: "connecting"' in script
     assert "The local assistant is disconnected. Reconnecting…" in script
+
+
+def test_browser_tts_fallback_only_uses_a_local_voice() -> None:
+    playback = (REPOSITORY_ROOT / "web" / "playback.js").read_text(encoding="utf-8")
+
+    assert ".filter((voice) => voice.localService)" in playback
+    assert 'response.errors.includes("tts_failed")' in playback
+
+
+def test_setup_voice_preview_checks_local_synthesis_before_browser_fallback() -> None:
+    html = (REPOSITORY_ROOT / "web" / "index.html").read_text(encoding="utf-8")
+    script = read_web_application_scripts()
+
+    assert "Preview browser voice" not in html
+    assert "Test local voice" in html
+    assert 'requestJson("/api/speech/preview", {})' in script
+    assert "Piper preview failed; using the offline browser voice" in script
 
 
 def test_local_data_actions_use_an_application_owned_dialog() -> None:
@@ -337,6 +406,19 @@ def test_browser_exposes_waiting_wake_mode_and_private_chat_export() -> None:
     )
     assert 'link.href = "/api/session/export"' in script
     assert "localStorage.setItem(LEGACY_PIPELINE_STORAGE_KEY" not in script
+
+
+def test_wake_mode_keeps_header_actions_interactive() -> None:
+    html = (REPOSITORY_ROOT / "web" / "index.html").read_text(encoding="utf-8")
+    script = read_web_application_scripts()
+    styles = (REPOSITORY_ROOT / "web" / "styles.css").read_text(encoding="utf-8")
+
+    assert "elements.wakeWordScreen.show();" in script
+    assert "elements.wakeWordScreen.showModal();" not in script
+    assert 'id="wake-word-button" type="button" aria-pressed="false"' in html
+    assert "if (elements.wakeWordScreen.open) stopWakeWordMode();" in script
+    assert ".topbar {\n  z-index: 40;" in styles
+    assert ".wake-word-screen { z-index: 35;" in styles
 
 
 def test_browser_applies_stop_pause_and_resume_to_every_spoken_response() -> None:

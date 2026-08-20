@@ -5,6 +5,7 @@ benchmarks/reasoning/results/
 AGENTS.md
 Initial-prjoect-brief.docx
 .local/
+outputs/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

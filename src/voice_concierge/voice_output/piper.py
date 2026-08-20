@@ -119,11 +119,16 @@ class PiperTextToSpeech:
 
     @staticmethod
     def _read_wav(path: Path) -> CapturedAudio:
-        with wave.open(str(path), "rb") as wav_file:
-            channels = wav_file.getnchannels()
-            sample_rate = wav_file.getframerate()
-            sample_width = wav_file.getsampwidth()
-            frames = wav_file.readframes(wav_file.getnframes())
+        try:
+            with wave.open(str(path), "rb") as wav_file:
+                channels = wav_file.getnchannels()
+                sample_rate = wav_file.getframerate()
+                sample_width = wav_file.getsampwidth()
+                frames = wav_file.readframes(wav_file.getnframes())
+        except (OSError, wave.Error) as exc:
+            raise TextToSpeechSynthesisError(
+                "Piper produced an unreadable WAV file."
+            ) from exc
         if sample_width != 2:
             raise TextToSpeechSynthesisError(
                 f"Expected 16-bit PCM audio from Piper, got {sample_width * 8}-bit."

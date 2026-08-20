@@ -126,3 +126,7 @@ function requestAudioTurn(wavBase64) {
     options: turnOptions(),
   });
 }
+
+function requestVoicePreview() {
+  return requestJson("/api/speech/preview", {});
+}

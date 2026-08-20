@@ -1,0 +1,14 @@
+services:
+  voice-concierge:
+    # The test target adds Black, Ruff, pytest, and the repository test suite
+    # without placing development dependencies in the normal runtime image.
+    build:
+      target: test
+    volumes:
+      # Editable installation means mounted Python sources are imported
+      # directly. Restart the service after changing server-side Python code.
+      - ./src:/app/src
+      - ./benchmarks:/app/benchmarks
+      - ./docs:/app/docs
+      - ./tests:/app/tests
+      - ./web:/app/web
