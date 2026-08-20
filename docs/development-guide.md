@@ -66,12 +66,13 @@ The script:
 2. downloads the configured reasoning and embedding models;
 3. builds the application image;
 4. verifies that the container can reach Ollama; and
-5. starts the application service.
+5. starts the application service and waits for its health check to report
+   readiness.
 
-The Windows launcher additionally waits for application readiness and opens the
-local UI. See the [Windows Docker guide](windows-docker.md) for WSL 2 and Docker
-Desktop prerequisites, the required host Ollama binding, Windows Firewall
-guidance, browser audio, and troubleshooting.
+The Windows launcher additionally opens the local UI. See the
+[Windows Docker guide](windows-docker.md) for WSL 2 and Docker Desktop
+prerequisites, the required host Ollama binding, Windows Firewall guidance,
+browser audio, and troubleshooting.
 
 A cold image build can take several minutes because it installs the
 machine-learning and audio stack and downloads the Piper voice model. Cached

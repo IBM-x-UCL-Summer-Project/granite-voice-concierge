@@ -187,21 +187,9 @@ diagnostics, see the [Windows Docker guide](docs/windows-docker.md).
 
 ### macOS
 
-#### Configure Ollama for macOS once
-
-Run in Terminal:
-
-```bash
-launchctl setenv OLLAMA_HOST "0.0.0.0:11434"
-```
-
-Quit and reopen the Ollama application, then verify its local API:
-
-```bash
-curl --fail http://127.0.0.1:11434/api/tags
-```
-
 #### Start
+
+Start Docker Desktop and the Ollama application, then run in Terminal:
 
 ```bash
 cp .env.example .env
@@ -209,8 +197,10 @@ cp .env.example .env
 ```
 
 The launcher downloads missing Ollama models, builds the image, checks host
-connectivity, and starts the container. Open
-[http://127.0.0.1:4173](http://127.0.0.1:4173) after startup.
+connectivity, starts the container, and waits for the application health check.
+Open [http://127.0.0.1:4173](http://127.0.0.1:4173) after it reports that the
+application is ready. The first start of a larger speech model can take several
+minutes.
 
 #### Verify and operate
 

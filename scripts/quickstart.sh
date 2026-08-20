@@ -1,6 +1,58 @@
 #!/bin/bash
 set -e
 
+WEB_URL="${GVC_WEB_URL:-http://127.0.0.1:4173}"
+HEALTH_TIMEOUT_SECONDS="${GVC_HEALTH_TIMEOUT_SECONDS:-600}"
+
+if ! [[ "$HEALTH_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+    echo "GVC_HEALTH_TIMEOUT_SECONDS must be a positive integer"
+    exit 1
+fi
+
+wait_for_application() {
+    local started_at=$SECONDS
+    local elapsed=0
+    local next_progress_at=0
+    local container_state=""
+    local health_response=""
+
+    while (( elapsed < HEALTH_TIMEOUT_SECONDS )); do
+        if ! container_state=$(docker inspect \
+            --format '{{.State.Status}}' granite-voice-concierge 2>/dev/null); then
+            echo "Application container is missing."
+            return 1
+        fi
+        case "$container_state" in
+            exited|dead)
+                echo "Application container state is '$container_state'."
+                return 1
+                ;;
+        esac
+
+        if health_response=$(curl --fail --silent --max-time 5 \
+            "$WEB_URL/api/health" 2>/dev/null); then
+            if [[ "$health_response" =~ \"status\"[[:space:]]*:[[:space:]]*\"ready\" ]]; then
+                return 0
+            fi
+            if [[ "$health_response" =~ \"status\"[[:space:]]*:[[:space:]]*\"error\" ]]; then
+                echo "The application health endpoint reported an error."
+                return 1
+            fi
+        fi
+
+        elapsed=$((SECONDS - started_at))
+        if (( elapsed >= next_progress_at )); then
+            echo "  ${elapsed}s: waiting for the application web endpoint..."
+            next_progress_at=$((elapsed + 10))
+        fi
+        sleep 2
+        elapsed=$((SECONDS - started_at))
+    done
+
+    echo "The application did not become ready within ${HEALTH_TIMEOUT_SECONDS} seconds."
+    return 1
+}
+
 echo "Granite Voice Concierge - Quick Start"
 echo ""
 
@@ -88,6 +140,22 @@ fi
 echo "Starting Granite Voice Concierge..."
 docker compose up -d
 
+echo "Waiting up to ${HEALTH_TIMEOUT_SECONDS} seconds for application initialisation..."
+if ! wait_for_application; then
+    echo ""
+    echo "Container state:"
+    docker compose ps voice-concierge || true
+    echo ""
+    echo "Recent container logs:"
+    docker compose logs --tail 100 voice-concierge || true
+    echo ""
+    echo "Host Ollama activity:"
+    ollama ps || true
+    exit 1
+fi
+
+echo ""
+echo "Granite Voice Concierge is ready."
 echo ""
 echo "Service Status:"
 docker compose ps
@@ -99,7 +167,7 @@ echo "1. Native Ollama model is ready: $OLLAMA_MODEL"
 echo "   The embedding model is ready: $OLLAMA_EMBEDDING_MODEL"
 echo ""
 echo "2. Access Web UI:"
-echo "   open http://127.0.0.1:4173"
+echo "   open $WEB_URL"
 echo ""
 echo "3. View logs:"
 echo "   docker compose logs -f voice-concierge"
