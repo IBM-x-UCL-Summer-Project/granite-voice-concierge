@@ -45,12 +45,25 @@ Install and start:
 ### Quick start
 
 Copy the environment template and run the setup script from the repository
-root:
+root.
+
+On macOS and Linux:
 
 ```bash
 cp .env.example .env
 ./scripts/quickstart.sh
 ```
+
+On Windows, in PowerShell:
+
+```powershell
+Copy-Item .env.example .env
+.\scripts\quickstart.ps1
+```
+
+The two scripts perform the same steps; `quickstart.ps1` exists because Windows
+has no bash, and requiring WSL or Git Bash before a first run is a barrier for
+anyone only wanting to try the application.
 
 The script:
 
@@ -65,6 +78,34 @@ machine-learning and audio stack and downloads the Piper voice model. Cached
 rebuilds should be substantially faster.
 
 When startup completes, open `http://127.0.0.1:4173`.
+
+### Ollama is not reachable from the container
+
+The most common setup failure on Windows and macOS is Ollama listening only on
+`127.0.0.1`. The container is a separate network namespace, so it cannot reach
+a loopback-only service on the host, and the quick-start script stops with
+`Docker cannot reach native Ollama` rather than starting an application that
+would fail on its first turn.
+
+Bind Ollama to all interfaces and restart it.
+
+On Windows, set it permanently and restart Ollama from the system tray:
+
+```powershell
+setx OLLAMA_HOST "0.0.0.0:11434"
+```
+
+On macOS and Linux, either export it for a manually started server:
+
+```bash
+OLLAMA_HOST=0.0.0.0:11434 ollama serve
+```
+
+or, for the macOS application, set it once with `launchctl setenv OLLAMA_HOST
+"0.0.0.0:11434"` and restart the application.
+
+Only expose Ollama beyond the loopback interface on a network you trust: it has
+no authentication, so anything that can reach the port can use the models.
 
 ### Manual start
 

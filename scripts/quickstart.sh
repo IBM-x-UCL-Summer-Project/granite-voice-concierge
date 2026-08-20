@@ -39,8 +39,15 @@ echo "Docker found"
 echo ""
 
 if ! command -v ollama &> /dev/null; then
-    echo "Ollama not found. Install the macOS Ollama application first:"
-    echo "  brew install --cask ollama-app"
+    # The install command differs per platform, and telling a Linux user to run
+    # brew is worse than saying nothing.
+    echo "Ollama not found. Install it first:"
+    if [ "$(uname -s)" = "Darwin" ]; then
+        echo "  brew install --cask ollama-app"
+    else
+        echo "  curl -fsSL https://ollama.com/install.sh | sh"
+    fi
+    echo "  or download it from https://ollama.com/download"
     exit 1
 fi
 
@@ -104,7 +111,7 @@ echo ""
 echo "3. View logs:"
 echo "   docker compose logs -f voice-concierge"
 echo ""
-echo "4. For continuous live voice on macOS, run it on the host:"
+echo "4. For continuous live voice, run it on the host rather than in Docker:"
 echo "   make live"
-echo "   (Docker Desktop cannot expose the Mac microphone as /dev/snd.)"
+echo "   (Docker Desktop cannot expose the host microphone as /dev/snd.)"
 echo ""

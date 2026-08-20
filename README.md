@@ -82,19 +82,38 @@ service running on the host.
 ### Prerequisites
 
 - [Docker with Docker Compose](https://docs.docker.com/get-started/get-docker/)
-- [Ollama](https://ollama.com/download)
-- Sufficient local resources for the selected Granite and speech models
+- [Ollama](https://ollama.com/download), installed on the host rather than in a
+  container, so it can use the machine's GPU
+- Roughly 8 GB of free memory for the default Granite model, and about 6 GB of
+  disk for the model downloads
 
-The current quick-start script is designed for macOS with Docker Desktop and
-native Ollama.
+Ollama runs natively and the application runs in Docker. The container reaches
+Ollama through the host gateway, which works the same way on all three
+platforms.
 
 ### Start the application
 
-From the repository root:
+From the repository root.
+
+**macOS and Linux**
 
 ```bash
 cp .env.example .env
 ./scripts/quickstart.sh
+```
+
+**Windows (PowerShell)**
+
+```powershell
+Copy-Item .env.example .env
+.\scripts\quickstart.ps1
+```
+
+If PowerShell refuses to run the script, allow local scripts for this session
+only:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```
 
 The script checks the host services, downloads the configured Ollama models,
@@ -106,21 +125,25 @@ Open `http://127.0.0.1:4173` after startup completes.
 Verify the deployment with:
 
 ```bash
-make ps
+docker compose ps
 curl http://127.0.0.1:4173/api/health
 ```
 
 Follow application logs with:
 
 ```bash
-make logs
+docker compose logs -f voice-concierge
 ```
 
 Stop the application without deleting persistent data:
 
 ```bash
-make down
+docker compose down
 ```
+
+On macOS and Linux the `Makefile` wraps these as `make ps`, `make logs` and
+`make down`. Windows has no `make` by default, so the `docker compose` commands
+above are the portable form.
 
 For manual startup, host development, troubleshooting, and the complete Make
 target reference, see the
