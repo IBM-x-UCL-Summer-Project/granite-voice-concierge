@@ -45,7 +45,10 @@ def build_text_to_speech(
     piper = PiperTextToSpeech(model_path, config_path, length_scale=length_scale)
     say_executable = _find_macos_say_executable()
     if say_executable is None:
-        return piper
+        # Keep Piper behind the fallback boundary even when it is the only
+        # server-side backend. The wrapper rejects silent output so callers can
+        # signal the browser speech fallback instead of returning a silent WAV.
+        return FallbackTextToSpeech(piper)
     return FallbackTextToSpeech(
         piper,
         SayTextToSpeech(executable=say_executable),

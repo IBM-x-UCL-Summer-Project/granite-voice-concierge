@@ -21,11 +21,15 @@ class TestBuildTextToSpeech:
         "voice_concierge.voice_output.factory._find_macos_say_executable",
         return_value=None,
     )
+    @patch("voice_concierge.voice_output.factory.FallbackTextToSpeech")
     @patch("voice_concierge.voice_output.factory.PiperTextToSpeech")
     def test_builds_with_defaults(
-        self, mock_piper: patch, _mock_find_say: patch
+        self,
+        mock_piper: patch,
+        mock_fallback: patch,
+        _mock_find_say: patch,
     ) -> None:
-        """The factory builds a PiperTextToSpeech with default config."""
+        """The factory validates Piper output even without another backend."""
         engine = build_text_to_speech()
 
         mock_piper.assert_called_once_with(
@@ -33,23 +37,27 @@ class TestBuildTextToSpeech:
             DEFAULT_CONFIG_PATH,
             length_scale=DEFAULT_LENGTH_SCALE,
         )
-        assert engine is mock_piper.return_value
+        mock_fallback.assert_called_once_with(mock_piper.return_value)
+        assert engine is mock_fallback.return_value
 
     @pytest.mark.unit
     @patch(
         "voice_concierge.voice_output.factory._find_macos_say_executable",
         return_value=None,
     )
+    @patch("voice_concierge.voice_output.factory.FallbackTextToSpeech")
     @patch("voice_concierge.voice_output.factory.PiperTextToSpeech")
     def test_forwards_custom_config(
         self,
         mock_piper: patch,
+        mock_fallback: patch,
         _mock_find_say: patch,
     ) -> None:
         """The factory forwards a custom model, config and length scale."""
         build_text_to_speech("voice.onnx", "voice.json", length_scale=1.5)
 
         mock_piper.assert_called_once_with("voice.onnx", "voice.json", length_scale=1.5)
+        mock_fallback.assert_called_once_with(mock_piper.return_value)
 
     @pytest.mark.unit
     @patch(
