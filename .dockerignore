@@ -23,7 +23,7 @@
 **/*.py[cod]
 
 # Download the large Piper model in a cached Docker layer instead of sending
-# it through Docker Desktop's slow macOS build-context file sharing.
+# it through Docker Desktop's host build-context file sharing.
 **/*.onnx
 **/*.onnx.json
 
