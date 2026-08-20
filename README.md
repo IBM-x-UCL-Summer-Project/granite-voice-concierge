@@ -16,10 +16,11 @@ emergency-response system, or production care service. It should not be relied
 on as the sole means of obtaining urgent help, medical guidance, or safety
 monitoring.
 
-The reference deployment is currently Apple Silicon macOS with Docker Desktop
-and native Ollama. The application runs in a Linux container, while Ollama runs
-on the host to retain Apple Metal acceleration. Other host platforms require
-validation before they should be considered supported.
+The supported Docker Desktop hosts are Apple Silicon macOS and x86-64 Windows
+using the WSL 2 Linux-container backend. The application runs in a Linux
+container, while Ollama runs natively on the host to retain platform GPU
+acceleration. Windows on Arm and other host platforms require validation before
+they should be considered supported.
 
 ## Core capabilities
 
@@ -60,7 +61,7 @@ flowchart LR
         Services[Memory, reminders, routines, and privacy tools]
     end
 
-    Ollama[Native Ollama and IBM Granite]
+    Ollama[Native host Ollama and IBM Granite]
     Data[(Bind-mounted local data)]
     Cache[(Docker model cache)]
 
@@ -85,21 +86,30 @@ service running on the host.
 - [Ollama](https://ollama.com/download)
 - Sufficient local resources for the selected Granite and speech models
 
-The current quick-start script is designed for macOS with Docker Desktop and
-native Ollama.
+Windows must use Docker Desktop's Linux containers. Ollama remains a native host
+prerequisite on both platforms; Compose does not install or start it.
 
 ### Start the application
 
-From the repository root:
+On macOS, from the repository root:
 
 ```bash
 cp .env.example .env
 ./scripts/quickstart.sh
 ```
 
-The script checks the host services, downloads the configured Ollama models,
-builds the application image, verifies container-to-host connectivity, and
-starts the service.
+On Windows, open PowerShell in the repository root:
+
+```powershell
+Copy-Item .env.example .env
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\quickstart.ps1
+```
+
+The platform script checks Docker Desktop and native Ollama, downloads missing
+Ollama models, builds the application image, verifies container-to-host
+connectivity, starts the service, and waits for it to become ready. See the
+[Windows Docker guide](docs/windows-docker.md) for prerequisites, one-time
+Ollama configuration, operation, and troubleshooting.
 
 Open `http://127.0.0.1:4173` after startup completes.
 
@@ -109,6 +119,10 @@ Verify the deployment with:
 make ps
 curl http://127.0.0.1:4173/api/health
 ```
+
+On Windows, use `docker compose ps` and
+`Invoke-RestMethod http://127.0.0.1:4173/api/health` instead of the Make and
+curl commands.
 
 Follow application logs with:
 
@@ -121,6 +135,9 @@ Stop the application without deleting persistent data:
 ```bash
 make down
 ```
+
+The direct Windows equivalents are
+`docker compose logs -f voice-concierge` and `docker compose down`.
 
 For manual startup, host development, troubleshooting, and the complete Make
 target reference, see the
@@ -197,6 +214,7 @@ before review.
 | Document                                                       | Purpose                                                                   |
 | -------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | [Development and operations guide](docs/development-guide.md)  | Docker, host setup, configuration, persistence, commands, and testing.    |
+| [Windows Docker guide](docs/windows-docker.md)                  | Windows prerequisites, PowerShell setup, operation, and troubleshooting. |
 | [Local end-to-end setup](docs/app-pipeline-local-e2e-setup.md) | Detailed model, microphone, speech, and live-pipeline setup.              |
 | [Web UI guide](web/README.md)                                  | Browser architecture, API behavior, wake mode, playback, and diagnostics. |
 | [Application/UI contract](docs/app-pipeline-ui-contract.md)    | Serialized request, response, state, and trust boundaries.                |

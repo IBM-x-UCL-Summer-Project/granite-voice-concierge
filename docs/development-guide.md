@@ -24,10 +24,11 @@ The application image contains Python 3.12, native audio libraries, the
 machine-learning stack, and the Piper voice model. Ollama runs on the host so
 it can use the host's available hardware acceleration.
 
-The current reference environment is Apple Silicon macOS with Docker Desktop
-and native Ollama. The container itself is Linux and currently uses
-`python:3.12-slim` as its base image. Other Docker hosts may work, but should be
-validated before they are treated as supported deployment targets.
+The supported Docker Desktop environments are Apple Silicon macOS and x86-64
+Windows with the WSL 2 Linux-container backend. The container itself is Linux
+and currently uses `python:3.12-slim` as its base image. Ollama remains native
+on the host so it can use platform GPU acceleration. Windows on Arm and other
+Docker hosts require validation before they are treated as supported targets.
 
 The Compose service binds the web application to `127.0.0.1:4173`. This is a
 local-only development deployment. Do not expose it to a network without an
@@ -44,12 +45,19 @@ Install and start:
 
 ### Quick start
 
-Copy the environment template and run the setup script from the repository
-root:
+On macOS, copy the environment template and run the Bash setup script from the
+repository root:
 
 ```bash
 cp .env.example .env
 ./scripts/quickstart.sh
+```
+
+On Windows, use the native PowerShell setup script:
+
+```powershell
+Copy-Item .env.example .env
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\quickstart.ps1
 ```
 
 The script:
@@ -60,6 +68,11 @@ The script:
 4. verifies that the container can reach Ollama; and
 5. starts the application service.
 
+The Windows launcher additionally waits for application readiness and opens the
+local UI. See the [Windows Docker guide](windows-docker.md) for WSL 2 and Docker
+Desktop prerequisites, the required host Ollama binding, Windows Firewall
+guidance, browser audio, and troubleshooting.
+
 A cold image build can take several minutes because it installs the
 machine-learning and audio stack and downloads the Piper voice model. Cached
 rebuilds should be substantially faster.
@@ -67,6 +80,10 @@ rebuilds should be substantially faster.
 When startup completes, open `http://127.0.0.1:4173`.
 
 ### Manual start
+
+The following commands use a Unix shell and apply to macOS and Linux. Windows
+users should use the PowerShell launcher and direct `docker compose` commands
+documented in the [Windows Docker guide](windows-docker.md).
 
 If Ollama is not already accepting container connections, start it in the
 first terminal:
@@ -212,6 +229,11 @@ is intentional.
 ## Make command reference
 
 Run `make help` to display the primary targets.
+
+The Make targets are convenience commands for macOS and Linux development.
+Windows PowerShell users should use the equivalent `docker compose` commands in
+the [Windows Docker guide](windows-docker.md); GNU Make is not a Windows runtime
+prerequisite.
 
 | Command                 | Purpose                                                              |
 | ----------------------- | -------------------------------------------------------------------- |
