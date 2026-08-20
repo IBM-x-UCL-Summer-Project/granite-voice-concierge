@@ -46,8 +46,20 @@ function Test-NativeCommand {
         [Parameter(Mandatory = $true)][string[]] $ArgumentList
     )
 
-    & $FilePath @ArgumentList *> $null
-    return $LASTEXITCODE -eq 0
+    # Windows PowerShell 5.1 converts redirected native stderr into error
+    # records. With the script-wide Stop preference, ordinary Docker status
+    # messages such as "Container ... Creating" would otherwise terminate the
+    # launcher before the native process exit code can be checked.
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        & $FilePath @ArgumentList *> $null
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    return $exitCode -eq 0
 }
 
 function Read-ComposeEnvironment {
