@@ -57,6 +57,7 @@ from voice_concierge.voice_input.wake_word_detector import WakeWordPrediction
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 WEB_APPLICATION_SCRIPTS = (
+    "audio-stream.js",
     "app-context.js",
     "diagnostics.js",
     "settings.js",
@@ -117,6 +118,7 @@ def running_server(
     warm_up: Callable[[], None] | None = None,
     voice_input_enabled: bool = False,
     diagnostics_enabled: bool = False,
+    audio_stream: dict[str, object] | None = None,
 ) -> Iterator[str]:
     resolved_pipeline = pipeline or build_smoke_pipeline()
     server = PipelineWebServer(
@@ -129,6 +131,7 @@ def running_server(
         warm_up=warm_up,
         voice_input_enabled=voice_input_enabled,
         diagnostics_enabled=diagnostics_enabled,
+        audio_stream=audio_stream,
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -182,6 +185,18 @@ def test_health_reports_pipeline_capabilities() -> None:
         },
         "runtime": {"model": "smoke model", "policy_profile": "strict"},
     }
+
+
+def test_health_advertises_binary_audio_stream_when_enabled() -> None:
+    configuration: dict[str, object] = {
+        "path": "/api/audio-stream",
+        "port": 4174,
+        "subprotocol": "granite-audio-v1",
+    }
+    with running_server(audio_stream=configuration) as base_url:
+        response = read_json(f"{base_url}/api/health")
+
+    assert response["audio_stream"] == configuration
 
 
 def test_speech_preview_uses_configured_local_synthesizer() -> None:
@@ -359,6 +374,22 @@ def test_browser_microphone_capture_uses_audio_worklet() -> None:
     assert "getSettings" in script
     assert "createScriptProcessor" not in script
     assert "onaudioprocess" not in script
+
+
+def test_continuous_browser_audio_uses_bounded_binary_websocket() -> None:
+    stream = (REPOSITORY_ROOT / "web" / "audio-stream.js").read_text(encoding="utf-8")
+    wake_word = (REPOSITORY_ROOT / "web" / "wake-word.js").read_text(encoding="utf-8")
+    voice_commands = (REPOSITORY_ROOT / "web" / "voice-commands.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert "new WebSocket(" in stream
+    assert 'binaryType = "arraybuffer"' in stream
+    assert "AUDIO_STREAM_MAX_QUEUED_FRAMES" in stream
+    assert "bufferedAmount" in stream
+    assert "encodePcmBase64" not in wake_word + voice_commands
+    assert 'requestJson("/api/wake-word/frame"' not in wake_word
+    assert 'requestJson("/api/routine-command/frame"' not in voice_commands
 
 
 def test_browser_never_persists_conversation_state() -> None:

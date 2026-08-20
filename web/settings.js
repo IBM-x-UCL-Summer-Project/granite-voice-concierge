@@ -121,6 +121,7 @@ function collectSettingsDraft() {
 }
 
 async function savePersonalSettings() {
+  const previousMicrophoneId = state.settings.microphone_id;
   collectSettingsDraft();
   state.settings = {
     ...state.settingsDraft,
@@ -132,9 +133,33 @@ async function savePersonalSettings() {
   applyPersonalSettings();
   closeSetup();
   showToast("Personal settings saved on this device");
+  if (previousMicrophoneId !== state.settings.microphone_id) {
+    await applyMicrophoneSelection();
+  }
   if (state.settings.interaction_mode === "wake_word") {
     if (state.capabilities.wake_word) await startWakeWordMode();
     else showToast("Restart the server with --voice-io to use wake-word mode");
+  }
+}
+
+async function applyMicrophoneSelection() {
+  diagnostics.info("microphone_selection_applying", {
+    microphone_id: state.settings.microphone_id,
+    wake_word_active: state.wakeWord.active,
+    voice_command_active: state.voiceCommands.serverActive,
+    push_to_talk_active: Boolean(state.recorder),
+  });
+  if (state.recorder) {
+    await stopVoiceRecording({ submit: false, reason: "device_switch" });
+  }
+  if (state.wakeWord.active) {
+    stopWakeWordMode({ resumeVoiceCommands: false });
+    await startWakeWordMode();
+    return;
+  }
+  if (voiceCommandContextActive()) {
+    stopVoiceCommandListening();
+    await startVoiceCommandListening();
   }
 }
 
@@ -252,14 +277,9 @@ async function saveWakeQuickSettings() {
   if (state.wakeWord.active
       && previousSensitivity !== state.settings.wake_word_sensitivity) {
     try {
-      await requestJson(
-        "/api/wake-word/start",
-        { sensitivity: state.settings.wake_word_sensitivity },
-        {
-          updateConnection: false,
-          timeoutMilliseconds: WAKE_WORD_REQUEST_TIMEOUT_MILLISECONDS,
-        },
-      );
+      await state.wakeWord.stream?.reset({
+        sensitivity: Number(state.settings.wake_word_sensitivity),
+      });
       resetWakeWordFrameBuffer();
     } catch (error) {
       showToast(error.message);
@@ -368,6 +388,7 @@ async function handleAudioDeviceChange() {
       window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(state.settings));
       elements.microphoneSelect.value = "default";
       showToast("Selected microphone was removed; using the system default");
+      await applyMicrophoneSelection();
     }
   } catch (error) {
     diagnostics.warning("audio_device_change_check_failed", {

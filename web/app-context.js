@@ -6,8 +6,6 @@ const HEALTH_POLL_MILLISECONDS = 5000;
 const DUE_POLL_MILLISECONDS = 5000;
 const REQUEST_TIMEOUT_MILLISECONDS = 130000;
 const WAKE_WORD_REQUEST_TIMEOUT_MILLISECONDS = 5000;
-const WAKE_WORD_FRAME_SAMPLES = 3200;
-const VOICE_COMMAND_FRAME_SAMPLES = 3200;
 const WAKE_COMMAND_START_TIMEOUT_MILLISECONDS = 7000;
 const WAKE_COMMAND_ARM_DELAY_MILLISECONDS = 350;
 const PUSH_TO_TALK_MAXIMUM_MILLISECONDS = 60000;
@@ -21,6 +19,7 @@ const {
   prepareWakeCapture,
   speechCanStart,
 } = window.GraniteWakeCapturePolicy;
+const { PcmWebSocketStream } = window.GraniteAudioStreaming;
 
 const defaultSettings = {
   version: 2,
@@ -78,16 +77,15 @@ const state = {
     privacy_centre: false,
   },
   connection: "connecting",
+  audioStream: null,
   recorder: null,
   recorderStarting: false,
   wakeWord: {
     active: false,
     generation: 0,
     audio: null,
+    stream: null,
     phase: "inactive",
-    frameChunks: [],
-    frameSampleCount: 0,
-    sendingFrame: false,
     commandChunks: [],
     commandStartedAt: 0,
     speechArmedAt: 0,
@@ -110,10 +108,8 @@ const state = {
   },
   voiceCommands: {
     serverActive: false,
-    sendingFrame: false,
-    frameChunks: [],
-    frameSampleCount: 0,
     audio: null,
+    stream: null,
     generation: 0,
     starting: false,
   },

@@ -320,6 +320,7 @@ async function connectPipeline({ silent = false } = {}) {
       diagnostic: !silent,
     });
     state.capabilities = { ...state.capabilities, ...health.capabilities };
+    state.audioStream = health.audio_stream || null;
     diagnostics.setEnabled(Boolean(state.capabilities.diagnostics));
     if (!silent) diagnostics.debug("health_received", health);
     const healthStatus = ["ready", "starting", "error"].includes(health.status)
@@ -366,6 +367,7 @@ async function connectPipeline({ silent = false } = {}) {
       diagnostics: false,
       privacy_centre: false,
     };
+    state.audioStream = null;
     diagnostics.setEnabled(false);
     setConnectionStatus("offline");
   }

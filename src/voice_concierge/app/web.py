@@ -40,6 +40,12 @@ from voice_concierge.app.serialization import (
     captured_audio_to_dict,
 )
 from voice_concierge.app.types import AppPipelineState, ConversationTurn
+from voice_concierge.app.web_audio_stream import (
+    AUDIO_STREAM_PATH,
+    AUDIO_STREAM_SUBPROTOCOL,
+    WebAudioStreamServer,
+    local_web_origins,
+)
 from voice_concierge.app.web_features import (
     WebFeatureServices,
     WebReminderNotifier,
@@ -72,6 +78,7 @@ from voice_concierge.scheduling.errors import SchedulingError
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 4173
+DEFAULT_AUDIO_STREAM_PORT = 4174
 MAX_REQUEST_BYTES = 16 * 1024 * 1024
 MAX_WEB_SESSIONS = 32
 MAX_WEB_SESSION_HISTORY = 200
@@ -346,6 +353,7 @@ class PipelineWebServer(ThreadingHTTPServer):
         routine_command_service: WebRoutineCommandService | None = None,
         warm_up: Callable[[], None] | None = None,
         diagnostics_enabled: bool = False,
+        audio_stream: Mapping[str, Any] | None = None,
     ) -> None:
         resolved_policy_profile = validate_reasoning_policy_profile(policy_profile)
         self.pipeline = pipeline
@@ -353,6 +361,7 @@ class PipelineWebServer(ThreadingHTTPServer):
         self.wake_word_service = wake_word_service
         self.routine_command_service = routine_command_service
         self.diagnostics_enabled = diagnostics_enabled
+        self.audio_stream = dict(audio_stream) if audio_stream is not None else None
         self.web_directory = web_directory
         self.capabilities = {
             "text_input": True,
@@ -401,12 +410,18 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
             )
         if path == "/api/health":
             readiness = self.server.readiness.snapshot()
+            audio_stream = (
+                {"audio_stream": self.server.audio_stream}
+                if self.server.audio_stream is not None
+                else {}
+            )
             self._write_json(
                 HTTPStatus.OK,
                 {
                     **readiness,
                     "capabilities": self.server.capabilities,
                     "runtime": self.server.runtime,
+                    **audio_stream,
                 },
             )
             return
@@ -1431,6 +1446,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Serve the pipeline-connected web UI.")
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", default=DEFAULT_PORT, type=int)
+    parser.add_argument(
+        "--audio-stream-port",
+        default=DEFAULT_AUDIO_STREAM_PORT,
+        type=int,
+        help="Port for bounded binary browser microphone streams.",
+    )
     memory_group = parser.add_mutually_exclusive_group()
     memory_group.add_argument(
         "--memory",
@@ -1547,11 +1568,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         warm_up=None if args.demo else pipeline.warm_up,
         diagnostics_enabled=args.log_level == "DEBUG",
     )
+    audio_stream_server = None
+    if wake_word_service is not None or routine_command_service is not None:
+        audio_stream_server = WebAudioStreamServer(
+            (args.host, args.audio_stream_port),
+            sessions=server.sessions,
+            allowed_origins=local_web_origins(args.host, args.port),
+            wake_word_service=wake_word_service,
+            routine_command_service=routine_command_service,
+        )
+        audio_stream_server.start()
+        server.audio_stream = {
+            "path": AUDIO_STREAM_PATH,
+            "port": audio_stream_server.server_address[1],
+            "subprotocol": AUDIO_STREAM_SUBPROTOCOL,
+        }
     features.start()
     print(f"Granite web UI: http://{args.host}:{args.port}")
     LOGGER.info(
         "web_server_started host=%s port=%s memory=%s voice_io=%s "
-        "model=%s policy_profile=%s reminders=%s guided_routines=%s wake_word=%s",
+        "model=%s policy_profile=%s reminders=%s guided_routines=%s wake_word=%s "
+        "audio_stream_port=%s",
         args.host,
         args.port,
         args.memory,
@@ -1561,6 +1598,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         not args.no_reminders and not args.demo,
         not args.no_guided_routines and not args.demo,
         wake_word_enabled,
+        audio_stream_server.server_address[1] if audio_stream_server else "disabled",
     )
     try:
         server.serve_forever()
@@ -1568,6 +1606,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("\nGranite web UI stopped.")
     finally:
         server.server_close()
+        if audio_stream_server is not None:
+            audio_stream_server.close()
         features.close()
         pipeline.close()
     return 0

@@ -15,8 +15,7 @@ function voiceCommandContextActive() {
 }
 
 function resetVoiceCommandFrameBuffer() {
-  state.voiceCommands.frameChunks = [];
-  state.voiceCommands.frameSampleCount = 0;
+  state.voiceCommands.stream?.drainPendingSamples();
 }
 
 function tearDownVoiceCommandAudio() {
@@ -39,16 +38,27 @@ async function startVoiceCommandListening() {
     wake_word_active: state.wakeWord.active,
   });
   try {
-    await requestJson(
-      "/api/routine-command/start",
-      {},
-      {
-        updateConnection: false,
-        timeoutMilliseconds: WAKE_WORD_REQUEST_TIMEOUT_MILLISECONDS,
+    const stream = new PcmWebSocketStream({
+      mode: "voice_command",
+      onResult: handleVoiceCommandStreamResult,
+      onError: (error) => {
+        if (generation !== state.voiceCommands.generation) return;
+        diagnostics.error("voice_command_stream_failed", {
+          generation,
+          error_message: error.message,
+        });
+        showToast("Hands-free playback controls stopped");
+        stopVoiceCommandListening();
       },
-    );
+      onDrop: (event) => diagnostics.warning("voice_command_frame_dropped", event),
+    });
+    state.voiceCommands.stream = stream;
+    await stream.start();
     state.voiceCommands.serverActive = true;
-    diagnostics.info("voice_command_backend_started", { generation });
+    diagnostics.info("voice_command_backend_started", {
+      generation,
+      transport: "binary_websocket",
+    });
     resetVoiceCommandFrameBuffer();
     if (!voiceCommandContextActive()
         || generation !== state.voiceCommands.generation) {
@@ -106,25 +116,16 @@ async function startVoiceCommandListening() {
 
 function stopVoiceCommandListening() {
   const wasServerActive = state.voiceCommands.serverActive;
+  const stream = state.voiceCommands.stream;
   state.voiceCommands.generation += 1;
-  state.voiceCommands.sendingFrame = false;
   resetVoiceCommandFrameBuffer();
   tearDownVoiceCommandAudio();
+  state.voiceCommands.stream = null;
+  stream?.stop();
   state.voiceCommands.serverActive = false;
   diagnostics.info("voice_command_listener_stopped", {
     generation: state.voiceCommands.generation,
     server_was_active: wasServerActive,
-  });
-  if (!wasServerActive) return;
-  requestJson(
-    "/api/routine-command/stop",
-    {},
-    {
-      updateConnection: false,
-      timeoutMilliseconds: WAKE_WORD_REQUEST_TIMEOUT_MILLISECONDS,
-    },
-  ).catch(() => {
-    // Local state is already stopped; the server expires with the session.
   });
 }
 
@@ -138,56 +139,23 @@ function enqueueVoiceCommandFrame(samples) {
   if (state.routine.awaiting_confirmation
       && !state.routine.confirmationReady
       && !state.playback) return;
-  state.voiceCommands.frameChunks.push(samples);
-  state.voiceCommands.frameSampleCount += samples.length;
-  flushVoiceCommandFrame();
+  state.voiceCommands.stream?.push(samples);
 }
 
-async function flushVoiceCommandFrame() {
-  if (!voiceCommandContextActive()
-      || !state.voiceCommands.serverActive
-      || state.voiceCommands.sendingFrame
-      || state.voiceCommands.frameSampleCount < VOICE_COMMAND_FRAME_SAMPLES) return;
-  const samples = mergeAudioChunks(state.voiceCommands.frameChunks);
+async function handleVoiceCommandStreamResult(result) {
   const generation = state.voiceCommands.generation;
-  const frame = samples.slice(0, VOICE_COMMAND_FRAME_SAMPLES);
-  const remainder = samples.slice(VOICE_COMMAND_FRAME_SAMPLES);
-  state.voiceCommands.frameChunks = remainder.length ? [remainder] : [];
-  state.voiceCommands.frameSampleCount = remainder.length;
-  state.voiceCommands.sendingFrame = true;
-  try {
-    const result = await requestJson(
-      "/api/routine-command/frame",
-      { pcm_base64: encodePcmBase64(frame) },
-      {
-        updateConnection: false,
-        timeoutMilliseconds: WAKE_WORD_REQUEST_TIMEOUT_MILLISECONDS,
-      },
-    );
-    if (result.command
-        && voiceCommandContextActive()
-        && generation === state.voiceCommands.generation) {
-      diagnostics.info("voice_command_detected", {
-        command: result.command,
-        phrase: result.phrase,
-        confidence: result.confidence,
-        target: state.routine.active ? "routine" : "playback",
-      });
-      if (state.routine.active) await handleRoutineVoiceCommand(result.command);
-      else await handlePlaybackVoiceCommand(result.command);
-    }
-  } catch {
-    if (generation === state.voiceCommands.generation) {
-      state.voiceCommands.serverActive = false;
-      tearDownVoiceCommandAudio();
-      showToast("Hands-free playback controls stopped");
-    }
-  } finally {
-    if (generation === state.voiceCommands.generation) {
-      state.voiceCommands.sendingFrame = false;
-      flushVoiceCommandFrame();
-    }
-  }
+  if (!result.command
+      || !voiceCommandContextActive()
+      || generation !== state.voiceCommands.generation) return;
+  diagnostics.info("voice_command_detected", {
+    command: result.command,
+    phrase: result.phrase,
+    confidence: result.confidence,
+    server_processing_ms: result.processing_ms,
+    target: state.routine.active ? "routine" : "playback",
+  });
+  if (state.routine.active) await handleRoutineVoiceCommand(result.command);
+  else await handlePlaybackVoiceCommand(result.command);
 }
 
 async function handlePlaybackVoiceCommand(command) {
@@ -317,14 +285,7 @@ function armRoutineConfirmationWindow() {
       if (generation !== state.routine.autoGeneration) return;
       resetVoiceCommandFrameBuffer();
       try {
-        await requestJson(
-          "/api/routine-command/reset",
-          {},
-          {
-            updateConnection: false,
-            timeoutMilliseconds: WAKE_WORD_REQUEST_TIMEOUT_MILLISECONDS,
-          },
-        );
+        await state.voiceCommands.stream?.reset();
         if (generation === state.routine.autoGeneration) {
           state.routine.confirmationReady = true;
         }

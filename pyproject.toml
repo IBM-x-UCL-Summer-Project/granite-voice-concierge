@@ -37,6 +37,8 @@ dependencies = [
     # Utilities
     "numpy>=2,<3",
     "psutil>=5,<8",
+    # Browser PCM streaming (threaded server beside the local HTTP UI)
+    "websockets>=16,<18",
 ]
 
 [project.optional-dependencies]

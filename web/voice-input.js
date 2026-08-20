@@ -137,22 +137,3 @@ function encodeWavBase64(samples, sampleRate) {
   }
   return window.btoa(binary);
 }
-
-function encodePcmBase64(samples) {
-  const buffer = new ArrayBuffer(samples.length * 2);
-  const view = new DataView(buffer);
-  samples.forEach((sample, index) => {
-    const clipped = Math.max(-1, Math.min(1, sample));
-    view.setInt16(
-      index * 2,
-      clipped < 0 ? clipped * 0x8000 : clipped * 0x7fff,
-      true,
-    );
-  });
-  const bytes = new Uint8Array(buffer);
-  let binary = "";
-  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
-    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
-  }
-  return window.btoa(binary);
-}

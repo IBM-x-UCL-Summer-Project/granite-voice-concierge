@@ -20,9 +20,10 @@ class WebRoutineCommandService:
         self._spotter_factory = spotter_factory
         self._spotter: CommandSpotter | None = None
         self._active_session_id: str | None = None
+        self._active_stream_id: str | None = None
         self._lock = RLock()
 
-    def start(self, session_id: str) -> None:
+    def start(self, session_id: str, *, stream_id: str | None = None) -> None:
         """Start a clean stream while keeping the local model warm."""
 
         with self._lock:
@@ -31,24 +32,31 @@ class WebRoutineCommandService:
             else:
                 self._reset_spotter()
             self._active_session_id = session_id
+            self._active_stream_id = stream_id
 
-    def stop(self, session_id: str | None) -> bool:
+    def stop(self, session_id: str | None, *, stream_id: str | None = None) -> bool:
         """Stop this session without allowing stale tabs to stop another."""
 
         with self._lock:
-            if session_id is None or session_id != self._active_session_id:
+            if (
+                session_id is None
+                or session_id != self._active_session_id
+                or stream_id != self._active_stream_id
+            ):
                 return False
             self._active_session_id = None
+            self._active_stream_id = None
             self._reset_spotter()
             return True
 
-    def reset(self, session_id: str | None) -> None:
+    def reset(self, session_id: str | None, *, stream_id: str | None = None) -> None:
         """Discard prompt audio before accepting a confirmation answer."""
 
         with self._lock:
             if (
                 session_id is None
                 or session_id != self._active_session_id
+                or stream_id != self._active_stream_id
                 or self._spotter is None
             ):
                 raise RoutineCommandSessionInactiveError(
@@ -60,6 +68,8 @@ class WebRoutineCommandService:
         self,
         session_id: str | None,
         pcm: bytes,
+        *,
+        stream_id: str | None = None,
     ) -> CommandEvent | None:
         """Return the first stable command found in a mono int16 PCM block."""
 
@@ -69,6 +79,7 @@ class WebRoutineCommandService:
             if (
                 session_id is None
                 or session_id != self._active_session_id
+                or stream_id != self._active_stream_id
                 or self._spotter is None
             ):
                 raise RoutineCommandSessionInactiveError(

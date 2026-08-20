@@ -45,39 +45,71 @@ class WebWakeWordService:
     def __init__(self, detector: WakeWordStreamDetector) -> None:
         self._detector = detector
         self._active_session_id: str | None = None
+        self._active_stream_id: str | None = None
         self._confidence_threshold = 0.3
         self._lock = RLock()
 
-    def start(self, session_id: str, *, sensitivity: int) -> float:
+    def start(
+        self,
+        session_id: str,
+        *,
+        sensitivity: int,
+        stream_id: str | None = None,
+    ) -> float:
         """Start or replace the active stream and return its score threshold."""
 
         threshold = sensitivity_to_threshold(sensitivity)
         with self._lock:
             self._detector.reset()
             self._active_session_id = session_id
+            self._active_stream_id = stream_id
             self._confidence_threshold = threshold
         return threshold
 
-    def stop(self, session_id: str | None) -> bool:
+    def stop(self, session_id: str | None, *, stream_id: str | None = None) -> bool:
         """Stop this session without allowing a stale tab to stop another."""
 
         with self._lock:
-            if session_id is None or session_id != self._active_session_id:
+            if (
+                session_id is None
+                or session_id != self._active_session_id
+                or stream_id != self._active_stream_id
+            ):
                 return False
             self._detector.reset()
             self._active_session_id = None
+            self._active_stream_id = None
             return True
 
-    def process_pcm(self, session_id: str | None, pcm: bytes) -> WebWakeWordResult:
+    def reset(
+        self,
+        session_id: str | None,
+        *,
+        stream_id: str | None = None,
+        sensitivity: int | None = None,
+    ) -> float:
+        """Discard buffered audio and optionally update the active threshold."""
+
+        with self._lock:
+            self._require_active_stream(session_id, stream_id)
+            if sensitivity is not None:
+                self._confidence_threshold = sensitivity_to_threshold(sensitivity)
+            self._detector.reset()
+            return self._confidence_threshold
+
+    def process_pcm(
+        self,
+        session_id: str | None,
+        pcm: bytes,
+        *,
+        stream_id: str | None = None,
+    ) -> WebWakeWordResult:
         """Process little-endian mono int16 samples for the active session."""
 
         if not pcm or len(pcm) % 2:
             raise ValueError("pcm must contain complete 16-bit samples.")
         with self._lock:
-            if session_id is None or session_id != self._active_session_id:
-                raise WakeWordSessionInactiveError(
-                    "Wake-word listening is not active for this browser session."
-                )
+            self._require_active_stream(session_id, stream_id)
             samples = np.frombuffer(pcm, dtype="<i2").astype(np.int16, copy=False)
             prediction = self._detector.process_audio(
                 samples,
@@ -90,6 +122,20 @@ class WebWakeWordService:
             phrase=prediction.phrase,
             confidence=prediction.confidence,
         )
+
+    def _require_active_stream(
+        self,
+        session_id: str | None,
+        stream_id: str | None,
+    ) -> None:
+        if (
+            session_id is None
+            or session_id != self._active_session_id
+            or stream_id != self._active_stream_id
+        ):
+            raise WakeWordSessionInactiveError(
+                "Wake-word listening is not active for this browser session."
+            )
 
 
 def sensitivity_to_threshold(sensitivity: int) -> float:

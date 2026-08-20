@@ -68,13 +68,13 @@ ENV HOME=/home/app \
 
 USER app
 
-# Browser UI and API
-EXPOSE 4173
+# Browser UI/API and binary browser microphone stream
+EXPOSE 4173 4174
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 # Bind inside the container; host exposure remains controlled by the published
 # port address in Compose or docker run.
-CMD ["python", "-m", "voice_concierge.app.web", "--host", "0.0.0.0", "--port", "4173", "--voice-io", "--log-level", "INFO"]
+CMD ["python", "-m", "voice_concierge.app.web", "--host", "0.0.0.0", "--port", "4173", "--audio-stream-port", "4174", "--voice-io", "--log-level", "INFO"]
 
 # Development and test tooling live in a separate target. The final runtime
 # stage below remains small, while docker-compose.dev.yml can opt into this
