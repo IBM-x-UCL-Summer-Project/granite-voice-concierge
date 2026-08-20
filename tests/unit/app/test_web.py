@@ -63,6 +63,7 @@ WEB_APPLICATION_SCRIPTS = (
     "conversation.js",
     "api-client.js",
     "playback.js",
+    "audio-capture.js",
     "voice-input.js",
     "voice-commands.js",
     "wake-word.js",
@@ -332,6 +333,12 @@ def test_static_ui_disables_browser_cache() -> None:
         with urlopen(f"{base_url}/", timeout=2) as response:
             html = response.read().decode("utf-8")
             cache_control = response.headers.get("Cache-Control")
+        worklet_assets = []
+        for asset in ("audio-capture-worklet.mjs", "audio-resampler.mjs"):
+            with urlopen(f"{base_url}/{asset}", timeout=2) as response:
+                worklet_assets.append(
+                    (response.status, response.headers.get("Cache-Control"))
+                )
 
     assert cache_control == "no-store"
     assert "./playback-policy.js?v=20260820" in html
@@ -340,6 +347,18 @@ def test_static_ui_disables_browser_cache() -> None:
         assert f"./{name}?v=20260820-" in html
     assert "./app.js?v=20260820-3" in html
     assert "./styles.css?v=20260820-2" in html
+
+    assert worklet_assets == [(200, "no-store"), (200, "no-store")]
+
+
+def test_browser_microphone_capture_uses_audio_worklet() -> None:
+    script = read_web_application_scripts()
+
+    assert "openMicrophoneCapture({" in script
+    assert "getSupportedConstraints" in script
+    assert "getSettings" in script
+    assert "createScriptProcessor" not in script
+    assert "onaudioprocess" not in script
 
 
 def test_browser_never_persists_conversation_state() -> None:

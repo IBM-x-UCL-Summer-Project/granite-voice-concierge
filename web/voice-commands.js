@@ -23,17 +23,7 @@ function tearDownVoiceCommandAudio() {
   const audio = state.voiceCommands.audio;
   state.voiceCommands.audio = null;
   if (!audio) return;
-  audio.processor.onaudioprocess = null;
-  for (const node of [audio.processor, audio.source, audio.silentGain]) {
-    try {
-      node.disconnect();
-    } catch {
-      // Browsers may disconnect audio nodes while their context is closing.
-    }
-  }
-  audio.stream.getTracks().forEach((track) => track.stop());
-  const closing = audio.context.close();
-  if (closing?.catch) closing.catch(() => {});
+  audio.stop({ flush: false }).catch(() => {});
 }
 
 async function startVoiceCommandListening() {
@@ -67,58 +57,39 @@ async function startVoiceCommandListening() {
     }
     if (state.wakeWord.active || state.voiceCommands.audio) return;
 
-    const selectedDevice = state.settings.microphone_id === "default"
-      ? {}
-      : { deviceId: { exact: state.settings.microphone_id } };
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        ...selectedDevice,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
+    const audio = await openMicrophoneCapture({
+      microphoneId: state.settings.microphone_id,
+      purpose: "voice_command",
+      onSamples: enqueueVoiceCommandFrame,
+      onEnded: () => {
+        if (generation !== state.voiceCommands.generation) return;
+        showToast("Hands-free playback controls stopped");
+        stopVoiceCommandListening();
+      },
+      onStateChange: (contextState) => {
+        if (contextState === "suspended" && voiceCommandContextActive()) {
+          diagnostics.warning("voice_command_microphone_suspended", { generation });
+        }
       },
     });
     if (!voiceCommandContextActive()
         || generation !== state.voiceCommands.generation
         || state.wakeWord.active) {
-      stream.getTracks().forEach((track) => track.stop());
+      await audio.stop({ flush: false });
       if (!voiceCommandContextActive()) stopVoiceCommandListening();
       return;
     }
-    const AudioContext = window.AudioContext || window.webkitAudioContext;
-    const context = new AudioContext();
-    await context.resume();
-    const source = context.createMediaStreamSource(stream);
-    const processor = context.createScriptProcessor(4096, 1, 1);
-    const silentGain = context.createGain();
-    silentGain.gain.value = 0;
-    source.connect(processor);
-    processor.connect(silentGain);
-    silentGain.connect(context.destination);
-    state.voiceCommands.audio = {
-      stream,
-      context,
-      source,
-      processor,
-      silentGain,
-      sourceRate: context.sampleRate,
-    };
+    state.voiceCommands.audio = audio;
     diagnostics.info("voice_command_microphone_started", {
       generation,
-      sample_rate: context.sampleRate,
+      sample_rate: MICROPHONE_TARGET_SAMPLE_RATE,
       microphone_id: state.settings.microphone_id,
+      settings: audio.settings,
     });
-    processor.onaudioprocess = (event) => {
-      const samples = resampleAudio(
-        new Float32Array(event.inputBuffer.getChannelData(0)),
-        context.sampleRate,
-        16000,
-      );
-      enqueueVoiceCommandFrame(samples);
-    };
   } catch (error) {
-    state.voiceCommands.serverActive = false;
-    tearDownVoiceCommandAudio();
+    const backendWasActive = state.voiceCommands.serverActive;
+    stopVoiceCommandListening();
+    if (!backendWasActive) state.voiceCommands.serverActive = false;
     diagnostics.error("voice_command_listener_failed", {
       generation,
       error_name: error.name,
@@ -363,4 +334,3 @@ function armRoutineConfirmationWindow() {
     }, 500);
   });
 }
-

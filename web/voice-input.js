@@ -1,42 +1,43 @@
 // Push-to-talk capture and browser audio encoding.
 
 async function startVoiceRecording() {
+  if (state.recorderStarting || state.recorder) return;
   if (!state.capabilities.voice_input) {
     showToast("Restart the local UI server with --voice-io to enable speech input");
     return;
   }
-  const audioConstraint = state.settings.microphone_id === "default"
-    ? true
-    : { deviceId: { exact: state.settings.microphone_id } };
+  state.recorderStarting = true;
+  updateSendState();
+  const recorder = {
+    capture: null,
+    chunks: [],
+    startedAt: performance.now(),
+    maximumTimer: null,
+  };
   try {
     diagnostics.info("push_to_talk_capture_starting", {
       microphone_id: state.settings.microphone_id,
     });
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraint });
-    const AudioContext = window.AudioContext || window.webkitAudioContext;
-    const context = new AudioContext();
-    const source = context.createMediaStreamSource(stream);
-    const processor = context.createScriptProcessor(4096, 1, 1);
-    const silentGain = context.createGain();
-    silentGain.gain.value = 0;
-    const chunks = [];
-    processor.onaudioprocess = (event) => {
-      chunks.push(new Float32Array(event.inputBuffer.getChannelData(0)));
-    };
-    source.connect(processor);
-    processor.connect(silentGain);
-    silentGain.connect(context.destination);
-    state.recorder = {
-      stream,
-      context,
-      source,
-      processor,
-      silentGain,
-      chunks,
-      startedAt: performance.now(),
-    };
+    recorder.capture = await openMicrophoneCapture({
+      microphoneId: state.settings.microphone_id,
+      purpose: "push_to_talk",
+      onSamples: (samples) => recorder.chunks.push(samples),
+      onEnded: () => {
+        if (state.recorder === recorder) {
+          showToast("Microphone input stopped");
+          stopVoiceRecording({ submit: false, reason: "track_ended" });
+        }
+      },
+    });
+    state.recorder = recorder;
+    recorder.maximumTimer = window.setTimeout(() => {
+      if (state.recorder !== recorder) return;
+      showToast("Maximum recording length reached; sending now");
+      stopVoiceRecording({ reason: "maximum_duration" });
+    }, PUSH_TO_TALK_MAXIMUM_MILLISECONDS);
     diagnostics.info("push_to_talk_capture_started", {
-      source_sample_rate: context.sampleRate,
+      sample_rate: MICROPHONE_TARGET_SAMPLE_RATE,
+      maximum_duration_ms: PUSH_TO_TALK_MAXIMUM_MILLISECONDS,
     });
     elements.microphoneButton.classList.add("is-recording");
     elements.microphoneButton.setAttribute("aria-label", "Stop and send voice input");
@@ -49,41 +50,48 @@ async function startVoiceRecording() {
     showToast(error.name === "NotAllowedError"
       ? "Microphone permission was not allowed"
       : "The selected microphone is unavailable");
+  } finally {
+    state.recorderStarting = false;
+    updateSendState();
   }
 }
 
-async function stopVoiceRecording() {
+async function stopVoiceRecording({ submit = true, reason = "user" } = {}) {
   const recorder = state.recorder;
   if (!recorder) return;
   state.recorder = null;
-  recorder.processor.disconnect();
-  recorder.source.disconnect();
-  recorder.silentGain.disconnect();
-  recorder.stream.getTracks().forEach((track) => track.stop());
-  const sourceRate = recorder.context.sampleRate;
-  await recorder.context.close();
+  window.clearTimeout(recorder.maximumTimer);
   elements.microphoneButton.classList.remove("is-recording");
   elements.microphoneButton.setAttribute("aria-label", "Start voice input");
   elements.microphoneButton.title = "Start voice input";
+  await recorder.capture.stop({ flush: submit });
+  updateSendState();
 
   const samples = mergeAudioChunks(recorder.chunks);
   diagnostics.info("push_to_talk_capture_stopped", {
     capture_elapsed_ms: Math.round(performance.now() - recorder.startedAt),
-    source_sample_rate: sourceRate,
-    source_samples: samples.length,
-    audio_seconds: Number((samples.length / sourceRate).toFixed(3)),
+    sample_rate: MICROPHONE_TARGET_SAMPLE_RATE,
+    samples: samples.length,
+    audio_seconds: Number(
+      (samples.length / MICROPHONE_TARGET_SAMPLE_RATE).toFixed(3),
+    ),
+    reason,
+    submitted: submit,
   });
-  if (samples.length < sourceRate / 5) {
+  if (!submit) return;
+  if (samples.length < MICROPHONE_TARGET_SAMPLE_RATE / 5) {
     diagnostics.warning("push_to_talk_capture_rejected", {
       reason: "too_short",
-      source_samples: samples.length,
-      minimum_samples: sourceRate / 5,
+      samples: samples.length,
+      minimum_samples: MICROPHONE_TARGET_SAMPLE_RATE / 5,
     });
     showToast("That recording was too short");
     return;
   }
-  const resampled = resampleAudio(samples, sourceRate, 16000);
-  await runTurn({ kind: "audio", wavBase64: encodeWavBase64(resampled, 16000) });
+  await runTurn({
+    kind: "audio",
+    wavBase64: encodeWavBase64(samples, MICROPHONE_TARGET_SAMPLE_RATE),
+  });
 }
 
 function mergeAudioChunks(chunks) {
@@ -95,21 +103,6 @@ function mergeAudioChunks(chunks) {
     offset += chunk.length;
   });
   return merged;
-}
-
-function resampleAudio(samples, sourceRate, targetRate) {
-  if (sourceRate === targetRate) return samples;
-  const targetLength = Math.max(1, Math.round(samples.length * targetRate / sourceRate));
-  const output = new Float32Array(targetLength);
-  const ratio = sourceRate / targetRate;
-  for (let index = 0; index < targetLength; index += 1) {
-    const position = index * ratio;
-    const left = Math.floor(position);
-    const right = Math.min(left + 1, samples.length - 1);
-    const fraction = position - left;
-    output[index] = samples[left] * (1 - fraction) + samples[right] * fraction;
-  }
-  return output;
 }
 
 function encodeWavBase64(samples, sampleRate) {
@@ -163,4 +156,3 @@ function encodePcmBase64(samples) {
   }
   return window.btoa(binary);
 }
-

@@ -10,6 +10,7 @@ const WAKE_WORD_FRAME_SAMPLES = 3200;
 const VOICE_COMMAND_FRAME_SAMPLES = 3200;
 const WAKE_COMMAND_START_TIMEOUT_MILLISECONDS = 7000;
 const WAKE_COMMAND_ARM_DELAY_MILLISECONDS = 350;
+const PUSH_TO_TALK_MAXIMUM_MILLISECONDS = 60000;
 const SILENT_WAV_URL = "data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQIAAAAAAA==";
 const {
   isPlaybackBargeInCommand,
@@ -78,6 +79,7 @@ const state = {
   },
   connection: "connecting",
   recorder: null,
+  recorderStarting: false,
   wakeWord: {
     active: false,
     generation: 0,
@@ -223,4 +225,3 @@ function loadSettings() {
     return structuredClone(defaultSettings);
   }
 }
-

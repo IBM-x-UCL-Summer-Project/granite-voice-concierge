@@ -351,3 +351,28 @@ function populateDeviceSelect(select, devices, defaultLabel, fallbackLabel) {
     ? selectedValue
     : "default";
 }
+
+async function handleAudioDeviceChange() {
+  if (!navigator.mediaDevices?.enumerateDevices) return;
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const microphones = devices.filter((device) => device.kind === "audioinput");
+    const selectedMicrophoneAvailable = state.settings.microphone_id === "default"
+      || microphones.some((device) => device.deviceId === state.settings.microphone_id);
+    diagnostics.info("audio_devices_changed", {
+      microphones: microphones.length,
+      selected_microphone_available: selectedMicrophoneAvailable,
+    });
+    if (!selectedMicrophoneAvailable) {
+      state.settings.microphone_id = "default";
+      window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(state.settings));
+      elements.microphoneSelect.value = "default";
+      showToast("Selected microphone was removed; using the system default");
+    }
+  } catch (error) {
+    diagnostics.warning("audio_device_change_check_failed", {
+      error_name: error.name,
+      error_message: error.message,
+    });
+  }
+}

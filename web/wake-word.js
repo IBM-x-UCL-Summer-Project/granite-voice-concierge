@@ -33,17 +33,7 @@ function tearDownWakeWordAudio() {
   const audio = state.wakeWord.audio;
   state.wakeWord.audio = null;
   if (!audio) return;
-  audio.processor.onaudioprocess = null;
-  for (const node of [audio.processor, audio.source, audio.silentGain]) {
-    try {
-      node.disconnect();
-    } catch {
-      // A browser may disconnect audio nodes automatically as the context closes.
-    }
-  }
-  audio.stream.getTracks().forEach((track) => track.stop());
-  const closing = audio.context.close();
-  if (closing?.catch) closing.catch(() => {});
+  audio.stop({ flush: false }).catch(() => {});
 }
 
 async function startWakeWordMode() {
@@ -70,46 +60,40 @@ async function startWakeWordMode() {
     detail: "Microphone samples remain on this device and are checked by the local wake-word model.",
   });
 
-  const audioConstraint = state.settings.microphone_id === "default"
-    ? true
-    : { deviceId: { exact: state.settings.microphone_id } };
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraint });
+    const audio = await openMicrophoneCapture({
+      microphoneId: state.settings.microphone_id,
+      purpose: "wake_word",
+      onSamples: handleWakeWordAudio,
+      onEnded: () => {
+        if (generation !== state.wakeWord.generation || !state.wakeWord.active) return;
+        state.wakeWord.active = false;
+        tearDownWakeWordAudio();
+        setWakeWordView("error", {
+          title: "Wake mode stopped",
+          status: "The microphone stopped providing audio",
+          detail: "Check the selected microphone, then start wake mode again.",
+        });
+        updateSendState();
+      },
+      onStateChange: (contextState) => {
+        if (contextState === "suspended" && state.wakeWord.active) {
+          diagnostics.warning("wake_microphone_suspended", { generation });
+        }
+      },
+    });
     if (generation !== state.wakeWord.generation) {
-      stream.getTracks().forEach((track) => track.stop());
+      await audio.stop({ flush: false });
       return;
     }
-    const AudioContext = window.AudioContext || window.webkitAudioContext;
-    const context = new AudioContext();
-    await context.resume();
-    if (generation !== state.wakeWord.generation) {
-      stream.getTracks().forEach((track) => track.stop());
-      const closing = context.close();
-      if (closing?.catch) closing.catch(() => {});
-      return;
-    }
-    const source = context.createMediaStreamSource(stream);
-    const processor = context.createScriptProcessor(4096, 1, 1);
-    const silentGain = context.createGain();
-    silentGain.gain.value = 0;
-    source.connect(processor);
-    processor.connect(silentGain);
-    silentGain.connect(context.destination);
-    state.wakeWord.audio = {
-      stream,
-      context,
-      source,
-      processor,
-      silentGain,
-      sourceRate: context.sampleRate,
-    };
+    state.wakeWord.audio = audio;
     state.wakeWord.active = true;
     tearDownVoiceCommandAudio();
     state.wakeWord.noiseFloor = 0.004;
-    processor.onaudioprocess = handleWakeWordAudio;
     diagnostics.info("wake_microphone_started", {
       generation,
-      sample_rate: context.sampleRate,
+      sample_rate: MICROPHONE_TARGET_SAMPLE_RATE,
+      settings: audio.settings,
     });
     await requestJson(
       "/api/wake-word/start",
@@ -179,14 +163,8 @@ function stopWakeWordMode() {
   updateSendState();
 }
 
-function handleWakeWordAudio(event) {
+function handleWakeWordAudio(samples) {
   if (!state.wakeWord.active) return;
-  const sourceSamples = new Float32Array(event.inputBuffer.getChannelData(0));
-  const samples = resampleAudio(
-    sourceSamples,
-    state.wakeWord.audio.sourceRate,
-    16000,
-  );
   const commandControlActive = voiceCommandContextActive();
   if (commandControlActive) enqueueVoiceCommandFrame(samples);
   if (state.wakeWord.phase === "waiting" && !commandControlActive) {
