@@ -110,6 +110,68 @@ function Test-OllamaApi {
     }
 }
 
+function Get-NormalizedOllamaModelName {
+    param([Parameter(Mandatory = $true)][string] $Name)
+
+    if ($Name.Contains(":")) {
+        return $Name
+    }
+    return "${Name}:latest"
+}
+
+function Test-OllamaModelAvailable {
+    param(
+        [Parameter(Mandatory = $true)][string] $TagsUri,
+        [Parameter(Mandatory = $true)][string] $Model
+    )
+
+    $expectedName = Get-NormalizedOllamaModelName -Name $Model
+    $response = Invoke-RestMethod -Method Get -Uri $TagsUri -TimeoutSec 10
+    foreach ($installedModel in @($response.models)) {
+        $installedNames = @(
+            [string] $installedModel.name,
+            [string] $installedModel.model
+        )
+        foreach ($installedName in $installedNames) {
+            if (-not [string]::IsNullOrWhiteSpace($installedName) -and
+                (Get-NormalizedOllamaModelName -Name $installedName) -eq $expectedName) {
+                return $true
+            }
+        }
+    }
+    return $false
+}
+
+function Install-OllamaModel {
+    param(
+        [Parameter(Mandatory = $true)][string] $TagsUri,
+        [Parameter(Mandatory = $true)][string] $Model
+    )
+
+    Write-Host "Downloading $Model with Ollama (first run only)..." -ForegroundColor Yellow
+
+    # OLLAMA_HOST configures both the Ollama server bind address and the CLI's
+    # destination. Windows users commonly set it to 0.0.0.0 so Docker Desktop
+    # can reach the server. Point only this child process at loopback so the CLI
+    # always talks to that same local server while it downloads the model.
+    $previousOllamaHost = [Environment]::GetEnvironmentVariable("OLLAMA_HOST", "Process")
+    try {
+        $env:OLLAMA_HOST = "http://127.0.0.1:11434"
+        Invoke-NativeCommand -FilePath "ollama" -ArgumentList @("pull", $Model)
+    }
+    finally {
+        [Environment]::SetEnvironmentVariable(
+            "OLLAMA_HOST",
+            $previousOllamaHost,
+            "Process"
+        )
+    }
+
+    if (-not (Test-OllamaModelAvailable -TagsUri $TagsUri -Model $Model)) {
+        throw "Ollama completed the pull but model $Model is not available from the local server."
+    }
+}
+
 function Wait-ApplicationReady {
     param(
         [Parameter(Mandatory = $true)][string] $Uri,
@@ -200,11 +262,17 @@ Start the Ollama application from the Windows Start menu and run this script aga
         Write-Host "Docker Desktop and native Ollama are running."
 
         Write-Step "Checking local Ollama models"
-        if (-not (Test-NativeCommand -FilePath "ollama" -ArgumentList @("show", $reasoningModel))) {
-            Invoke-NativeCommand -FilePath "ollama" -ArgumentList @("pull", $reasoningModel)
+        if (-not (Test-OllamaModelAvailable -TagsUri $hostOllamaTags -Model $reasoningModel)) {
+            Install-OllamaModel -TagsUri $hostOllamaTags -Model $reasoningModel
         }
-        if (-not (Test-NativeCommand -FilePath "ollama" -ArgumentList @("show", $embeddingModel))) {
-            Invoke-NativeCommand -FilePath "ollama" -ArgumentList @("pull", $embeddingModel)
+        else {
+            Write-Host "Reasoning model is available: $reasoningModel"
+        }
+        if (-not (Test-OllamaModelAvailable -TagsUri $hostOllamaTags -Model $embeddingModel)) {
+            Install-OllamaModel -TagsUri $hostOllamaTags -Model $embeddingModel
+        }
+        else {
+            Write-Host "Embedding model is available: $embeddingModel"
         }
 
         Write-Step "Preparing persistent application data"

@@ -184,6 +184,29 @@ The first run may still be downloading or loading Whisper. A reported startup
 failure is different from slow initialisation: resolve the error in the logs,
 then recreate the service with `docker compose up -d --force-recreate`.
 
+### An Ollama model does not download
+
+The launcher prints `Downloading <model> with Ollama` before each automatic
+download. If the download itself fails, update Ollama, fully quit and restart
+it, then rerun the launcher. To retry the default reasoning model directly
+against the local Ollama server:
+
+```powershell
+$previousOllamaHost = $env:OLLAMA_HOST
+$env:OLLAMA_HOST = "http://127.0.0.1:11434"
+try {
+    ollama pull granite4.1:8b
+}
+finally {
+    $env:OLLAMA_HOST = $previousOllamaHost
+}
+```
+
+The temporary process value is intentional: the Ollama application can keep
+binding to `0.0.0.0:11434` for Docker Desktop while the CLI connects to it over
+Windows loopback. Confirm the completed download with
+`ollama list`, then rerun `scripts\quickstart.ps1`.
+
 ### Port 4173 is already in use
 
 Identify the process using it:
