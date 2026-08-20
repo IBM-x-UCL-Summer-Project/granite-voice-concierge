@@ -177,11 +177,16 @@ Inspect the application and health state:
 
 ```powershell
 docker compose ps
+Invoke-RestMethod http://127.0.0.1:4173/api/health
+ollama ps
 docker compose logs --tail 200 voice-concierge
 ```
 
-The first run may still be downloading or loading Whisper. A reported startup
-failure is different from slow initialisation: resolve the error in the logs,
+An API status of `starting` means the container is responding and Ollama is
+loading or warming the reasoning model. The launcher reports that status every
+ten seconds. The first cold start can be substantially slower than later starts.
+A reported `error`, an exited container, or a failed Ollama request is different
+from slow initialisation: resolve the error in the automatically displayed logs,
 then recreate the service with `docker compose up -d --force-recreate`.
 
 ### An Ollama model does not download

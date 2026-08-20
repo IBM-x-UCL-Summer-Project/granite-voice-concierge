@@ -184,28 +184,87 @@ function Install-OllamaModel {
     }
 }
 
+function Get-DockerContainerState {
+    param([Parameter(Mandatory = $true)][string] $ContainerName)
+
+    $previousErrorActionPreference = $ErrorActionPreference
+    $exitCode = 1
+    $output = $null
+    try {
+        $ErrorActionPreference = "Continue"
+        $output = & docker inspect --format "{{.State.Status}}" $ContainerName 2>$null
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+
+    if ($exitCode -ne 0) {
+        return "missing"
+    }
+    $state = [string] ($output | Select-Object -First 1)
+    if ([string]::IsNullOrWhiteSpace($state)) {
+        return "unknown"
+    }
+    return $state.Trim()
+}
+
 function Wait-ApplicationReady {
     param(
         [Parameter(Mandatory = $true)][string] $Uri,
-        [Parameter(Mandatory = $true)][int] $TimeoutSeconds
+        [Parameter(Mandatory = $true)][int] $TimeoutSeconds,
+        [Parameter(Mandatory = $true)][string] $ContainerName
     )
 
+    $startedAt = [DateTime]::UtcNow
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    $nextContainerCheckAt = [DateTime]::MinValue
+    $lastProgressAt = [DateTime]::MinValue
+    $lastProgressMessage = ""
     while ([DateTime]::UtcNow -lt $deadline) {
+        $now = [DateTime]::UtcNow
+        if ($now -ge $nextContainerCheckAt) {
+            $containerState = Get-DockerContainerState -ContainerName $ContainerName
+            if ($containerState -in @("missing", "exited", "dead")) {
+                throw "Application container state is '$containerState'."
+            }
+            $nextContainerCheckAt = $now.AddSeconds(10)
+        }
+
+        $health = $null
         try {
             $health = Invoke-RestMethod -Method Get -Uri $Uri -TimeoutSec 5
-            if ($health.status -eq "ready") {
-                return $true
-            }
-            if ($health.status -eq "error") {
-                $message = [string] $health.message
-                throw "The application reported a startup failure: $message"
-            }
         }
         catch {
-            if ($_.Exception.Message.StartsWith("The application reported")) {
-                throw
+            $health = $null
+        }
+
+        if ($null -eq $health) {
+            $progressMessage = "Waiting for the application web endpoint."
+        }
+        else {
+            $status = [string] $health.status
+            $message = [string] $health.message
+            if ($status -eq "ready") {
+                return $true
             }
+            if ($status -eq "error") {
+                throw "The application reported a startup failure: $message"
+            }
+            $progressMessage = if ([string]::IsNullOrWhiteSpace($message)) {
+                "Application status: $status"
+            }
+            else {
+                $message
+            }
+        }
+
+        if ($progressMessage -ne $lastProgressMessage -or
+            ($now - $lastProgressAt).TotalSeconds -ge 10) {
+            $elapsedSeconds = [Math]::Floor(($now - $startedAt).TotalSeconds)
+            Write-Host "  ${elapsedSeconds}s: $progressMessage"
+            $lastProgressMessage = $progressMessage
+            $lastProgressAt = $now
         }
         Start-Sleep -Seconds 2
     }
@@ -324,11 +383,24 @@ this script. Keep port 11434 blocked from untrusted networks in Windows Firewall
         Invoke-NativeCommand -FilePath "docker" -ArgumentList @("compose", "up", "-d")
 
         $healthUri = "http://127.0.0.1:4173/api/health"
-        Write-Host "Waiting up to $HealthTimeoutSeconds seconds for local models to initialise..."
-        if (-not (Wait-ApplicationReady -Uri $healthUri -TimeoutSeconds $HealthTimeoutSeconds)) {
+        Write-Host "Waiting up to $HealthTimeoutSeconds seconds for application initialisation..."
+        try {
+            $ready = Wait-ApplicationReady `
+                -Uri $healthUri `
+                -TimeoutSeconds $HealthTimeoutSeconds `
+                -ContainerName "granite-voice-concierge"
+            if (-not $ready) {
+                throw "The application did not become ready within $HealthTimeoutSeconds seconds."
+            }
+        }
+        catch {
+            Write-Host "Container state:" -ForegroundColor Yellow
+            & docker compose ps voice-concierge
             Write-Host "Recent container logs:" -ForegroundColor Yellow
             & docker compose logs --tail 100 voice-concierge
-            throw "The application did not become ready within $HealthTimeoutSeconds seconds."
+            Write-Host "Host Ollama activity:" -ForegroundColor Yellow
+            & ollama ps
+            throw
         }
 
         Write-Host ""
