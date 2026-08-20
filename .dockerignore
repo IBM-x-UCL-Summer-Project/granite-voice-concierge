@@ -25,6 +25,7 @@
 # Download the large Piper model in a cached Docker layer instead of sending
 # it through Docker Desktop's slow macOS build-context file sharing.
 **/*.onnx
+**/*.onnx.json
 
 # Local state must never be baked into the image.
 **/.local/

@@ -117,6 +117,8 @@ python -m voice_concierge.app.web --voice-io \
 DEBUG mode includes prompts, responses, selected feature/reasoning routes,
 memory and reminder operations, startup/STT/request timings, wake and barge-in
 detections, browser connection state, voice capture, and response playback.
+The example therefore persists conversation text and should be used only for
+deliberate local troubleshooting, not as the normal service configuration.
 Each browser API request sends a client request ID which the backend returns as
 `X-Request-ID`, making the browser event and server-side pipeline entries easy
 to correlate. Raw WAV/PCM base64 bodies are represented by their character

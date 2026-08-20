@@ -4,6 +4,26 @@ set -e
 echo "Granite Voice Concierge - Quick Start"
 echo ""
 
+# Docker Compose reads .env automatically, but native Ollama commands do not.
+# Import the same file while preserving explicit shell overrides, which have
+# higher precedence in Compose as well.
+shell_ollama_model_set="${OLLAMA_MODEL+x}"
+shell_ollama_model="${OLLAMA_MODEL:-}"
+shell_embedding_model_set="${OLLAMA_EMBEDDING_MODEL+x}"
+shell_embedding_model="${OLLAMA_EMBEDDING_MODEL:-}"
+if [ -f .env ]; then
+    set -a
+    # The checked-in template is shell-compatible as well as Compose-compatible.
+    . ./.env
+    set +a
+fi
+if [ -n "$shell_ollama_model_set" ]; then
+    export OLLAMA_MODEL="$shell_ollama_model"
+fi
+if [ -n "$shell_embedding_model_set" ]; then
+    export OLLAMA_EMBEDDING_MODEL="$shell_embedding_model"
+fi
+
 # Check required host applications.
 if ! command -v docker &> /dev/null; then
     echo "Docker not found. Please install Docker Desktop"
@@ -36,16 +56,21 @@ echo ""
 
 # Models are owned by native Ollama and remain outside the Docker image.
 export OLLAMA_MODEL="${OLLAMA_MODEL:-granite4.1:8b}"
-if ! ollama list | grep -Fq "$OLLAMA_MODEL"; then
+if ! ollama show "$OLLAMA_MODEL" > /dev/null 2>&1; then
     echo "Downloading $OLLAMA_MODEL (first run only)..."
     ollama pull "$OLLAMA_MODEL"
 fi
 
-OLLAMA_EMBEDDING_MODEL="${OLLAMA_EMBEDDING_MODEL:-granite-embedding:278m}"
-if ! ollama list | grep -Fq "$OLLAMA_EMBEDDING_MODEL"; then
+export OLLAMA_EMBEDDING_MODEL="${OLLAMA_EMBEDDING_MODEL:-granite-embedding:278m}"
+if ! ollama show "$OLLAMA_EMBEDDING_MODEL" > /dev/null 2>&1; then
     echo "Downloading $OLLAMA_EMBEDDING_MODEL (first run only)..."
     ollama pull "$OLLAMA_EMBEDDING_MODEL"
 fi
+
+# Creating the bind-mount source on the host avoids Docker creating a root-owned
+# directory on native Linux. Existing application state is left untouched.
+mkdir -p data/.local/memory data/.local/preferences \
+    data/.local/reminders data/.local/logs
 
 echo "Building Docker image..."
 docker compose build

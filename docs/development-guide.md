@@ -112,6 +112,10 @@ make down
 The checked-in `.env.example` documents the supported environment variables.
 Copy it to the ignored `.env` file before changing local values.
 
+The quick-start script imports this file for its native Ollama commands, while
+preserving values explicitly exported in the shell. Compose reads the same file
+when it resolves the container configuration.
+
 ### Reasoning model
 
 The default reasoning model is `granite4.1:8b` and the default embedding model
@@ -139,6 +143,26 @@ docker compose exec voice-concierge printenv REASONING_MODEL
 docker compose exec voice-concierge printenv OLLAMA_API_URL
 ```
 
+### Logging
+
+The container defaults to `GVC_LOG_LEVEL=INFO` and does not create an
+application log file. Use `make logs` to follow its standard output. Setting
+`GVC_LOG_LEVEL=DEBUG` enables detailed diagnostics, including prompts and
+responses; Docker's logging driver may retain that output. Treat DEBUG as an
+explicit, temporary troubleshooting mode rather than a normal runtime default.
+
+### Container user on Linux
+
+The application process runs as an unprivileged `app` user. Docker Desktop maps
+bind-mount ownership automatically. On native Linux, set `APP_UID` and `APP_GID`
+in `.env` to the owner of `./data/.local` before building if the defaults do not
+match:
+
+```bash
+id -u
+id -g
+```
+
 ### Port configuration
 
 The default host port is `4173`. To expose the UI on a different local port,
@@ -161,10 +185,11 @@ deliberate deployment design with appropriate security controls.
 
 ## Persistent data
 
-Application preferences, memories, reminders, and logs persist in
-`./data/.local`, which is bind-mounted at `/app/.local`. Downloaded Whisper and
-other application model caches persist in the `model-cache` Docker volume.
-Native Ollama owns its models outside Docker.
+Application preferences, memories, and reminders persist in `./data/.local`,
+which is bind-mounted at `/app/.local`. Optional file diagnostics also live
+below that directory only when `--log-file` is explicitly configured.
+Downloaded Whisper and other application model caches persist in the
+`voice-model-cache` Docker volume. Native Ollama owns its models outside Docker.
 
 A normal shutdown or rebuild retains application data:
 
@@ -322,6 +347,10 @@ DEBUG logs include prompts, responses, feature routing, local-data operations,
 playback state, voice state, and pipeline timings. Encoded audio bodies are
 represented by their size rather than copied into logs.
 
+The command above deliberately persists conversation text in the specified
+file. Do not use it as the default service configuration, and remove the file
+when the diagnostic record is no longer required.
+
 See the [web UI guide](../web/README.md) for the browser architecture, API
 contract, wake mode, playback behavior, and diagnostic details.
 
@@ -401,8 +430,9 @@ python -m voice_concierge.privacy forget-all
 ```
 
 Memories and their search index are stored under `.local/memory/`. Recorded
-audio and conversation history are not persisted. See the
-[privacy package guide](../src/voice_concierge/privacy/README.md).
+audio and conversation history are not persisted by the normal application
+flow. Explicit DEBUG diagnostics can contain conversation text as described
+above. See the [privacy package guide](../src/voice_concierge/privacy/README.md).
 
 ## Quality checks
 

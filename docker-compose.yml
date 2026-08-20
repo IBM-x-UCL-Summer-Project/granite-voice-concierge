@@ -3,6 +3,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        APP_UID: ${APP_UID:-10001}
+        APP_GID: ${APP_GID:-10001}
     container_name: granite-voice-concierge
     ports:
       - "127.0.0.1:4173:4173"
@@ -11,14 +14,14 @@ services:
       - ./data/.local:/app/.local
       # Keep downloaded Whisper and other Hugging Face model files across
       # container recreation.
-      - model-cache:/root/.cache
+      - voice-model-cache:/home/app/.cache
     environment:
       # Ollama runs natively on the host so macOS can use Metal acceleration.
       # The entrypoint also writes this URL to the reasoning model selection.
       - OLLAMA_API_URL=${OLLAMA_API_URL:-http://host.docker.internal:11434}
       - OLLAMA_HOST=${OLLAMA_API_URL:-http://host.docker.internal:11434}
       - REASONING_MODEL=${OLLAMA_MODEL:-granite4.1:8b}
-      - PYTHONUNBUFFERED=1
+      - PYTHONUNBUFFERED=${PYTHONUNBUFFERED:-1}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     command:
@@ -31,9 +34,7 @@ services:
       - "4173"
       - --voice-io
       - --log-level
-      - DEBUG
-      - --log-file
-      - .local/logs/web.log
+      - ${GVC_LOG_LEVEL:-INFO}
     # For live voice mode, uncomment below:
     # devices:
     #   - /dev/snd:/dev/snd
@@ -51,7 +52,7 @@ services:
   #     - voice-concierge
 
 volumes:
-  model-cache:
+  voice-model-cache:
     driver: local
 
 networks:

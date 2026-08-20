@@ -135,6 +135,7 @@ Local configuration is read from the ignored `.env` file. Start from
 | ---------------- | ----------------------------------- | --------------------------------------------- |
 | `OLLAMA_API_URL` | `http://host.docker.internal:11434` | Ollama endpoint reachable from the container. |
 | `OLLAMA_MODEL`   | `granite4.1:8b`                     | Local reasoning model selected at startup.    |
+| `GVC_LOG_LEVEL`  | `INFO`                              | Application diagnostic verbosity.             |
 
 The quick-start workflow installs `granite-embedding:278m` by default. Override
 that one invocation by exporting `OLLAMA_EMBEDDING_MODEL` in the shell before
@@ -147,16 +148,21 @@ or local user data.
 
 The Docker deployment separates application data from model caches:
 
-| Data                                       | Location                    | Persistence                                       |
-| ------------------------------------------ | --------------------------- | ------------------------------------------------- |
-| Memories, reminders, preferences, and logs | `./data/.local`             | Bind-mounted and retained across normal rebuilds. |
-| Whisper and application model caches       | Docker volume `model-cache` | Retained until the volume is removed.             |
-| Ollama models                              | Host Ollama data directory  | Managed outside the application container.        |
-| Temporary conversation state               | Application process memory  | Cleared when the session or server is reset.      |
+| Data                                  | Location                    | Persistence                                       |
+| ------------------------------------- | --------------------------- | ------------------------------------------------- |
+| Memories, reminders, and preferences | `./data/.local`             | Bind-mounted and retained across normal rebuilds. |
+| Whisper and application model caches  | Docker volume `voice-model-cache` | Retained until the volume is removed.        |
+| Ollama models                         | Host Ollama data directory  | Managed outside the application container.        |
+| Temporary conversation state          | Application process memory  | Cleared when the session or server is reset.      |
 
 Recorded audio is processed in memory and is not persisted by the normal
 application flow. Browser speech fallback is restricted to voices that the Web
 Speech API identifies as local services.
+
+The default `INFO` logging configuration does not record conversation text.
+Setting `GVC_LOG_LEVEL=DEBUG` includes prompts and responses that may be retained
+by the container logging driver. Enable it only for deliberate local
+troubleshooting.
 
 `make clean` and `make rebuild` delete application state under
 `./data/.local`. Review the
