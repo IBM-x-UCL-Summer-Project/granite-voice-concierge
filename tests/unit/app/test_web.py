@@ -282,11 +282,11 @@ def test_static_ui_disables_browser_cache() -> None:
             cache_control = response.headers.get("Cache-Control")
 
     assert cache_control == "no-store"
-    assert "./playback-policy.js?v=20260817" in html
-    assert "./wake-capture-policy.js?v=20260817" in html
+    assert "./playback-policy.js?v=20260820" in html
+    assert "./wake-capture-policy.js?v=20260820" in html
     for name in WEB_APPLICATION_SCRIPTS:
-        assert f"./{name}?v=20260817-" in html
-    assert "./app.js?v=20260817-6" in html
+        assert f"./{name}?v=20260820-" in html
+    assert "./app.js?v=20260820-1" in html
     assert "./styles.css?v=20260817-4" in html
 
 
@@ -297,6 +297,13 @@ def test_browser_never_persists_conversation_state() -> None:
     assert "localStorage.removeItem(LEGACY_PIPELINE_STORAGE_KEY)" in script
     assert 'connection: "connecting"' in script
     assert "The local assistant is disconnected. Reconnecting…" in script
+
+
+def test_browser_tts_fallback_only_uses_a_local_voice() -> None:
+    playback = (REPOSITORY_ROOT / "web" / "playback.js").read_text(encoding="utf-8")
+
+    assert ".filter((voice) => voice.localService)" in playback
+    assert 'response.errors.includes("tts_failed")' in playback
 
 
 def test_local_data_actions_use_an_application_owned_dialog() -> None:

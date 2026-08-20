@@ -288,9 +288,14 @@ pipeline timings. Encoded audio bodies are represented by their size instead
 of being copied into the log.
 
 The browser supports push-to-talk and wake-word capture, an automatic follow-up
-listening window, adjustable wake timing and sensitivity, automatic Piper
+listening window, adjustable wake timing and sensitivity, automatic spoken
 response playback, startup and per-turn waiting states, and temporary chat JSON
-export. The header remains available while a long conversation scrolls, and an
+export. Voice output tries Piper first, then the native `say` command when the
+server runs directly on macOS, and finally the browser's speech-synthesis voice.
+Docker cannot access the host's `say` command, so containerized runs fall back
+directly from Piper to a browser voice marked as local by the Web Speech API.
+Installed browser voices vary by device. The header remains available while a
+long conversation scrolls, and an
 extended temporary display transcript (up to 200 completed exchanges) is kept
 separately from the shorter model context window. Reminder and guided-routine
 requests are routed to their local services, due reminders appear in the open

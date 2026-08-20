@@ -15,7 +15,7 @@ const setupSteps = [
   },
   {
     title: "Choose how you interact",
-    description: "Choose when local Piper responses play automatically in this browser.",
+    description: "Choose when spoken responses play automatically in this browser.",
   },
   {
     title: "Shape every response",
@@ -316,4 +316,3 @@ function populateDeviceSelect(select, devices, defaultLabel, fallbackLabel) {
     ? selectedValue
     : "default";
 }
-

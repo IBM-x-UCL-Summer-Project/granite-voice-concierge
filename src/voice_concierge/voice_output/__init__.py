@@ -7,6 +7,7 @@ from voice_concierge.voice_output.errors import (
 )
 from voice_concierge.voice_output.factory import build_text_to_speech
 from voice_concierge.voice_output.fakes import DeterministicTextToSpeechFake
+from voice_concierge.voice_output.fallback import FallbackTextToSpeech
 from voice_concierge.voice_output.interfaces import TextToSpeech
 from voice_concierge.voice_output.pace_store import (
     DEFAULT_PACE_PATH,
@@ -47,6 +48,7 @@ __all__ = [
     "DEFAULT_PIPER_EXECUTABLE",
     "DEFAULT_SAY_EXECUTABLE",
     "DeterministicTextToSpeechFake",
+    "FallbackTextToSpeech",
     "PiperTextToSpeech",
     "SayTextToSpeech",
     "TextToSpeech",

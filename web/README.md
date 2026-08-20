@@ -46,7 +46,7 @@ microphone once to start recording and again to transcribe and send it. The
 resampled in the browser and sent only to the same-origin local server, where
 the existing openWakeWord model listens for **Hey Jarvis**. After detection,
 the browser records until a local silence threshold is reached, sends the
-utterance through Whisper and the normal application pipeline, plays the Piper
+utterance through Whisper and the normal application pipeline, plays the spoken
 response, then opens a short follow-up listening window before resuming
 wake-word listening. The dedicated wake screen also provides push-to-talk and
 cancel controls. Wake sensitivity, allowed mid-request pauses, the follow-up
@@ -54,12 +54,21 @@ window, and maximum request length can be changed in that screen or Personalise.
 Only one browser tab owns the stateful detector at a time. Use `--no-wake-word`
 to keep push-to-talk voice I/O while disabling continuous wake-word mode.
 
-The **Voice first** setting automatically plays every Piper response; **Push to
-talk** automatically plays only responses to microphone turns; **Text first**
-keeps playback manual; **Wake word** opens the dedicated hands-free view after
-setup. The browser unlocks one reusable response-audio element during the
-initiating click or key action so delayed local Piper responses can still play
-under browser autoplay rules.
+Spoken responses use Piper first. When the server runs directly on macOS and
+Piper fails, it retries with the native `say` command. If neither server-side
+voice produces audio, the UI can use the browser's speech-synthesis voice as a
+last fallback. A Docker container cannot call the host's `say` command, so its
+chain is Piper then browser speech. To preserve local data control, the browser
+fallback only selects a voice the Web Speech API marks as a local service.
+Installed voices vary by device and browser; the response always remains
+readable as text when no local voice is available.
+
+The **Voice first** setting automatically plays every spoken response; **Push
+to talk** automatically plays only responses to microphone turns; **Text
+first** keeps playback manual; **Wake word** opens the dedicated hands-free
+view after setup. The browser unlocks one reusable response-audio element
+during the initiating click or key action so delayed local responses can still
+play under browser autoplay rules.
 
 Persistent local memory is enabled by default. To run without it:
 
