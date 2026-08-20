@@ -122,6 +122,11 @@ starts the service.
 
 Open `http://127.0.0.1:4173` after startup completes.
 
+The page is served by the container, so it only loads while the container
+is running. If the browser cannot connect, check the service is up with
+`make ps` (or `docker compose ps`) and start it again with `make up` (or
+`docker compose up -d`) if it is not.
+
 Once it is running, use whichever column matches your machine. The `make`
 targets are shorthand for the same `docker compose` commands, and Windows has
 no `make` by default.
