@@ -24,6 +24,14 @@ param()
 
 $ErrorActionPreference = "Stop"
 
+# PowerShell 7.3 and later turn a native command's stderr into a terminating
+# error when ErrorActionPreference is Stop, and it is on by default from 7.4.
+# That matters here because "ollama show" writes to stderr for a model that is
+# not installed yet, which is the normal first-run case: the script would stop
+# at the check instead of going on to download the model. Exit codes are what
+# this script tests, so opt out and keep testing them.
+$PSNativeCommandUseErrorActionPreference = $false
+
 function Write-Step { param([string]$Message) Write-Host $Message }
 function Write-Problem { param([string]$Message) Write-Host $Message -ForegroundColor Red }
 
