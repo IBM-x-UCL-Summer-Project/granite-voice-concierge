@@ -83,6 +83,31 @@ using WSL 2 and Linux containers. Windows on Arm has not been validated. The
 first setup requires internet access and downloads several gigabytes; normal
 operation remains local after the images and models are available.
 
+### System requirements and download sizes
+
+| Resource        | Minimum                                                          |
+| --------------- | ---------------------------------------------------------------- |
+| Host            | Apple Silicon Mac or x86-64 Windows PC with WSL 2 virtualization |
+| CPU             | 4 modern CPU cores                                               |
+| System memory   | 16 GB RAM                                                        |
+| Free disk space | 20 GB before the first run                                       |
+
+The default model assets use approximately:
+
+| Asset                                                                                 | Approximate size |
+| ------------------------------------------------------------------------------------- | ---------------- |
+| [`granite4.1:8b`](https://ollama.com/library/granite4.1) reasoning model              | 5.3 GB           |
+| [`granite-embedding:278m`](https://ollama.com/library/granite-embedding) memory model | 563 MB           |
+| Speech, wake-word, and voice models                                                   | About 300 MB     |
+| Application image, dependency layers, and Docker build cache                          | Allow 4–8 GB     |
+
+The two Ollama models total about 5.9 GB, and all listed model assets total
+about 6.2 GB. The application image, CPU-only PyTorch, Python and system
+packages, wake-word/VAD assets, Docker layers, and build cache bring the normal
+initial footprint to roughly 10–15 GB. Their exact size varies by host
+architecture, package versions, and retained build layers. The free-space
+figures above include working room for updates and temporary build data.
+
 ### Clone the repository
 
 Run once in Terminal on macOS or PowerShell on Windows:
@@ -227,11 +252,11 @@ Configuration is read from the ignored `.env` file.
 | `OLLAMA_MODEL`   | `granite4.1:8b`                     | Local reasoning model             |
 | `GVC_LOG_LEVEL`  | `INFO`                              | Application logging level         |
 
-| Data                                  | Location                           |
-| ------------------------------------- | ---------------------------------- |
-| Memories, reminders, and preferences | `data/.local`                      |
+| Data                                  | Location                          |
+| ------------------------------------- | --------------------------------- |
+| Memories, reminders, and preferences  | `data/.local`                     |
 | Whisper, Vosk, and application caches | Docker volume `voice-model-cache` |
-| Ollama models                         | Native host Ollama storage         |
+| Ollama models                         | Native host Ollama storage        |
 
 Normal `docker compose down`, rebuilds, and updates retain these locations.
 Deleting `data/.local` removes saved user data. `docker compose down -v`

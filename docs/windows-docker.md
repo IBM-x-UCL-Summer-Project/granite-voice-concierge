@@ -1,7 +1,9 @@
 # Windows Docker Support
 
-The [main README](../README.md#windows) contains the complete copy/paste
-setup and operation commands. This guide explains the Windows deployment and
+The [main README](../README.md#windows) contains the complete copy/paste setup
+and operation commands. Check its
+[system requirements and download sizes](../README.md#system-requirements-and-download-sizes)
+before the first installation. This guide explains the Windows deployment and
 provides error-specific diagnostics.
 
 ## Deployment model
