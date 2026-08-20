@@ -1,0 +1,12 @@
+* text=auto
+
+# Linux container entrypoints must retain Unix line endings even when the
+# repository is checked out by Git for Windows with core.autocrlf enabled.
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+.env* text eol=lf
+
+# Keep native Windows launchers conventional for Windows PowerShell 5.1.
+*.ps1 text eol=crlf
