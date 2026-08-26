@@ -281,6 +281,49 @@ def test_benchmark_evaluates_raw_and_guarded_response_from_one_trace() -> None:
     assert result["policy_guard"] == "memory_store_confirmation"
 
 
+def test_benchmark_fails_schema_invalid_generations() -> None:
+    class InvalidStructuredTraceEngine:
+        def generate(self, request: ReasoningRequest) -> ReasoningResponse:
+            raise AssertionError("both mode should use generate_trace")
+
+        def generate_trace(self, request: ReasoningRequest) -> ReasoningTrace:
+            invalid_response = ReasoningResponse(
+                spoken_response="I could not produce a valid structured response.",
+                confidence="low",
+                metadata={"structured_parse_error": "schema_validation_failed"},
+            )
+            return ReasoningTrace(
+                raw_response=invalid_response,
+                guarded_response=invalid_response,
+            )
+
+    suite = {
+        "name": "test_suite",
+        "categories": {
+            "general": [
+                {
+                    "id": "invalid_structure",
+                    "transcript": "Hello.",
+                    "expected_behavior": "Return a structured response.",
+                }
+            ]
+        },
+    }
+
+    report = run_reasoning_benchmark(
+        InvalidStructuredTraceEngine(),
+        suite,
+        evaluation_mode="both",
+    )
+
+    assert report["structured_parse_failures"] == 1
+    assert report["raw_passed_responses"] == 0
+    assert report["guarded_passed_responses"] == 0
+    result = report["results"][0]
+    assert result["raw_evaluation"]["issues"] == ("structured_output_invalid",)
+    assert result["guarded_evaluation"]["issues"] == ("structured_output_invalid",)
+
+
 def test_benchmark_repeats_every_case_and_labels_each_response() -> None:
     suite = {
         "name": "repeated_suite",

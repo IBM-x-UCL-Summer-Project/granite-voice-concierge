@@ -98,6 +98,7 @@ def test_summarize_benchmark_report_separates_raw_and_guarded_results() -> None:
                 "raw_evaluation": {
                     "passed_checks": False,
                     "issues": ["needs_confirmation_expected_true"],
+                    "metadata": {"structured_parse_error": "schema_validation_failed"},
                 },
                 "guarded_evaluation": {
                     "passed_checks": True,
@@ -118,6 +119,7 @@ def test_summarize_benchmark_report_separates_raw_and_guarded_results() -> None:
     assert row.guarded_passed_responses == 1
     assert row.guarded_pass_rate == 1.0
     assert row.guard_interventions == 1
+    assert row.structured_parse_failures == 1
     assert row.case_count == 1
     assert row.repetitions == 3
     assert row.model_digest == "abcdef1234567890"
@@ -161,6 +163,7 @@ def test_comparison_markdown_shows_both_evaluation_stages(tmp_path: Path) -> Non
     markdown = (tmp_path / "comparison-summary.md").read_text()
     assert "Guarded pass" in markdown
     assert "Raw pass" in markdown
+    assert "Schema failures" in markdown
     assert "100.00% (1/1)" in markdown
     assert "0.00% (0/1)" in markdown
     assert "`memory_store`" in markdown

@@ -43,9 +43,11 @@ is set. The detailed reports record the effective values returned by the runtime
 
 The Python harness scores every response automatically; no human or LLM judge is
 used. A response passes only if all applicable checks pass, with no partial
-credit. The global check enforces the spoken word limit. Individual cases can
-also check confirmation state, memory action, information source, freshness,
-required terms, and forbidden terms.
+credit. The global checks require a schema-valid structured response and enforce
+the spoken word limit. Individual cases can also check confirmation state,
+memory action, information source, freshness, required terms, and forbidden
+terms. A schema failure is counted once per generation and fails both the raw
+and guarded evaluation of that generation.
 
 Raw and guarded evaluations come from one inference:
 

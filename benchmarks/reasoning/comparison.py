@@ -33,6 +33,7 @@ class ModelComparisonRow:
     guarded_passed_responses: int | None = None
     guarded_pass_rate: float | None = None
     guard_interventions: int = 0
+    structured_parse_failures: int = 0
     raw_issue_counts: dict[str, int] = field(default_factory=dict)
     guarded_issue_counts: dict[str, int] = field(default_factory=dict)
     raw_failed_responses: list[str] = field(default_factory=list)
@@ -93,6 +94,11 @@ def summarize_benchmark_report(
         guard_interventions = sum(
             1 for result in results if result.get("guard_intervened") is True
         )
+    structured_parse_failures = report.get("structured_parse_failures")
+    if not isinstance(structured_parse_failures, int):
+        structured_parse_failures = sum(
+            1 for result in results if _result_has_structured_parse_error(result)
+        )
 
     model_metadata = report.get("model")
     if not isinstance(model_metadata, dict):
@@ -124,6 +130,7 @@ def summarize_benchmark_report(
         guarded_passed_responses=guarded_summary.passed_responses,
         guarded_pass_rate=guarded_summary.pass_rate,
         guard_interventions=guard_interventions,
+        structured_parse_failures=structured_parse_failures,
         raw_issue_counts=raw_summary.issue_counts,
         guarded_issue_counts=guarded_summary.issue_counts,
         raw_failed_responses=raw_summary.failed_responses,
@@ -253,6 +260,8 @@ def _markdown_summary(
         "generation after those controls.",
         "Guard interventions count responses carrying a named `policy_guard`; "
         "an intervention does not necessarily convert a failure to a pass.",
+        "Schema failures count generations that could not be validated against "
+        "the required structured response and therefore fail scoring.",
         "Automated checks are diagnostic only. Review detailed responses before "
         "selecting a model.",
         "",
@@ -261,8 +270,10 @@ def _markdown_summary(
     lines.extend(
         [
             "| Model | Quant. | Digest | Responses | Guarded pass | Raw pass | "
-            "Guard interventions | Avg latency ms | Max latency ms | Error |",
-            "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+            "Guard interventions | Schema failures | Avg latency ms | "
+            "Max latency ms | Error |",
+            "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | "
+            "---: | --- |",
         ]
     )
     for row in rows:
@@ -287,6 +298,7 @@ def _markdown_summary(
             f"{guarded_score} | "
             f"{raw_score} | "
             f"{row.guard_interventions} | "
+            f"{row.structured_parse_failures} | "
             f"{row.average_latency_ms:.1f} | "
             f"{row.max_latency_ms:.1f} | "
             f"{error} |"
@@ -390,6 +402,15 @@ def _optional_string(value: object) -> str | None:
     if not isinstance(value, str) or not value.strip():
         return None
     return value.strip()
+
+
+def _result_has_structured_parse_error(result: dict[str, Any]) -> bool:
+    raw_evaluation = result.get("raw_evaluation")
+    if isinstance(raw_evaluation, dict):
+        metadata = raw_evaluation.get("metadata")
+    else:
+        metadata = result.get("metadata")
+    return isinstance(metadata, dict) and "structured_parse_error" in metadata
 
 
 def _format_issue_counts(label: str, issue_counts: dict[str, int]) -> list[str]:

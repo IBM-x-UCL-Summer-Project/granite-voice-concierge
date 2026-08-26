@@ -251,12 +251,20 @@ def run_reasoning_benchmark(
         "total_responses": len(results),
         "raw_passed_responses": raw_passed,
         "guarded_passed_responses": guarded_passed,
+        "structured_parse_failures": sum(
+            result.raw_evaluation is not None
+            and "structured_parse_error" in result.raw_evaluation.metadata
+            for result in results
+        ),
         "guard_interventions": sum(result.guard_intervened for result in results),
         "scoring": {
             "judge": "deterministic_python_harness",
             "partial_credit": False,
             "pass_condition": "all_applicable_checks_pass",
-            "global_checks": ["response_words_at_most_max_words"],
+            "global_checks": [
+                "structured_output_valid",
+                "response_words_at_most_max_words",
+            ],
             "case_check_types": [
                 "needs_confirmation",
                 "memory_action",
@@ -374,6 +382,8 @@ def _evaluate_response(
         required_information_source=response.required_information_source,
         freshness_requirement=response.freshness_requirement,
     )
+    if "structured_parse_error" in response.metadata:
+        issues.insert(0, "structured_output_invalid")
     return BenchmarkEvaluation(
         spoken_response=response.spoken_response,
         response_words=response_words,
