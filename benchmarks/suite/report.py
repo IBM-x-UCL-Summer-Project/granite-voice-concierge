@@ -465,11 +465,14 @@ def _render_pipeline(data: dict) -> list[str]:
         )
     lines += [
         "",
-        "Resident set size does not account for model weights on Apple",
-        "silicon: they live in unified memory through Metal, so the runner",
-        "reports tens of megabytes while gigabytes are resident. The",
-        "attributable total adds the runtime's own accounting, which is the",
-        "only instrument here that sees those pages.",
+        "Two instruments can each describe the model's resident weight",
+        "memory: the runner process's own RSS, and `ollama ps`'s own",
+        "accounting. On some Ollama versions the runner's RSS stays at tens",
+        "of megabytes and `ollama ps` is the only instrument that sees the",
+        "unified-memory pages; on others the runner's RSS already reflects",
+        "several GB directly. The attributable total takes the larger of the",
+        "two rather than summing them, since summing would double-count",
+        "whenever RSS already includes the weight memory.",
         "",
     ]
     return lines

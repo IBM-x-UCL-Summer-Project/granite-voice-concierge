@@ -168,7 +168,19 @@ def _run_turn(pipeline, audio, state, *, index: int, request: str) -> TurnRecord
         usage=usage,
         model_weights_mb=weights_mb,
         model_weights_detail=weights_detail,
-        attributable_total_mb=round(usage["peak_rss_total_mb"] + weights_mb, 1),
+        # max(), not sum(): psutil RSS and `ollama ps` can each independently
+        # describe the model's resident weight memory. On some Ollama
+        # versions the runner's own RSS stays tiny (tens of MB) and `ollama
+        # ps` is the only instrument that sees the unified-memory pages; on
+        # others the runner's RSS already reflects several GB of resident
+        # weight directly. Summing them assumes the first case always holds
+        # and silently double-counts the same physical memory under the
+        # second, which is what happened on this machine: the runner process
+        # was observed at ~4.8 GB RSS while `ollama ps` also reported ~5.7 GB
+        # for the same model.
+        attributable_total_mb=round(
+            usage["peak_rss_app_mb"] + max(usage["peak_rss_model_mb"], weights_mb), 1
+        ),
         errors=tuple(getattr(result, "errors", ()) or ()),
     )
 
@@ -213,6 +225,8 @@ def _summarize(records: Sequence[TurnRecord]) -> dict:
         for record in records
         if record.transcript is not None
     ]
+    peak_app_rss = max(record.usage["peak_rss_app_mb"] for record in records)
+    peak_model_rss = max(record.usage["peak_rss_model_mb"] for record in records)
     peak_total_rss = max(record.usage["peak_rss_total_mb"] for record in records)
     weights = max(record.model_weights_mb for record in records)
 
@@ -225,15 +239,17 @@ def _summarize(records: Sequence[TurnRecord]) -> dict:
             "max": round(max(latencies) / 1000, 3),
         },
         "transcription": summarize_transcripts(scores),
-        "peak_rss_app_mb": max(r.usage["peak_rss_app_mb"] for r in records),
-        "peak_rss_model_mb": max(r.usage["peak_rss_model_mb"] for r in records),
+        "peak_rss_app_mb": peak_app_rss,
+        "peak_rss_model_mb": peak_model_rss,
         "peak_rss_total_mb": peak_total_rss,
         "model_weights_mb": weights,
-        # Resident set size does not see model weights on Apple silicon: they
-        # live in unified memory through Metal, so the runner reports tens of
-        # megabytes while gigabytes are resident. The runtime's own accounting
-        # is added to get a figure that is not wrong by an order of magnitude.
-        "attributable_total_mb": round(peak_total_rss + weights, 1),
+        # max(), not sum(): see the matching comment in _run_turn. psutil RSS
+        # and `ollama ps` are two instruments that can both describe the same
+        # resident weight memory, and adding them double-counts whenever RSS
+        # already reflects it, which happened during measurement on this
+        # machine (runner RSS ~4.8 GB alongside `ollama ps` ~5.7 GB for the
+        # same model).
+        "attributable_total_mb": round(peak_app_rss + max(peak_model_rss, weights), 1),
         "peak_cpu_percent_total": max(r.usage["peak_cpu_total"] for r in records),
         "peak_system_used_mb": max(r.usage["peak_system_used_mb"] for r in records),
         "turns_with_errors": sum(1 for r in records if r.errors),
