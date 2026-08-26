@@ -21,27 +21,26 @@ from voice_concierge.reasoning.types import (
     ReasoningTrace,
 )
 
-PROMPT_SUITE = Path("benchmarks/reasoning/prompts/v0.json")
-FINAL_PROMPT_SUITE = Path("benchmarks/reasoning/prompts/final-v1.json")
+PROMPT_SUITE = Path("benchmarks/reasoning/prompts/final-v1.json")
 
 
 def test_prompt_suite_loads_all_cases() -> None:
     suite = load_prompt_suite(PROMPT_SUITE)
     cases = list(iter_benchmark_cases(suite))
 
-    assert len(cases) == 20
-    assert cases[0].case_id == "cooking_scrambled_eggs_first_step"
-    assert cases[0].category == "cooking"
+    assert len(cases) == 30
+    assert cases[0].case_id == "general_cooking_first_step"
+    assert cases[0].category == "general_requests"
     assert cases[0].mode == "cooking"
     assert cases[0].checks is not None
     runtime_case = next(
-        case for case in cases if case.case_id == "runtime_local_device_time"
+        case for case in cases if case.case_id == "structured_runtime_time"
     )
     assert runtime_case.runtime_context[0].runtime_id == "system.local_datetime"
 
 
 def test_final_prompt_suite_has_reported_case_distribution() -> None:
-    suite = load_prompt_suite(FINAL_PROMPT_SUITE)
+    suite = load_prompt_suite(PROMPT_SUITE)
     cases = list(iter_benchmark_cases(suite))
 
     assert len(cases) == 30
@@ -64,14 +63,14 @@ def test_benchmark_report_contains_core_metrics() -> None:
 
     report = run_reasoning_benchmark(DeterministicReasoningFake(), suite)
 
-    assert report["suite"]["name"] == "reasoning_prompts_v0"
+    assert report["suite"]["name"] == "reasoning_evaluation_final_v1"
     assert report["engine"] == "DeterministicReasoningFake"
-    assert report["total_cases"] == 20
+    assert report["total_cases"] == 30
     assert report["elapsed_ms"] >= 0
-    assert len(report["results"]) == 20
+    assert len(report["results"]) == 30
 
     first_result = report["results"][0]
-    assert first_result["case_id"] == "cooking_scrambled_eggs_first_step"
+    assert first_result["case_id"] == "general_cooking_first_step"
     assert first_result["latency_ms"] >= 0
     assert first_result["response_words"] > 0
     assert "spoken_response" in first_result

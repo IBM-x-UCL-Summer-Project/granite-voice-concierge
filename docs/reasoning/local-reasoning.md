@@ -364,50 +364,19 @@ them together after the pull finishes. It does not provide live terminal progres
 
 ## Compare Candidate Models
 
-Use the benchmark runner's `compare` subcommand when evaluating local Ollama
-models against the same prompt suite.
+The final comparison has one frozen 30-case suite, one seven-model candidate
+set, and one documented configuration. Follow the canonical
+[Local Reasoning Evaluation](../../benchmarks/reasoning/README.md) runbook for
+the exact installation commands, model order, generation settings, scoring
+definitions, digests, expected artifacts, and definitive results. Do not create
+an alternative report comparison from an ad hoc shortlist or a legacy prompt
+file.
 
-The comparison runner defaults to `--evaluation-mode both`. Its summary preserves
-the model order supplied on the command line and displays raw pass rate, guarded
-pass rate, guard intervention count, latency, issue counts, and failed case IDs.
-It does not rank candidates or generate a `best_model` field. These automated
-checks are diagnostics and basic acceptance evidence; Final decisions to be made based on human review at this stage as automated reviewing is too shallow/not worth to implement.
-
-Comparison mode requires at least two explicit model names:
-
-```bash
-.venv/bin/python -m benchmarks.reasoning.benchmark compare \
-  --models granite3.3:2b granite4.1:8b
-```
-
-Comparison candidates remain explicit so a saved preference cannot silently
-change a comparison set. The persisted host is used unless `--host` overrides it.
-
-For active local reasoning work, prefer a small explicit shortlist instead of testing every installed model. I used:
-
-- `granite4.1:8b`: current default IBM Granite candidate if the machine can run it comfortably.
-- `granite3.3:2b`: fast local baseline and lower resource fallback.
-- `granite4.1:3b`: smaller Granite 4.1 candidate if later benchmarking justifies it.
-
-```bash
-.venv/bin/python -m benchmarks.reasoning.benchmark compare \
-  --models granite3.3:2b granite4.1:3b granite4.1:8b gemma4:e2b
-```
-
-This creates a timestamped directory under `benchmarks/reasoning/results/`
-containing:
-
-- one detailed JSON benchmark report per model;
-- `comparison-summary.json`;
-- `comparison-summary.md`.
-
-You can choose a specific output directory:
-
-```bash
-.venv/bin/python -m benchmarks.reasoning.benchmark compare \
-  --models granite3.3:2b granite4.1:3b granite4.1:8b gemma4:e2b \
-  --output-dir benchmarks/reasoning/results/model-comparison-local
-```
+The comparison summary preserves the command-line model order and reports raw
+and guarded pass rates, guard interventions, schema failures, latency, issue
+counts, and failed response IDs. It deliberately does not declare a universal
+best model because the deterministic checks measure product requirements rather
+than general language-model quality.
 
 ## Prompt Policy
 

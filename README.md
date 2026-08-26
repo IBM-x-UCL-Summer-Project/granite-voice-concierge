@@ -284,6 +284,7 @@ setup and the complete operations reference are in the
 - [Local end-to-end setup](docs/app-pipeline-local-e2e-setup.md)
 - [Web interface and browser behavior](web/README.md)
 - [Local reasoning](docs/reasoning/local-reasoning.md)
+- [Reasoning evaluation methodology and run instructions](benchmarks/reasoning/README.md)
 - [Memory design](docs/memory/memory.md)
 - [Repository structure](docs/repository-structure.md)
 - [Development workflow](docs/development-workflow.md)

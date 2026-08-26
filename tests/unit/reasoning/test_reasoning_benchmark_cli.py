@@ -235,7 +235,7 @@ def test_benchmark_cli_maps_selected_factory_errors(
 
     result = _run_single(
         Namespace(
-            prompts=Path("benchmarks/reasoning/prompts/v0.json"),
+            prompts=Path("benchmarks/reasoning/prompts/final-v1.json"),
             output=tmp_path / "report.json",
             max_words=60,
             evaluation_mode="guarded",

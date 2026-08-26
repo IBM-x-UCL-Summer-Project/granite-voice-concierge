@@ -2,44 +2,35 @@
 
 ## Decision
 
-Use `granite4.1:8b` as the recommended default local reasoning model for the
-current prototype.
+Use `granite4.1:8b` as the default local reasoning model. Retain
+`granite3.3:2b` as an explicitly configured, lower-resource startup fallback.
+The fallback is used only when the primary model is absent at application
+startup; it is not a mid-turn retry and is not downloaded automatically.
 
-Keep `granite3.3:2b` as the lower-resource fallback. The selected model should
-remain configurable so users can later choose another compatible local model.
-The default `startup_missing_primary` policy uses that fallback only when the
-primary is not installed at application startup. It does not switch models
-mid-turn or download either model.
+## Evidence and rationale
 
-## Why 8B Is Recommended
+The definitive local comparison used 30 cases, three repetitions per case, and
+90 responses per model. Under identical generation and scoring settings:
 
-The latest local comparison covered 13 voice-concierge reasoning cases across
-cooking, shopping, memory, accessibility, safety, and offline behavior.
+| Model | Raw pass | Guarded pass | Guard interventions | Schema failures | Average latency |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `granite4.1:8b` | 68/90 (75.56%) | 67/90 (74.44%) | 42 | 3 | 2,556.9 ms |
+| `granite3.3:2b` | 45/90 (50.00%) | 45/90 (50.00%) | 60 | 20 | 1,118.8 ms |
 
-| Model           | Raw pass | Guarded pass | Guard interventions | Average latency |
-| --------------- | -------: | -----------: | ------------------: | --------------: |
-| `granite4.1:8b` |   69.23% |       92.31% |                   7 |      2,037.8 ms |
-| `granite3.3:2b` |   69.23% |       92.31% |                   7 |        851.7 ms |
+The 8B Granite model was substantially more reliable and produced far fewer
+schema-invalid responses, while the 2B model was approximately 1.4 seconds
+faster per reasoning request on the measured machine. This supports using the
+2B model only as a resource-constrained fallback rather than treating it as
+quality-equivalent to the primary.
 
-The automated scores are tied, but the 8B model handled the missing context
-cooking case correctly, while the 2B model claimed to repeat a step that had not
-been supplied. Avoiding invented context is important for a predictable assistant
-supporting independent living.
+The seven-model comparison did not establish Granite 4.1 8B as the universal
+best model. Qwen3 8B achieved the highest guarded pass count at 69/90, compared
+with Granite's 67/90. Granite remains the project default because an IBM Granite
+reasoning model is a client requirement and Granite 4.1 8B was competitive within
+the evaluated model class. The backend remains configurable so another compatible
+local model can be selected for deployments with different priorities.
 
-The 8B model is therefore the preferred quality oriented starting point. Its
-observed latency remains plausible for the prototype, while the 2B model provides
-a materially faster option for constrained hardware.
-
-## Limits of This Decision
-
-This is a practical default selection, not proof that 8B is universally better.
-The suite is small, each case was run once, and deterministic policy guards
-changed 7 of 13 responses. The results do not yet measure the complete voice
-pipeline, repeated run latency, memory use, or behavior on target devices.
-
-## Model Switching
-
-Final version of the product should allow a user to pick models based on preferences.
-
-Evidence source: local comparison run
-`benchmarks/reasoning/results/model-comparison-20260617-221036/` from 17 June 2026.
+The canonical [Local Reasoning Evaluation](../../benchmarks/reasoning/README.md)
+contains the complete seven-model results, exact digests and quantisation,
+generation settings, scoring definitions, reproduction command, and limitations.
+That document is the source of truth for benchmark numbers.
