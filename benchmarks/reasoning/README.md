@@ -32,11 +32,12 @@ python -m benchmarks.reasoning.benchmark compare \
 
 The default generation configuration is prompt version `v3`, temperature `0.2`,
 top-p `0.9`, a 4096-token context, structured JSON output, and a 60-word spoken
-response constraint. The current token-budget calculation sends `num_predict=304`
-for an ordinary single-model run. The final comparison fixes `num_predict=512` so
-the surrounding JSON fields do not compete with the 60-word spoken response for
-the smaller derived budget. No sampling seed is set. The detailed reports record
-the effective values returned by the runtime.
+response constraint. Model-specific thinking is explicitly disabled in comparison
+mode so every model uses the same measured response path. The current token-budget
+calculation sends `num_predict=304` for an ordinary single-model run. The final
+comparison fixes `num_predict=512` so the surrounding JSON fields do not compete
+with the 60-word spoken response for the smaller derived budget. No sampling seed
+is set. The detailed reports record the effective values returned by the runtime.
 
 ## Scoring
 

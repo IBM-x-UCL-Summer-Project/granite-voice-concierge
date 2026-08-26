@@ -95,6 +95,8 @@ def _engine_with_response(
         ("num_predict", 0, "num_predict"),
         ("num_predict", False, "num_predict"),
         ("num_predict", "512", "num_predict"),
+        ("think", "maximum", "think"),
+        ("think", 1, "think"),
         ("keep_alive", "", "keep_alive"),
         ("keep_alive", 0, "keep_alive"),
         ("keep_alive", True, "keep_alive"),
@@ -165,6 +167,7 @@ def test_ollama_engine_sends_chat_messages_and_generated_schema() -> None:
     call = client.chat.call_args.kwargs
     assert call["model"] == "granite-local-test"
     assert call["stream"] is False
+    assert call["think"] is None
     assert call["format"]["type"] == "object"
     assert call["format"]["additionalProperties"] is False
     assert "required_information_source" in call["format"]["required"]
@@ -196,6 +199,7 @@ def test_ollama_engine_sends_chat_messages_and_generated_schema() -> None:
     assert response.metadata["num_predict"] == "304"
     assert response.metadata["max_predict_tokens"] == "512"
     assert response.metadata["keep_alive"] == "5m"
+    assert response.metadata["think"] == "model_default"
     assert response.metadata["total_duration"] == "1000"
     assert response.metadata["eval_count"] == "5"
 
@@ -278,6 +282,20 @@ def test_ollama_engine_can_use_fixed_generation_budget() -> None:
 
     assert client.chat.call_args.kwargs["options"]["num_predict"] == 512
     assert response.metadata["num_predict"] == "512"
+
+
+def test_ollama_engine_can_disable_model_thinking() -> None:
+    client = Mock()
+    client.chat.return_value = _chat_response(_structured_content("Short response."))
+    engine = OllamaReasoningEngine(
+        OllamaConfig(model="granite-local-test", think=False),
+        client=client,
+    )
+
+    response = engine.generate(ReasoningRequest(transcript="Hello"))
+
+    assert client.chat.call_args.kwargs["think"] is False
+    assert response.metadata["think"] == "false"
 
 
 def test_ollama_config_rejects_fixed_budget_above_cap() -> None:

@@ -378,7 +378,8 @@ def _markdown_experiment(experiment: dict[str, Any] | None) -> list[str]:
             f"{generation.get('top_p', 'unknown')}, context "
             f"{generation.get('num_ctx', 'unknown')}, prediction budget "
             f"{generation.get('num_predict', 'unknown')} tokens, spoken limit "
-            f"{generation.get('max_words', 'unknown')} words, seed "
+            f"{generation.get('max_words', 'unknown')} words, thinking "
+            f"{generation.get('thinking', 'unknown')}, seed "
             f"{generation.get('seed', 'not set')}."
         )
     lines.append("")

@@ -297,6 +297,7 @@ class OllamaConfig:
     num_ctx: int = 4096
     max_predict_tokens: int = 512
     num_predict: int | None = None
+    think: bool | Literal["low", "medium", "high"] | None = None
     keep_alive: str | float = "5m"
     prompt_version: str = DEFAULT_PROMPT_VERSION
     model_role: Literal["primary", "fallback"] = "primary"
@@ -325,6 +326,7 @@ class OllamaConfig:
                 raise ReasoningConfigurationError(
                     "Ollama config num_predict must not exceed max_predict_tokens."
                 )
+        _validate_think(self.think)
         _validate_keep_alive(self.keep_alive)
 
 
@@ -363,6 +365,7 @@ class OllamaReasoningEngine:
                     model=self.config.model,
                     messages=messages,
                     stream=False,
+                    think=self.config.think,
                     format=_StructuredReasoningResponse.model_json_schema(),
                     options={
                         "temperature": self.config.temperature,
@@ -534,6 +537,7 @@ class _GenerationOptions:
     temperature: float
     top_p: float
     max_predict_tokens: int
+    think: bool | Literal["low", "medium", "high"] | None
 
     def as_metadata(self) -> dict[str, str]:
         return {
@@ -543,6 +547,9 @@ class _GenerationOptions:
             "keep_alive": str(self.keep_alive),
             "temperature": str(self.temperature),
             "top_p": str(self.top_p),
+            "think": (
+                "model_default" if self.think is None else str(self.think).lower()
+            ),
         }
 
 
@@ -564,6 +571,7 @@ def _generation_options_for_request(
         temperature=config.temperature,
         top_p=config.top_p,
         max_predict_tokens=config.max_predict_tokens,
+        think=config.think,
     )
 
 
@@ -644,6 +652,16 @@ def _validate_top_p(value: object) -> None:
     if value <= 0 or value > 1:
         raise ReasoningConfigurationError(
             "Ollama config top_p must be greater than 0 and at most 1."
+        )
+
+
+def _validate_think(value: object) -> None:
+    if value is None or isinstance(value, bool):
+        return
+    if value not in ("low", "medium", "high"):
+        raise ReasoningConfigurationError(
+            "Ollama config think must be a boolean, 'low', 'medium', 'high', "
+            "or None."
         )
 
 

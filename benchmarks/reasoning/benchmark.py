@@ -15,7 +15,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import psutil
 
@@ -57,6 +57,7 @@ DEFAULT_CONFIG_PATH = REPO_ROOT / DEFAULT_MODEL_SELECTION_PATH
 DEFAULT_PROMPT_SUITE_PATH = (
     REPO_ROOT / "benchmarks" / "reasoning" / "prompts" / "final-v1.json"
 )
+THINKING_CHOICES = ("model-default", "disabled", "enabled", "low", "medium", "high")
 
 
 def parse_args() -> argparse.Namespace:
@@ -78,6 +79,7 @@ def parse_args() -> argparse.Namespace:
         repetitions=1,
         warmup_runs=0,
         num_predict=None,
+        thinking="model-default",
     )
     run_parser.add_argument(
         "--engine",
@@ -114,6 +116,7 @@ def parse_args() -> argparse.Namespace:
         repetitions=3,
         warmup_runs=1,
         num_predict=512,
+        thinking="disabled",
     )
     compare_parser.add_argument(
         "--models",
@@ -154,6 +157,7 @@ def _add_common_args(
     repetitions: int,
     warmup_runs: int,
     num_predict: int | None,
+    thinking: str,
 ) -> None:
     """Add options shared by single-run and comparison modes."""
 
@@ -201,6 +205,15 @@ def _add_common_args(
         help="Bundled runtime prompt-template version used by Ollama engines.",
     )
     parser.add_argument(
+        "--thinking",
+        choices=THINKING_CHOICES,
+        default=thinking,
+        help=(
+            "Ollama thinking mode. Comparisons disable it explicitly so all "
+            "models use the same measured response path."
+        ),
+    )
+    parser.add_argument(
         "--evaluation-mode",
         choices=EVALUATION_MODES,
         default=evaluation_mode,
@@ -242,6 +255,7 @@ def build_engine(args: argparse.Namespace) -> ReasoningEngine:
                 timeout_s=args.timeout_s,
                 prompt_version=args.prompt_version,
                 num_predict=getattr(args, "num_predict", None),
+                think=_thinking_value(getattr(args, "thinking", "model-default")),
             )
         )
 
@@ -341,6 +355,7 @@ def _compare_models(args: argparse.Namespace) -> int:
                     timeout_s=args.timeout_s,
                     prompt_version=args.prompt_version,
                     num_predict=args.num_predict,
+                    think=_thinking_value(args.thinking),
                 )
             )
             warmup = _warm_up_engine(
@@ -442,6 +457,7 @@ def _experiment_metadata(
             "top_p": _number(result_metadata.get("top_p")),
             "num_ctx": _integer(result_metadata.get("num_ctx")),
             "num_predict": _integer(result_metadata.get("num_predict")),
+            "thinking": _thinking_value(args.thinking),
             "max_predict_tokens": _integer(result_metadata.get("max_predict_tokens")),
             "max_words": args.max_words,
             "keep_alive": result_metadata.get("keep_alive"),
@@ -557,6 +573,20 @@ def _number(value: object) -> float | None:
         return float(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _thinking_value(
+    value: str,
+) -> bool | Literal["low", "medium", "high"] | None:
+    if value == "model-default":
+        return None
+    if value == "disabled":
+        return False
+    if value == "enabled":
+        return True
+    if value in ("low", "medium", "high"):
+        return value
+    raise ValueError(f"Unsupported Ollama thinking mode: {value}")
 
 
 def _resolve_ollama_run_settings(

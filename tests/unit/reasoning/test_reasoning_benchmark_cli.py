@@ -92,6 +92,7 @@ def test_comparison_defaults_match_final_report_methodology(
     assert args.warmup_runs == 1
     assert args.max_words == 60
     assert args.num_predict == 512
+    assert args.thinking == "disabled"
     assert args.evaluation_mode == "both"
 
 
