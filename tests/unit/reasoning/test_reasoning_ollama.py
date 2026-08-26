@@ -92,6 +92,9 @@ def _engine_with_response(
         ("max_predict_tokens", 0, "max_predict_tokens"),
         ("max_predict_tokens", False, "max_predict_tokens"),
         ("max_predict_tokens", "512", "max_predict_tokens"),
+        ("num_predict", 0, "num_predict"),
+        ("num_predict", False, "num_predict"),
+        ("num_predict", "512", "num_predict"),
         ("keep_alive", "", "keep_alive"),
         ("keep_alive", 0, "keep_alive"),
         ("keep_alive", True, "keep_alive"),
@@ -256,6 +259,34 @@ def test_ollama_engine_caps_generation_limit_at_configured_maximum() -> None:
     assert call["options"]["num_predict"] == 120
     assert response.metadata["max_predict_tokens"] == "120"
     assert response.metadata["num_predict"] == "120"
+
+
+def test_ollama_engine_can_use_fixed_generation_budget() -> None:
+    client = Mock()
+    client.chat.return_value = _chat_response(_structured_content("Short response."))
+    engine = OllamaReasoningEngine(
+        OllamaConfig(model="granite-local-test", num_predict=512),
+        client=client,
+    )
+
+    response = engine.generate(
+        ReasoningRequest(
+            transcript="Hello",
+            constraints=ReasoningConstraints(max_words=25),
+        )
+    )
+
+    assert client.chat.call_args.kwargs["options"]["num_predict"] == 512
+    assert response.metadata["num_predict"] == "512"
+
+
+def test_ollama_config_rejects_fixed_budget_above_cap() -> None:
+    with pytest.raises(ReasoningConfigurationError, match="must not exceed"):
+        OllamaConfig(
+            model="granite-local-test",
+            max_predict_tokens=256,
+            num_predict=512,
+        )
 
 
 def test_ollama_engine_validates_request_before_client_call() -> None:

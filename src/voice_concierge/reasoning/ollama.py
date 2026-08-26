@@ -296,6 +296,7 @@ class OllamaConfig:
     top_p: float = 0.9
     num_ctx: int = 4096
     max_predict_tokens: int = 512
+    num_predict: int | None = None
     keep_alive: str | float = "5m"
     prompt_version: str = DEFAULT_PROMPT_VERSION
     model_role: Literal["primary", "fallback"] = "primary"
@@ -318,6 +319,12 @@ class OllamaConfig:
         _validate_top_p(self.top_p)
         _validate_positive_integer(self.num_ctx, "num_ctx")
         _validate_positive_integer(self.max_predict_tokens, "max_predict_tokens")
+        if self.num_predict is not None:
+            _validate_positive_integer(self.num_predict, "num_predict")
+            if self.num_predict > self.max_predict_tokens:
+                raise ReasoningConfigurationError(
+                    "Ollama config num_predict must not exceed max_predict_tokens."
+                )
         _validate_keep_alive(self.keep_alive)
 
 
@@ -545,9 +552,13 @@ def _generation_options_for_request(
 ) -> _GenerationOptions:
     return _GenerationOptions(
         num_ctx=config.num_ctx,
-        num_predict=_num_predict_for_word_limit(
-            request.constraints.max_words,
-            max_predict_tokens=config.max_predict_tokens,
+        num_predict=(
+            config.num_predict
+            if config.num_predict is not None
+            else _num_predict_for_word_limit(
+                request.constraints.max_words,
+                max_predict_tokens=config.max_predict_tokens,
+            )
         ),
         keep_alive=config.keep_alive,
         temperature=config.temperature,

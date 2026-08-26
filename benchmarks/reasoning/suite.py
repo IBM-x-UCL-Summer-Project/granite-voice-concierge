@@ -59,6 +59,7 @@ class BenchmarkEvaluation:
 class BenchmarkResult:
     """Measured raw and/or guarded result for one benchmark case."""
 
+    repetition: int
     case_id: str
     category: str
     transcript: str
@@ -135,92 +136,109 @@ def run_reasoning_benchmark(
     *,
     max_words: int = 60,
     evaluation_mode: EvaluationMode = "guarded",
+    repetitions: int = 1,
+    experiment_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run a prompt suite against a reasoning engine and return JSON-ready data."""
 
     if evaluation_mode not in EVALUATION_MODES:
         raise ValueError(f"Unsupported evaluation mode: {evaluation_mode}")
+    if (
+        not isinstance(repetitions, int)
+        or isinstance(repetitions, bool)
+        or repetitions <= 0
+    ):
+        raise ValueError("Benchmark repetitions must be a positive integer.")
 
     started_at = datetime.now(timezone.utc)
     suite_name = suite.get("name", "unnamed_reasoning_suite")
     suite_purpose = suite.get("purpose", "")
+    cases = tuple(iter_benchmark_cases(suite))
 
     results: list[BenchmarkResult] = []
     run_start = time.perf_counter()
-    for case in iter_benchmark_cases(suite):
-        constraints = ReasoningConstraints(max_words=max_words)
-        request = ReasoningRequest(
-            transcript=case.transcript,
-            mode=case.mode,
-            memories=case.memories,
-            runtime_context=case.runtime_context,
-            conversation_summary=case.conversation_summary,
-            constraints=constraints,
-        )
-
-        case_start = time.perf_counter()
-        raw_response, guarded_response = _generate_responses(
-            engine,
-            request,
-            evaluation_mode=evaluation_mode,
-        )
-        latency_ms = (time.perf_counter() - case_start) * 1000
-
-        raw_evaluation = _evaluate_response(
-            case,
-            raw_response,
-            max_words=max_words,
-        )
-        guarded_evaluation = _evaluate_response(
-            case,
-            guarded_response,
-            max_words=max_words,
-        )
-        primary_evaluation = guarded_evaluation or raw_evaluation
-        if primary_evaluation is None:
-            raise RuntimeError("Benchmark did not produce an evaluation result.")
-
-        policy_guard = (
-            guarded_response.metadata.get("policy_guard")
-            if guarded_response is not None
-            else None
-        )
-        results.append(
-            BenchmarkResult(
-                case_id=case.case_id,
-                category=case.category,
+    for repetition in range(1, repetitions + 1):
+        for case in cases:
+            constraints = ReasoningConstraints(max_words=max_words)
+            request = ReasoningRequest(
                 transcript=case.transcript,
                 mode=case.mode,
                 memories=case.memories,
                 runtime_context=case.runtime_context,
                 conversation_summary=case.conversation_summary,
-                expected_behavior=case.expected_behavior,
-                spoken_response=primary_evaluation.spoken_response,
-                latency_ms=round(latency_ms, 3),
-                response_words=primary_evaluation.response_words,
-                needs_confirmation=primary_evaluation.needs_confirmation,
-                proposed_memory_action=primary_evaluation.proposed_memory_action,
-                confidence=primary_evaluation.confidence,
-                required_information_source=(
-                    primary_evaluation.required_information_source
-                ),
-                information_evidence=primary_evaluation.information_evidence,
-                freshness_requirement=primary_evaluation.freshness_requirement,
-                metadata=primary_evaluation.metadata,
-                passed_checks=primary_evaluation.passed_checks,
-                issues=primary_evaluation.issues,
-                raw_evaluation=raw_evaluation,
-                guarded_evaluation=guarded_evaluation,
-                guard_intervened=policy_guard is not None,
-                policy_guard=policy_guard,
+                constraints=constraints,
             )
-        )
+
+            case_start = time.perf_counter()
+            raw_response, guarded_response = _generate_responses(
+                engine,
+                request,
+                evaluation_mode=evaluation_mode,
+            )
+            latency_ms = (time.perf_counter() - case_start) * 1000
+
+            raw_evaluation = _evaluate_response(
+                case,
+                raw_response,
+                max_words=max_words,
+            )
+            guarded_evaluation = _evaluate_response(
+                case,
+                guarded_response,
+                max_words=max_words,
+            )
+            primary_evaluation = guarded_evaluation or raw_evaluation
+            if primary_evaluation is None:
+                raise RuntimeError("Benchmark did not produce an evaluation result.")
+
+            policy_guard = (
+                guarded_response.metadata.get("policy_guard")
+                if guarded_response is not None
+                else None
+            )
+            results.append(
+                BenchmarkResult(
+                    repetition=repetition,
+                    case_id=case.case_id,
+                    category=case.category,
+                    transcript=case.transcript,
+                    mode=case.mode,
+                    memories=case.memories,
+                    runtime_context=case.runtime_context,
+                    conversation_summary=case.conversation_summary,
+                    expected_behavior=case.expected_behavior,
+                    spoken_response=primary_evaluation.spoken_response,
+                    latency_ms=round(latency_ms, 3),
+                    response_words=primary_evaluation.response_words,
+                    needs_confirmation=primary_evaluation.needs_confirmation,
+                    proposed_memory_action=(primary_evaluation.proposed_memory_action),
+                    confidence=primary_evaluation.confidence,
+                    required_information_source=(
+                        primary_evaluation.required_information_source
+                    ),
+                    information_evidence=primary_evaluation.information_evidence,
+                    freshness_requirement=(primary_evaluation.freshness_requirement),
+                    metadata=primary_evaluation.metadata,
+                    passed_checks=primary_evaluation.passed_checks,
+                    issues=primary_evaluation.issues,
+                    raw_evaluation=raw_evaluation,
+                    guarded_evaluation=guarded_evaluation,
+                    guard_intervened=policy_guard is not None,
+                    policy_guard=policy_guard,
+                )
+            )
 
     elapsed_ms = (time.perf_counter() - run_start) * 1000
-    return {
+    raw_passed = _passed_evaluation_count(results, "raw_evaluation")
+    guarded_passed = _passed_evaluation_count(results, "guarded_evaluation")
+    report = {
         "suite": {
             "name": suite_name,
             "purpose": suite_purpose,
+            "category_counts": {
+                category: len(category_cases)
+                for category, category_cases in suite["categories"].items()
+            },
         },
         "engine": engine.__class__.__name__,
         "evaluation_mode": evaluation_mode,
@@ -228,16 +246,52 @@ def run_reasoning_benchmark(
             "guarded" if evaluation_mode in ("guarded", "both") else "raw"
         ),
         "started_at_utc": started_at.isoformat(),
-        "total_cases": len(results),
-        "raw_passed_cases": _passed_evaluation_count(results, "raw_evaluation"),
-        "guarded_passed_cases": _passed_evaluation_count(
-            results,
-            "guarded_evaluation",
-        ),
+        "total_cases": len(cases),
+        "repetitions": repetitions,
+        "total_responses": len(results),
+        "raw_passed_responses": raw_passed,
+        "guarded_passed_responses": guarded_passed,
         "guard_interventions": sum(result.guard_intervened for result in results),
+        "scoring": {
+            "judge": "deterministic_python_harness",
+            "partial_credit": False,
+            "pass_condition": "all_applicable_checks_pass",
+            "global_checks": ["response_words_at_most_max_words"],
+            "case_check_types": [
+                "needs_confirmation",
+                "memory_action",
+                "information_source",
+                "freshness_requirement",
+                "must_contain_any",
+                "must_contain_all",
+                "must_not_contain_any",
+            ],
+            "raw_definition": (
+                "schema-parsed model response before deterministic policy guards "
+                "and word-limit shaping"
+            ),
+            "guarded_definition": (
+                "the same generation after deterministic policy guards and "
+                "word-limit shaping"
+            ),
+            "guard_intervention_definition": (
+                "a response whose guarded metadata contains a named policy_guard; "
+                "an intervention does not necessarily convert a failure to a pass"
+            ),
+        },
+        "latency": {
+            "unit": "ms",
+            "scope": (
+                "local generation, schema parsing, deterministic policy guards, "
+                "and word-limit shaping; automated scoring is excluded"
+            ),
+        },
         "elapsed_ms": round(elapsed_ms, 3),
         "results": [asdict(result) for result in results],
     }
+    if experiment_metadata is not None:
+        report["experiment"] = experiment_metadata
+    return report
 
 
 def _memory_reference_from_payload(

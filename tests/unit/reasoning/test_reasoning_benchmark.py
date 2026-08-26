@@ -22,6 +22,7 @@ from voice_concierge.reasoning.types import (
 )
 
 PROMPT_SUITE = Path("benchmarks/reasoning/prompts/v0.json")
+FINAL_PROMPT_SUITE = Path("benchmarks/reasoning/prompts/final-v1.json")
 
 
 def test_prompt_suite_loads_all_cases() -> None:
@@ -37,6 +38,25 @@ def test_prompt_suite_loads_all_cases() -> None:
         case for case in cases if case.case_id == "runtime_local_device_time"
     )
     assert runtime_case.runtime_context[0].runtime_id == "system.local_datetime"
+
+
+def test_final_prompt_suite_has_reported_case_distribution() -> None:
+    suite = load_prompt_suite(FINAL_PROMPT_SUITE)
+    cases = list(iter_benchmark_cases(suite))
+
+    assert len(cases) == 30
+    assert {
+        category: len(category_cases)
+        for category, category_cases in suite["categories"].items()
+    } == {
+        "general_requests": 6,
+        "missing_context": 5,
+        "safety_sensitive": 5,
+        "offline_no_web": 5,
+        "memory_confirmation": 5,
+        "structured_output_response_length": 4,
+    }
+    assert len({case.case_id for case in cases}) == 30
 
 
 def test_benchmark_report_contains_core_metrics() -> None:
@@ -250,8 +270,8 @@ def test_benchmark_evaluates_raw_and_guarded_response_from_one_trace() -> None:
     assert engine.trace_calls == 1
     assert report["evaluation_mode"] == "both"
     assert report["primary_evaluation"] == "guarded"
-    assert report["raw_passed_cases"] == 0
-    assert report["guarded_passed_cases"] == 1
+    assert report["raw_passed_responses"] == 0
+    assert report["guarded_passed_responses"] == 1
     assert report["guard_interventions"] == 1
     result = report["results"][0]
     assert result["passed_checks"] is True
@@ -259,6 +279,54 @@ def test_benchmark_evaluates_raw_and_guarded_response_from_one_trace() -> None:
     assert result["guarded_evaluation"]["passed_checks"] is True
     assert result["guard_intervened"] is True
     assert result["policy_guard"] == "memory_store_confirmation"
+
+
+def test_benchmark_repeats_every_case_and_labels_each_response() -> None:
+    suite = {
+        "name": "repeated_suite",
+        "categories": {
+            "general": [
+                {
+                    "id": "hello",
+                    "transcript": "Hello.",
+                    "expected_behavior": "Return a response.",
+                },
+                {
+                    "id": "goodbye",
+                    "transcript": "Goodbye.",
+                    "expected_behavior": "Return a response.",
+                },
+            ]
+        },
+    }
+
+    report = run_reasoning_benchmark(
+        DeterministicReasoningFake(),
+        suite,
+        repetitions=3,
+    )
+
+    assert report["total_cases"] == 2
+    assert report["repetitions"] == 3
+    assert report["total_responses"] == 6
+    assert [result["repetition"] for result in report["results"]] == [
+        1,
+        1,
+        2,
+        2,
+        3,
+        3,
+    ]
+
+
+@pytest.mark.parametrize("repetitions", (0, -1, True))
+def test_benchmark_rejects_invalid_repetition_count(repetitions: object) -> None:
+    with pytest.raises(ValueError, match="positive integer"):
+        run_reasoning_benchmark(
+            DeterministicReasoningFake(),
+            {"name": "test", "categories": {}},
+            repetitions=repetitions,  # type: ignore[arg-type]
+        )
 
 
 def test_benchmark_raw_mode_uses_raw_response_as_primary_result() -> None:

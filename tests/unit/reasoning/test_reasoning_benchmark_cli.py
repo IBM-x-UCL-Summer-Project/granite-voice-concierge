@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from benchmarks.reasoning.benchmark import _run_single, build_engine
+from benchmarks.reasoning.benchmark import _run_single, build_engine, parse_args
 from voice_concierge.reasoning import (
     DeterministicReasoningFake,
     OllamaReasoningEngine,
@@ -44,7 +44,10 @@ def test_benchmark_cli_runs_fake(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     report = json.loads(output_path.read_text(encoding="utf-8"))
     assert report["engine"] == "DeterministicReasoningFake"
-    assert report["total_cases"] == 20
+    assert report["total_cases"] == 30
+    assert report["repetitions"] == 1
+    assert report["total_responses"] == 30
+    assert report["experiment"]["suite"]["name"] == "reasoning_evaluation_final_v1"
 
 
 def test_benchmark_cli_compare_requires_two_models() -> None:
@@ -64,6 +67,32 @@ def test_benchmark_cli_compare_requires_two_models() -> None:
 
     assert result.returncode == 2
     assert "compare requires at least two models" in result.stderr
+
+
+def test_comparison_defaults_match_final_report_methodology(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            BENCHMARK_MODULE,
+            "compare",
+            "--models",
+            "model-a",
+            "model-b",
+        ],
+    )
+
+    args = parse_args()
+
+    assert args.prompts == Path("benchmarks/reasoning/prompts/final-v1.json").resolve()
+    assert args.prompt_version == "v3"
+    assert args.repetitions == 3
+    assert args.warmup_runs == 1
+    assert args.max_words == 60
+    assert args.num_predict == 512
+    assert args.evaluation_mode == "both"
 
 
 def test_benchmark_ollama_engine_uses_persisted_model_selection(
