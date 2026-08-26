@@ -111,6 +111,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Override the speech-to-text model size (e.g. small.en).",
     )
     parser.add_argument(
+        "--recorded-dir",
+        type=Path,
+        nargs="+",
+        default=(),
+        help=(
+            "Speaker folders of recorded speech to score, each holding a "
+            "manifest written by `python -m benchmarks.suite.record`. Pass "
+            "several to pool multiple speakers. This is the only figure in the "
+            "suite that describes real voices."
+        ),
+    )
+    parser.add_argument(
         "--reasoning-model",
         help="Override the reasoning model (e.g. granite3.3:2b).",
     )
@@ -269,7 +281,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if "stt" in stages:
         _run_stage(
             "speech_to_text",
-            lambda: components.benchmark_stt(backend, model_size=args.stt_model),
+            lambda: components.benchmark_stt(
+                backend,
+                model_size=args.stt_model,
+                recorded_dirs=args.recorded_dir,
+            ),
             results,
             results["components"],
         )

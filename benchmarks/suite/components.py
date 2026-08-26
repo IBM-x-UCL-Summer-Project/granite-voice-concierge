@@ -132,6 +132,7 @@ def benchmark_stt(
     *,
     model_size: str | None = None,
     include_recorded: bool = True,
+    recorded_dirs: Sequence[Path] = (),
 ) -> dict:
     """Measure transcription accuracy and latency for the configured model.
 
@@ -183,18 +184,24 @@ def benchmark_stt(
             "utterances": utterances,
         }
 
+    real_voice = {}
+    for directory in recorded_dirs:
+        scored = _score_recorded_speaker(stt, Path(directory))
+        if scored is not None:
+            real_voice[scored["speaker"]] = scored
+
     if include_recorded:
         clips = corpus.recorded_wake_word_clips()
         if clips:
-            groups["recorded_real_voices"] = _score_recorded_clips(stt, clips)
+            groups["recorded_wake_phrase"] = _score_recorded_clips(stt, clips)
 
     pooled = [
         score_transcript(u["reference"], u["hypothesis"])
         for name, group in groups.items()
-        if name != "recorded_real_voices"
+        if name != "recorded_wake_phrase"
         for u in group["utterances"]
     ]
-    return {
+    result = {
         "config": {
             "model_size": resolved_size,
             "device": DEFAULT_DEVICE,
@@ -204,6 +211,74 @@ def benchmark_stt(
         },
         "groups": groups,
         "all_synthetic": summarize_transcripts(pooled),
+    }
+    if real_voice:
+        # Kept apart from the synthetic pool on purpose: mixing recorded and
+        # synthesized speech into one rate would hide the only figure here
+        # that describes real users.
+        all_real = [
+            score_transcript(u["reference"], u["hypothesis"])
+            for speaker in real_voice.values()
+            for u in speaker["utterances"]
+        ]
+        result["real_voice"] = {
+            "speakers": real_voice,
+            "all_speakers": summarize_transcripts(all_real),
+        }
+    return result
+
+
+def _score_recorded_speaker(stt, directory: Path) -> dict | None:
+    """Score one speaker's recorded material against its manifest.
+
+    The manifest is written by the recorder at capture time, so the pairing
+    between a file and the words actually read is established when the words
+    were read rather than reconstructed afterwards.
+    """
+    from benchmarks.suite.record import load_manifest
+
+    manifest = load_manifest(directory)
+    if manifest is None:
+        eprint(f"    ! no manifest in {directory}, skipping")
+        return None
+
+    scores, timings, utterances = [], [], []
+    for entry in manifest.get("utterances", []):
+        path = directory / entry["file"]
+        if not path.is_file():
+            continue
+        audio = resample_to(read_wav(path), 16000)
+        started = time.perf_counter()
+        transcript = stt.transcribe(audio)
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        score = score_transcript(entry["reference"], transcript.text)
+        scores.append(score)
+        timings.append(elapsed_ms)
+        utterances.append(
+            {
+                "source": entry["file"],
+                "reference": score.reference,
+                "hypothesis": score.hypothesis,
+                "wer": score.wer,
+                "wer_numbers_normalized": score.wer_numbers_normalized,
+                "exact_match": score.exact_match,
+                "audio_ms": duration_ms(audio),
+                "transcribe_ms": round(elapsed_ms, 1),
+            }
+        )
+
+    if not utterances:
+        eprint(f"    ! no usable audio in {directory}, skipping")
+        return None
+
+    speaker = manifest.get("speaker") or directory.name
+    eprint(f"    speaker {speaker}: {len(utterances)} utterances")
+    return {
+        "speaker": speaker,
+        "metadata": manifest.get("metadata", {}),
+        "accuracy": summarize_transcripts(scores),
+        "latency": latency_summary(timings),
+        "utterances": utterances,
     }
 
 

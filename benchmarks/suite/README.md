@@ -73,7 +73,7 @@ and say so in whatever you write up — do not quote the result as Piper's.
 | Stage | Measures | Needs |
 | --- | --- | --- |
 | `tts` | Synthesis latency and real-time factor at three utterance lengths | Chosen backend |
-| `stt` | Word error rate and transcription latency over 27 utterances | faster-whisper |
+| `stt` | Word error rate and transcription latency, synthetic plus any recorded speakers | faster-whisper |
 | `wake_word` | Detection, confusable and neutral activation across 3 thresholds × 4 noise levels | openWakeWord |
 | `vad` | Utterance capture, plus the pause length at which speech gets cut off | Silero VAD |
 | `reasoning` | Response latency for the local model | Ollama running |
@@ -94,12 +94,56 @@ not run", and does not stop the others. A machine with no Ollama still produces
 every speech result. The one thing that aborts the whole run is a pinned
 text-to-speech backend that cannot synthesize.
 
+## Measuring real-voice accuracy (do this)
+
+Everything else in the suite runs on synthesized speech, which makes accuracy
+figures a clean-speech ceiling rather than a measurement of real use. The one
+way to fix that is to record actual people. It takes about ten minutes each.
+
+Each person records the 24-line script:
+
+```bash
+python -m benchmarks.suite.record --speaker alice --age-band 25-34 --accent "southern British English"
+```
+
+It prompts one line at a time: Enter to start, Enter to stop, then Enter to
+keep, `r` to redo, `s` to skip, `q` to quit. It reports the peak level of every
+take so a silent or barely-audible recording is caught immediately rather than
+at scoring time. Interrupting is safe — rerun the same command and it resumes at
+the first line with no audio.
+
+The recorder writes a manifest pairing each file with the exact words that were
+read. That pairing is made when the words are read, so the alignment a word
+error rate depends on cannot silently drift.
+
+Then score every speaker together:
+
+```bash
+python -m benchmarks.suite --tts piper --recorded-dir benchmarks/suite/recordings/*
+```
+
+The report gains a **Real recorded voices** section, broken down per speaker and
+pooled. Keep it separate from the synthetic figures when writing up — pooling
+them would bury the only number that describes real speech.
+
+Recorded audio is **not committed** — it is personal data, and
+`recordings/.gitignore` keeps it local. The scored results JSON keeps every
+reference, hypothesis and error count, so the numbers stay reproducible without
+the voices. Get each speaker's consent before recording, and say in the write-up
+how many speakers there were and roughly who they were.
+
+Two things worth doing if you can: get more speakers rather than more lines per
+speaker, since speaker count is what limits how far the figure generalizes; and
+if anyone can record an older adult, that is worth more than the rest of the
+team combined, because that is the population the system is designed for.
+
 ## Useful options
 
 | Flag | Purpose |
 | --- | --- |
 | `--turns N` | Whole-pipeline turns to record. Default 8. |
 | `--stt-model small.en` | Try a larger speech-to-text model. |
+| `--recorded-dir DIR...` | Score recorded speaker folders. See above. |
 | `--reasoning-model granite3.3:2b` | Measure the smaller model instead. |
 | `--no-memory` | Run pipeline turns without the memory subsystem. |
 | `--tag piper-rerun` | Label the output files. |

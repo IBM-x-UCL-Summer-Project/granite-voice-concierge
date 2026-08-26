@@ -188,6 +188,55 @@ def _render_stt(data: dict) -> list[str]:
         "",
     ]
     _append_misses(lines, data)
+    if data.get("real_voice"):
+        lines += _render_real_voice(data["real_voice"])
+    return lines
+
+
+def _render_real_voice(data: dict) -> list[str]:
+    """Report recorded human speech separately from synthesized speech."""
+    overall = data["all_speakers"]
+    lines = [
+        "### Real recorded voices",
+        "",
+        "**This is the figure to quote for transcription accuracy.** Unlike",
+        "everything above it, this audio was spoken by people into a",
+        "microphone, so it carries accent, pace, disfluency and room noise.",
+        "",
+        "| Speaker | Age | Utterances | Ref. words | WER | WER (norm.) | Exact |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for speaker, entry in data["speakers"].items():
+        accuracy = entry["accuracy"]
+        metadata = entry.get("metadata") or {}
+        lines.append(
+            f"| {speaker} | {metadata.get('age_band') or '—'} "
+            f"| {accuracy['utterances']} | {accuracy['reference_words']} "
+            f"| {accuracy['corpus_wer']:.2%} "
+            f"| {accuracy['corpus_wer_numbers_normalized']:.2%} "
+            f"| {accuracy['exact_match_rate']:.0%} |"
+        )
+    lines.append(
+        f"| **all speakers** | | **{overall['utterances']}** "
+        f"| **{overall['reference_words']}** "
+        f"| **{overall['corpus_wer']:.2%}** "
+        f"| **{overall['corpus_wer_numbers_normalized']:.2%}** "
+        f"| **{overall['exact_match_rate']:.0%}** |"
+    )
+    lines += [
+        "",
+        f"Errors: {overall['substitutions']} substitutions, "
+        f"{overall['deletions']} deletions, {overall['insertions']} insertions "
+        f"over {overall['reference_words']} reference words from "
+        f"{len(data['speakers'])} speaker(s).",
+        "",
+        "Speaker count is the limiting factor on how far this generalizes. It",
+        "is a real measurement of real speech, but a handful of speakers drawn",
+        "from the project team is not a sample of the target population, and",
+        "no speaker here is necessarily in the older-adult group the system is",
+        "designed for. State the speaker count and demographics when quoting it.",
+        "",
+    ]
     return lines
 
 
