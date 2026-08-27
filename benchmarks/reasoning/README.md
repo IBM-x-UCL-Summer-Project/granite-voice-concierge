@@ -136,21 +136,21 @@ automated scoring, speech recognition, and text-to-speech synthesis.
 
 ## Definitive local run
 
-The report values below come from the complete run on 26 August 2026 at Git
-revision `329650778fee1210d9de6146f7cef6ed033e96ad`. The machine was an Apple
+The report values below come from the complete run on 27 August 2026 at Git
+revision `3bfb8a85504d4769901b1ad3e96886a458aa8681`. The machine was an Apple
 arm64 Mac running macOS 15.7 with 24 GiB system memory. All seven models used
 `Q4_K_M` quantisation. The software environment was Python 3.12.6, Ollama
 0.32.14, and Ollama Python client 0.6.2.
 
 | Model | Parameters | Raw pass | Guarded pass | Guard interventions | Schema failures | Avg. latency |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `qwen3:8b` | 8.2B | 72/90 (80.00%) | 69/90 (76.67%) | 54 | 6 | 2,268.4 ms |
-| `granite4.1:8b` | 8.8B | 68/90 (75.56%) | 67/90 (74.44%) | 42 | 3 | 2,556.9 ms |
-| `llama3.1:8b` | 8.0B | 60/90 (66.67%) | 67/90 (74.44%) | 47 | 4 | 2,710.1 ms |
-| `phi4-mini:3.8b` | 3.8B | 44/90 (48.89%) | 52/90 (57.78%) | 40 | 10 | 1,349.9 ms |
-| `gemma3:4b` | 4.3B | 45/90 (50.00%) | 54/90 (60.00%) | 36 | 15 | 1,871.4 ms |
-| `mistral:7b` | 7.2B | 62/90 (68.89%) | 66/90 (73.33%) | 47 | 13 | 2,597.7 ms |
-| `granite3.3:2b` | 2.5B | 45/90 (50.00%) | 45/90 (50.00%) | 60 | 20 | 1,118.8 ms |
+| `qwen3:8b` | 8.2B | 71/90 (78.89%) | 74/90 (82.22%) | 63 | 6 | 2,283.9 ms |
+| `granite4.1:8b` | 8.8B | 68/90 (75.56%) | 72/90 (80.00%) | 51 | 3 | 2,563.8 ms |
+| `llama3.1:8b` | 8.0B | 63/90 (70.00%) | 73/90 (81.11%) | 55 | 4 | 2,708.0 ms |
+| `phi4-mini:3.8b` | 3.8B | 40/90 (44.44%) | 52/90 (57.78%) | 51 | 12 | 1,334.5 ms |
+| `gemma3:4b` | 4.3B | 46/90 (51.11%) | 55/90 (61.11%) | 51 | 15 | 1,814.1 ms |
+| `mistral:7b` | 7.2B | 64/90 (71.11%) | 69/90 (76.67%) | 60 | 15 | 2,570.6 ms |
+| `granite3.3:2b` | 2.5B | 43/90 (47.78%) | 56/90 (62.22%) | 69 | 20 | 1,132.5 ms |
 
 Exact Ollama digests:
 
@@ -165,7 +165,11 @@ granite3.3:2b     07bd1f170855240f9e162bf54ea494a8bc1c73d8cbd1365d7fccbeb7d25049
 ```
 
 The automated checks are requirements diagnostics, not a general quality score.
-Guarded scores may be lower than raw scores when a safety guard replaces an
-otherwise check-passing answer with text that fails a case-specific lexical
-check. Detailed responses should therefore be reviewed before making a model
-selection decision.
+In this run, all three raw-pass-to-guarded-fail transitions came from
+`granite3.3:2b` supplying invalid conversation-summary evidence for an otherwise
+correct repeated cooking step. No safety response regressed after guarding. Two
+guarded safety responses still failed the global structured-output check because
+the model response could not be parsed before the deterministic safety response
+was applied. Detailed responses should therefore be reviewed before making a
+model selection decision: lexical checks and aggregate pass counts do not fully
+describe response quality or the reason for a failure.
