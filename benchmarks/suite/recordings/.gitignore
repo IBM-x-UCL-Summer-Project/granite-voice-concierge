@@ -1,5 +1,5 @@
 # Recorded voices are personal data and are deliberately not committed.
 # The scored results JSON under ../results/ keeps every reference, hypothesis
 # and error count, so the numbers stay reproducible without the audio.
-*
+#*
 !.gitignore
