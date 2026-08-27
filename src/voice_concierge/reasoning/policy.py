@@ -16,6 +16,7 @@ from voice_concierge.reasoning.profiles import (
     ReasoningPolicyProfile,
     validate_reasoning_policy_profile,
 )
+from voice_concierge.reasoning.safety import resolve_safety_intervention
 from voice_concierge.reasoning.types import (
     SHOPPING_LIST_MEMORY_KEY,
     TASK_LIST_MEMORY_KEY,
@@ -80,6 +81,25 @@ def apply_reasoning_policy_guards(
         )
     transcript = request.transcript.strip()
     text = transcript.lower()
+    safety_intervention = resolve_safety_intervention(
+        transcript,
+        mode=request.mode,
+    )
+    if safety_intervention is not None:
+        return ReasoningResponse(
+            spoken_response=safety_intervention.spoken_response,
+            needs_confirmation=False,
+            proposed_memory_action=None,
+            mode_suggestion=None,
+            confidence="high",
+            required_information_source="stable_knowledge",
+            information_evidence=(),
+            freshness_requirement="not_required",
+            metadata={
+                **response.metadata,
+                "policy_guard": safety_intervention.guard,
+            },
+        )
     shopping_items = _shopping_items_to_add(
         transcript,
         text,

@@ -1559,3 +1559,100 @@ def test_policy_guard_blocks_disabled_accessibility_update() -> None:
     assert response.proposed_memory_action is None
     assert response.spoken_response == "Memory changes are disabled right now."
     assert response.metadata["policy_guard"] == "memory_changes_disabled"
+
+
+@pytest.mark.parametrize(
+    ("transcript", "mode", "expected_guard", "expected_phrase"),
+    (
+        (
+            "There is smoke and fire in my kitchen. What should I do?",
+            "home",
+            "fire_emergency_safety",
+            "Leave the building immediately",
+        ),
+        (
+            "I've fallen and I can't stand up.",
+            "home",
+            "fall_emergency_safety",
+            "emergency alarm",
+        ),
+        (
+            "Can you diagnose this chest pain?",
+            "home",
+            "medical_diagnosis_safety",
+            "cannot diagnose",
+        ),
+        (
+            "How many extra painkillers should I take?",
+            "home",
+            "medication_dose_safety",
+            "pharmacist",
+        ),
+        (
+            "Read me a detailed recipe while I am driving.",
+            "driving",
+            "driving_distraction_safety",
+            "park somewhere safe",
+        ),
+    ),
+)
+def test_safety_guard_precedes_untrusted_live_information_metadata(
+    transcript: str,
+    mode: str,
+    expected_guard: str,
+    expected_phrase: str,
+) -> None:
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(transcript=transcript, mode=mode),
+        ReasoningResponse(
+            spoken_response="I do not know.",
+            needs_confirmation=True,
+            proposed_memory_action=MemoryAction(
+                action="store",
+                content="unsafe model proposal",
+                rationale="Incorrect generated metadata.",
+            ),
+            mode_suggestion="cooking",
+            confidence="low",
+            required_information_source="runtime_live",
+            freshness_requirement="current",
+        ),
+    )
+
+    assert expected_phrase in response.spoken_response
+    assert response.needs_confirmation is False
+    assert response.proposed_memory_action is None
+    assert response.mode_suggestion is None
+    assert response.confidence == "high"
+    assert response.required_information_source == "stable_knowledge"
+    assert response.information_evidence == ()
+    assert response.freshness_requirement == "not_required"
+    assert response.metadata["policy_guard"] == expected_guard
+
+
+@pytest.mark.parametrize(
+    ("transcript", "mode"),
+    (
+        ("What causes chest pain?", "home"),
+        ("How does a fireplace work?", "home"),
+        ("What happens after a fall in demand?", "home"),
+        ("Give me a short weather update.", "driving"),
+        ("Read the next direction.", "driving"),
+    ),
+)
+def test_safety_guard_does_not_capture_adjacent_non_emergencies(
+    transcript: str,
+    mode: str,
+) -> None:
+    original = ReasoningResponse(
+        spoken_response="Ordinary response.",
+        confidence="medium",
+        required_information_source="stable_knowledge",
+    )
+
+    response = apply_reasoning_policy_guards(
+        ReasoningRequest(transcript=transcript, mode=mode),
+        original,
+    )
+
+    assert response is original

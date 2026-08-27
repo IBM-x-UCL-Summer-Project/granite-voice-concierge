@@ -444,7 +444,10 @@ class VoiceConciergePipeline:
         if command_result is not None:
             return command_result
 
-        utility_response = resolve_local_utility(normalized_text)
+        utility_response = resolve_local_utility(
+            normalized_text,
+            mode=context_decision.state.mode,
+        )
         if utility_response is not None:
             return self._context_response(
                 current_state,

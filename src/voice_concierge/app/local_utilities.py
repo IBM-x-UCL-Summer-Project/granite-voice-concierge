@@ -7,6 +7,7 @@ import secrets
 from collections.abc import Callable
 
 from voice_concierge.app.types import ConversationTurn
+from voice_concierge.reasoning.safety import resolve_safety_intervention
 
 RandomBelow = Callable[[int], int]
 
@@ -27,34 +28,6 @@ _RANDOM_NUMBER = re.compile(
     r"(?P<maximum>-?\d+)\b",
     flags=re.IGNORECASE,
 )
-_GAS_EMERGENCY = re.compile(
-    r"\b(?:(?:i|we)\s+(?:can\s+)?smell\s+gas|"
-    r"(?:i(?:'m|\s+am)|we(?:'re|\s+are))\s+smelling\s+gas|"
-    r"there(?:'s|\s+is)\s+(?:a\s+)?(?:gas\s+leak|gas\s+odou?r)|"
-    r"(?:i|we)\s+(?:think|suspect)\s+(?:(?:there(?:'s|\s+is))|"
-    r"(?:we\s+have))\s+(?:a\s+)?gas\s+leak|"
-    r"(?:gas\s+leak|gas\s+odou?r)\s+(?:in|at)\s+(?:my|our|the)\s+"
-    r"(?:house|home|building|kitchen|room))\b",
-    flags=re.IGNORECASE,
-)
-_FIRE_EMERGENCY = re.compile(
-    r"\b(?:(?:my|the)\s+(?:house|home|building|kitchen|room)\s+"
-    r"(?:is\s+)?(?:on\s+fire|filling\s+with\s+smoke)|there(?:'s|\s+is)\s+"
-    r"a\s+fire|(?:fire|smoke)\s+in\s+(?:my|the)\s+"
-    r"(?:house|home|building|kitchen|room))\b",
-    flags=re.IGNORECASE,
-)
-_MEDICAL_EMERGENCY = re.compile(
-    r"\b(?:(?:i|they|he|she|someone)\s+(?:can't|cannot)\s+breathe|"
-    r"(?:i|they|he|she|someone)\s+(?:have|has|am\s+having|is\s+having|"
-    r"are\s+having)\s+(?:(?:severe|sudden|crushing|intense|bad)\s+)?"
-    r"chest\s+pain|"
-    r"(?:i(?:'m|\s+am)|they(?:'re|\s+are)|he(?:'s|\s+is)|she(?:'s|\s+is)|"
-    r"someone\s+is)\s+bleeding\s+(?:badly|heavily|severely)|"
-    r"(?:i|they|he|she|someone)\s+(?:have|has|am\s+having|is\s+having|"
-    r"are\s+having)\s+(?:signs?\s+of\s+)?a\s+stroke)\b",
-    flags=re.IGNORECASE,
-)
 _CONVERSATION_FACT_QUERY = re.compile(
     r"^\s*(?:what\s+is|what's|do\s+you\s+remember)\s+my\s+"
     r"(?P<label>[a-z][a-z0-9 '\-]{0,48}?)\s*[?.!]*\s*$",
@@ -69,6 +42,7 @@ _CONVERSATION_FACT_ASSERTION = re.compile(
 def resolve_local_utility(
     transcript: str,
     *,
+    mode: str = "home",
     randbelow: RandomBelow = secrets.randbelow,
 ) -> str | None:
     """Return an executed local utility result, or ``None`` for normal reasoning.
@@ -78,24 +52,9 @@ def resolve_local_utility(
     provide an actual random outcome.
     """
 
-    if _GAS_EMERGENCY.search(transcript):
-        return (
-            "Leave the building immediately without using switches, plugs, or "
-            "flames. From a safe place, call emergency services or your gas "
-            "emergency service."
-        )
-
-    if _FIRE_EMERGENCY.search(transcript):
-        return (
-            "Leave the building immediately, stay outside, and call emergency "
-            "services from a safe place."
-        )
-
-    if _MEDICAL_EMERGENCY.search(transcript):
-        return (
-            "Call emergency services now. If someone is nearby, ask them to help "
-            "and follow the emergency dispatcher's instructions."
-        )
+    safety_intervention = resolve_safety_intervention(transcript, mode=mode)
+    if safety_intervention is not None:
+        return safety_intervention.spoken_response
 
     if _COIN_FLIP.search(transcript):
         return f"It's {'heads' if randbelow(2) == 0 else 'tails'}."

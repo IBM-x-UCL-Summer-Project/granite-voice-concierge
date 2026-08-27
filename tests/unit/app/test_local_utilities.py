@@ -59,6 +59,8 @@ def test_unrelated_request_continues_to_reasoning() -> None:
         ("I have chest pain", "Call emergency services now"),
         ("I have severe chest pain", "Call emergency services now"),
         ("Someone is having sudden chest pain", "Call emergency services now"),
+        ("I have fallen and cannot get up", "emergency alarm"),
+        ("How many extra painkillers should I take?", "pharmacist"),
     ),
 )
 def test_urgent_safety_requests_cannot_be_degraded_by_model_metadata(
@@ -69,6 +71,22 @@ def test_urgent_safety_requests_cannot_be_degraded_by_model_metadata(
 
     assert response is not None
     assert expected_phrase in response
+
+
+def test_driving_distraction_is_handled_without_calling_reasoning() -> None:
+    response = resolve_local_utility(
+        "Read me a detailed recipe.",
+        mode="driving",
+    )
+
+    assert response == (
+        "I won't provide detailed instructions while you're driving. Please park "
+        "somewhere safe first."
+    )
+
+
+def test_short_driving_direction_continues_to_reasoning() -> None:
+    assert resolve_local_utility("Read the next direction.", mode="driving") is None
 
 
 def test_pipeline_does_not_call_model_for_coin_flip() -> None:
