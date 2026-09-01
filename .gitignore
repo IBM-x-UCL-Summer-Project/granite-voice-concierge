@@ -1,5 +1,7 @@
 # Generated benchmark comparison runs
 benchmarks/reasoning/results/
+benchmarks/suite/results/*
+!benchmarks/suite/results/.gitkeep
 
 # Local project files
 AGENTS.md
