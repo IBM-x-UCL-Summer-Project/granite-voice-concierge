@@ -229,6 +229,44 @@ def test_ollama_engine_applies_relaxed_uat_prompt_and_policy() -> None:
     assert response.metadata["policy_profile"] == "uat_relaxed"
 
 
+def test_streaming_applies_the_configured_policy_profile() -> None:
+    """The streamed path must build the prompt and guard the reply with the
+
+    same policy profile as the blocking path, not silently fall back to strict.
+    """
+    client = Mock()
+    payload = _structured_content(
+        "Plants use light energy to make sugars.",
+        required_information_source="runtime_live",
+    )
+    client.chat.return_value = iter(
+        [ChatResponse(message={"role": "assistant", "content": payload})]
+    )
+    engine = OllamaReasoningEngine(
+        OllamaConfig(
+            model="granite-local-test",
+            policy_profile="uat_relaxed",
+        ),
+        client=client,
+    )
+    spoken: list[str] = []
+
+    trace = engine.generate_stream_trace(
+        ReasoningRequest(transcript="Explain photosynthesis."),
+        spoken.append,
+    )
+
+    call = client.chat.call_args.kwargs
+    assert call["stream"] is True
+    system_prompt = call["messages"][0]["content"]
+    assert "UAT behavior profile" in system_prompt
+    guarded = trace.guarded_response
+    assert guarded.spoken_response == "Plants use light energy to make sugars."
+    assert guarded.required_information_source == "stable_knowledge"
+    assert guarded.metadata["policy_profile"] == "uat_relaxed"
+    assert "".join(spoken) == "Plants use light energy to make sugars."
+
+
 def test_ollama_engine_derives_generation_limit_from_request_word_limit() -> None:
     engine, client = _engine_with_response(_structured_content("Short response."))
 
