@@ -25,9 +25,11 @@ class StreamingReasoning:
         fragments: tuple[str, ...] = ("Beat the eggs well. ", "Serve them at once."),
         *,
         streams: bool = True,
+        stream_speaks: bool = True,
     ) -> None:
         self._fragments = fragments
         self._streams = streams
+        self._stream_speaks = stream_speaks
         self.streamed = False
         self.blocked = False
 
@@ -42,8 +44,9 @@ class StreamingReasoning:
         on_spoken_text: Callable[[str], None],
     ) -> ReasoningTurnResult:
         self.streamed = True
-        for fragment in self._fragments:
-            on_spoken_text(fragment)
+        if self._stream_speaks:
+            for fragment in self._fragments:
+                on_spoken_text(fragment)
         return ReasoningTurnResult(
             response=ReasoningResponse(
                 spoken_response="".join(self._fragments).strip(),
@@ -156,6 +159,18 @@ class TestFallingBackToBlocking:
 
         assert reasoning.blocked is True
 
+    def test_a_stream_that_never_spoke_falls_back_to_synthesis(self) -> None:
+        """A stream can run but say nothing (an early error); still speak once."""
+        reasoning = StreamingReasoning(stream_speaks=False)
+        pipeline, voice, player = _pipeline(reasoning)
+
+        result = pipeline.process_transcript("hello", synthesize=True, play=True)
+
+        assert reasoning.streamed is True
+        assert voice.said == ["Beat the eggs well. Serve them at once."]
+        assert result.response_audio is not None
+        assert player.plays == 1
+
 
 @pytest.mark.unit
 class TestSpokenWordCap:
@@ -256,3 +271,29 @@ class TestStreamingSink:
         sink.feed("One two three. ")
 
         assert speaker.said == ["One."]
+
+    def test_the_sink_reports_whether_it_spoke(self) -> None:
+        sink, _speaker = _sink(50)
+        assert sink.spoke is False
+
+        sink.feed("Beat the eggs. ")
+
+        assert sink.spoke is True
+
+    def test_a_sink_fed_no_sentence_reports_it_never_spoke(self) -> None:
+        """A stream that only ever yields whitespace must not suppress fallback."""
+        sink, speaker = _sink(50)
+
+        sink.feed("   ")
+        sink.flush()
+
+        assert speaker.said == []
+        assert sink.spoke is False
+
+    def test_a_trimmed_sentence_still_counts_as_spoken(self) -> None:
+        sink, speaker = _sink(3)
+
+        sink.feed("One two three four five six. ")
+
+        assert speaker.said == ["One two three."]
+        assert sink.spoke is True

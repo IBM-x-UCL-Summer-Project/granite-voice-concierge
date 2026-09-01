@@ -139,6 +139,18 @@ class _StreamingSpeechSink:
         self._accumulator = SentenceAccumulator()
         self._spent = 0
         self._stopped = False
+        self._spoke = False
+
+    @property
+    def spoke(self) -> bool:
+        """Whether any audio was actually emitted while streaming.
+
+        The pipeline uses this to tell "streaming produced speech" apart from
+        "the streaming path ran but never spoke" (a stream that fails or ends
+        before a single sentence completes). Only the first case may suppress
+        the fallback synthesis in _finalize_result.
+        """
+        return self._spoke
 
     def feed(self, text: str) -> None:
         """Take streamed text and speak any sentences it completes."""
@@ -166,11 +178,13 @@ class _StreamingSpeechSink:
 
         if len(words) > remaining:
             trimmed = " ".join(words[:remaining]).rstrip(".,;:") + "."
+            self._spoke = True
             self._speaker.speak_stream([trimmed])
             self._stopped = True
             return False
 
         self._spent += len(words)
+        self._spoke = True
         self._speaker.speak_stream([sentence])
         return True
 
@@ -568,12 +582,11 @@ class VoiceConciergePipeline:
         spoke_while_generating = False
         try:
             if self._can_stream(options):
-                reasoning_result = self._stream_reasoning_turn(
+                reasoning_result, spoke_while_generating = self._stream_reasoning_turn(
                     normalized_text,
                     reasoning_context,
                     max_words=context_decision.policy.max_words,
                 )
-                spoke_while_generating = True
             else:
                 reasoning_result = self._reasoning.process_transcript(
                     normalized_text,
@@ -923,17 +936,21 @@ class VoiceConciergePipeline:
         reasoning_context: ReasoningTurnContext,
         *,
         max_words: int,
-    ) -> ReasoningTurnResult:
+    ) -> tuple[ReasoningTurnResult, bool]:
         """Reason and speak at the same time, respecting the spoken word cap.
 
         The cap is normally applied once the reply is complete, which is how
         driving mode stays terse. Speaking on the way past means applying it as
         the sentences arrive, otherwise a safety limit would only ever constrain
         text that nobody hears.
+
+        Returns the reasoning result together with whether the sink actually
+        emitted audio. A stream that fails or ends before completing a sentence
+        speaks nothing, and the caller must still synthesise the reply itself.
         """
         sink = _StreamingSpeechSink(self._stream_speaker, max_words)
         try:
-            return self._reasoning.stream_transcript(
+            result = self._reasoning.stream_transcript(
                 transcript,
                 reasoning_context,
                 on_spoken_text=sink.feed,
@@ -943,6 +960,7 @@ class VoiceConciergePipeline:
             # still held back when the stream closes. Without this the last
             # thing said is silently dropped from every reply.
             sink.flush()
+        return result, sink.spoke
 
     def _finalize_result(
         self,
