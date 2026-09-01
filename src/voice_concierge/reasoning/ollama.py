@@ -423,6 +423,7 @@ class OllamaReasoningEngine:
             for message in build_granite_messages(
                 request,
                 prompt_version=self.config.prompt_version,
+                policy_profile=self.config.policy_profile,
             )
         ]
         extractor = SpokenResponseExtractor()
@@ -463,10 +464,15 @@ class OllamaReasoningEngine:
             "streamed": "true",
             "prompt_id": self._prompt_template.prompt_id,
             "prompt_version": self._prompt_template.version,
+            "policy_profile": self.config.policy_profile,
             **generation_options.as_metadata(),
         }
         raw_response = self._parse_response_content(content, metadata)
-        guarded_response = apply_reasoning_policy_guards(request, raw_response)
+        guarded_response = apply_reasoning_policy_guards(
+            request,
+            raw_response,
+            policy_profile=self.config.policy_profile,
+        )
         guarded_response = apply_spoken_word_limit(
             guarded_response,
             request.constraints.max_words,
