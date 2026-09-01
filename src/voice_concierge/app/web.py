@@ -40,6 +40,17 @@ from voice_concierge.app.serialization import (
     captured_audio_to_dict,
 )
 from voice_concierge.app.types import AppPipelineState, ConversationTurn
+from voice_concierge.app.voice_io import (
+    VoiceIOConfig,
+    build_configured_speech_to_text,
+    build_configured_text_to_speech,
+)
+from voice_concierge.app.web_audio_stream import (
+    AUDIO_STREAM_PATH,
+    AUDIO_STREAM_SUBPROTOCOL,
+    WebAudioStreamServer,
+    local_web_origins,
+)
 from voice_concierge.app.web_features import (
     WebFeatureServices,
     WebReminderNotifier,
@@ -72,6 +83,7 @@ from voice_concierge.scheduling.errors import SchedulingError
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 4173
+DEFAULT_AUDIO_STREAM_PORT = 4174
 MAX_REQUEST_BYTES = 16 * 1024 * 1024
 MAX_WEB_SESSIONS = 32
 MAX_WEB_SESSION_HISTORY = 200
@@ -346,6 +358,7 @@ class PipelineWebServer(ThreadingHTTPServer):
         routine_command_service: WebRoutineCommandService | None = None,
         warm_up: Callable[[], None] | None = None,
         diagnostics_enabled: bool = False,
+        audio_stream: Mapping[str, Any] | None = None,
     ) -> None:
         resolved_policy_profile = validate_reasoning_policy_profile(policy_profile)
         self.pipeline = pipeline
@@ -353,6 +366,7 @@ class PipelineWebServer(ThreadingHTTPServer):
         self.wake_word_service = wake_word_service
         self.routine_command_service = routine_command_service
         self.diagnostics_enabled = diagnostics_enabled
+        self.audio_stream = dict(audio_stream) if audio_stream is not None else None
         self.web_directory = web_directory
         self.capabilities = {
             "text_input": True,
@@ -401,12 +415,18 @@ class PipelineRequestHandler(SimpleHTTPRequestHandler):
             )
         if path == "/api/health":
             readiness = self.server.readiness.snapshot()
+            audio_stream = (
+                {"audio_stream": self.server.audio_stream}
+                if self.server.audio_stream is not None
+                else {}
+            )
             self._write_json(
                 HTTPStatus.OK,
                 {
                     **readiness,
                     "capabilities": self.server.capabilities,
                     "runtime": self.server.runtime,
+                    **audio_stream,
                 },
             )
             return
@@ -1318,6 +1338,7 @@ def build_web_pipeline(
     *,
     load_memory: bool = True,
     load_voice_io: bool = False,
+    voice_io_config: VoiceIOConfig | None = None,
     demo: bool = False,
 ) -> VoiceConciergePipeline:
     """Build the local pipeline configured for browser turns."""
@@ -1330,11 +1351,9 @@ def build_web_pipeline(
     speech_to_text = None
     text_to_speech = None
     if load_voice_io:
-        from voice_concierge.voice_input.stt.factory import build_speech_to_text
-        from voice_concierge.voice_output.factory import build_text_to_speech
-
-        speech_to_text = build_speech_to_text()
-        text_to_speech = build_text_to_speech()
+        resolved_voice_config = voice_io_config or VoiceIOConfig()
+        speech_to_text = build_configured_speech_to_text(resolved_voice_config)
+        text_to_speech = build_configured_text_to_speech(resolved_voice_config)
     return build_voice_concierge_pipeline(
         load_memory=load_memory,
         speech_to_text=speech_to_text,
@@ -1348,6 +1367,7 @@ def build_web_application(
     load_voice_io: bool = False,
     load_reminders: bool = True,
     load_guided_routines: bool = True,
+    voice_io_config: VoiceIOConfig | None = None,
     demo: bool = False,
     policy_profile: ReasoningPolicyProfile = UAT_REASONING_POLICY_PROFILE,
 ) -> tuple[VoiceConciergePipeline, WebFeatureServices]:
@@ -1359,11 +1379,9 @@ def build_web_application(
     speech_to_text = None
     text_to_speech = None
     if load_voice_io:
-        from voice_concierge.voice_input.stt.factory import build_speech_to_text
-        from voice_concierge.voice_output.factory import build_text_to_speech
-
-        speech_to_text = build_speech_to_text()
-        text_to_speech = build_text_to_speech()
+        resolved_voice_config = voice_io_config or VoiceIOConfig()
+        speech_to_text = build_configured_speech_to_text(resolved_voice_config)
+        text_to_speech = build_configured_text_to_speech(resolved_voice_config)
 
     memory_manager = None
     memory_gateway = None
@@ -1431,6 +1449,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Serve the pipeline-connected web UI.")
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", default=DEFAULT_PORT, type=int)
+    parser.add_argument(
+        "--audio-stream-port",
+        default=DEFAULT_AUDIO_STREAM_PORT,
+        type=int,
+        help="Port for bounded binary browser microphone streams.",
+    )
     memory_group = parser.add_mutually_exclusive_group()
     memory_group.add_argument(
         "--memory",
@@ -1463,6 +1487,36 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--voice-io",
         action="store_true",
         help="Load local STT, TTS, and browser wake-word audio support.",
+    )
+    default_voice_config = VoiceIOConfig()
+    parser.add_argument(
+        "--stt-model",
+        default=default_voice_config.stt_model,
+        help=(
+            "faster-whisper model name, Hugging Face model ID, or local converted "
+            "model directory."
+        ),
+    )
+    parser.add_argument(
+        "--stt-device",
+        default=default_voice_config.stt_device,
+        help="faster-whisper device, such as cpu, cuda, or auto.",
+    )
+    parser.add_argument(
+        "--stt-compute-type",
+        default=default_voice_config.stt_compute_type,
+        help="CTranslate2 compute type, such as int8, float16, or float32.",
+    )
+    parser.add_argument(
+        "--tts-voice",
+        default=default_voice_config.tts_voice,
+        help="Piper voice identifier, for example en_GB-alan-medium.",
+    )
+    parser.add_argument(
+        "--tts-model-dir",
+        type=Path,
+        default=default_voice_config.tts_model_directory,
+        help="Directory containing the selected Piper .onnx and .onnx.json files.",
     )
     parser.add_argument(
         "--no-wake-word",
@@ -1498,6 +1552,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     _configure_logging(args.log_level, args.log_file)
 
     voice_io_enabled = args.voice_io and not args.demo
+    try:
+        voice_io_config = VoiceIOConfig(
+            stt_model=args.stt_model,
+            stt_device=args.stt_device,
+            stt_compute_type=args.stt_compute_type,
+            tts_voice=args.tts_voice,
+            tts_model_directory=args.tts_model_dir,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
     model_name = (
         "deterministic demo"
         if args.demo
@@ -1507,6 +1571,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         pipeline, features = build_web_application(
             load_memory=args.memory,
             load_voice_io=voice_io_enabled,
+            voice_io_config=voice_io_config,
             load_reminders=not args.no_reminders,
             load_guided_routines=not args.no_guided_routines,
             demo=args.demo,
@@ -1547,11 +1612,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         warm_up=None if args.demo else pipeline.warm_up,
         diagnostics_enabled=args.log_level == "DEBUG",
     )
+    audio_stream_server = None
+    if wake_word_service is not None or routine_command_service is not None:
+        audio_stream_server = WebAudioStreamServer(
+            (args.host, args.audio_stream_port),
+            sessions=server.sessions,
+            allowed_origins=local_web_origins(args.host, args.port),
+            wake_word_service=wake_word_service,
+            routine_command_service=routine_command_service,
+        )
+        audio_stream_server.start()
+        server.audio_stream = {
+            "path": AUDIO_STREAM_PATH,
+            "port": audio_stream_server.server_address[1],
+            "subprotocol": AUDIO_STREAM_SUBPROTOCOL,
+        }
     features.start()
     print(f"Granite web UI: http://{args.host}:{args.port}")
     LOGGER.info(
         "web_server_started host=%s port=%s memory=%s voice_io=%s "
-        "model=%s policy_profile=%s reminders=%s guided_routines=%s wake_word=%s",
+        "model=%s policy_profile=%s reminders=%s guided_routines=%s wake_word=%s "
+        "audio_stream_port=%s",
         args.host,
         args.port,
         args.memory,
@@ -1561,6 +1642,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         not args.no_reminders and not args.demo,
         not args.no_guided_routines and not args.demo,
         wake_word_enabled,
+        audio_stream_server.server_address[1] if audio_stream_server else "disabled",
     )
     try:
         server.serve_forever()
@@ -1568,6 +1650,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("\nGranite web UI stopped.")
     finally:
         server.server_close()
+        if audio_stream_server is not None:
+            audio_stream_server.close()
         features.close()
         pipeline.close()
     return 0

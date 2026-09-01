@@ -150,6 +150,10 @@ python -c "from silero_vad import load_silero_vad; load_silero_vad()"
 ### STT Model
 
 The default STT model is faster-whisper `base.en` on CPU with int8 compute.
+Both application entry points also accept `--stt-model`, `--stt-device`, and
+`--stt-compute-type`. The model value is passed through unchanged, so larger
+models such as `small.en`, `medium.en`, `large-v3`, `turbo`, and
+`distil-large-v3` can be selected without code changes.
 
 Prefetch/load it explicitly:
 
@@ -159,18 +163,25 @@ python -c "from faster_whisper import WhisperModel; WhisperModel('base.en', devi
 
 ### TTS Model
 
-The TTS backend uses the Piper CLI installed by `piper-tts` and the default voice:
+The TTS backend uses the Piper CLI installed by `piper-tts` and defaults to:
 
 ```text
 en_GB-alan-medium.onnx
 en_GB-alan-medium.onnx.json
 ```
 
-Download those files with:
+Download the default or another catalogue voice with:
 
 ```bash
 python -m voice_concierge.voice_output.download_models
+python -m voice_concierge.voice_output.download_models en_US-lessac-medium
 ```
+
+Use `--tts-voice en_US-lessac-medium` with the browser or live entry point to
+select the matching pair. Use `--tts-model-dir` when the files are stored
+outside the default package directory. Run the downloader with `--list` to list
+the upstream catalogue, and review each selected voice's `MODEL_CARD` licence
+before redistribution.
 
 The files are written beside the Piper backend module under:
 

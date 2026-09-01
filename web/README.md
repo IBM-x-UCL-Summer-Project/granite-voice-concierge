@@ -38,6 +38,14 @@ response audio:
 python -m voice_concierge.app.web --voice-io
 ```
 
+The UI stays on port `4173`; continuous wake-word and voice-command PCM uses a
+bounded binary WebSocket on loopback port `4174`. The WebSocket requires the
+active HTTP session cookie, validates the page origin and protocol, accepts one
+acknowledged frame at a time, and bounds queued audio so a slow model cannot
+grow browser memory without limit. Push-to-talk remains a single in-memory WAV
+upload. The Docker deployment publishes both ports to `127.0.0.1` and does not
+map a host audio device into the container.
+
 Without `--voice-io`, the microphone control is disabled and the response play
 button deliberately falls back to the browser's installed system voice. Device
 selection alone does not load Whisper or Piper. With `--voice-io`, click the
@@ -144,6 +152,16 @@ session orchestration, and local-data controls. `app.js` contains only startup
 and event wiring. `index.html` loads these classic scripts in dependency order
 so the application does not require a browser build step.
 
+Microphone modes share `audio-capture.js`, which filters a common constraint
+set through `getSupportedConstraints()`, logs the browser-selected
+`MediaStreamTrack.getSettings()`, and owns track/context cleanup. An
+`AudioWorklet` converts the browser rate to 16 kHz mono with a stateful
+windowed-sinc low-pass resampler. Continuous modes use `audio-stream.js`; raw
+audio stays binary and its queue applies application-level backpressure.
+
+Unit, protocol, and real-engine browser coverage is described in
+[`docs/browser-audio-testing.md`](../docs/browser-audio-testing.md).
+
 ## Integration boundary
 
 The server exposes same-origin `POST /api/turn` and `POST /api/audio` endpoints.
@@ -193,9 +211,9 @@ Additional same-origin endpoints support the connected local features:
 - reminder create/edit/snooze/cancel/cancel-all under
   `POST /api/reminders/...`;
 - fixed-text local speech-chain testing under `POST /api/speech/preview`;
-- wake-word start/frame/stop under `POST /api/wake-word/...`;
-- guided-routine command start/frame/reset/stop under
-  `POST /api/routine-command/...`;
+- compatibility wake-word and guided-command controls under the existing HTTP
+  endpoints (the bundled browser uses the authenticated binary WebSocket for
+  continuous PCM);
 - privacy-safe browser wake timing under `POST /api/diagnostics/wake-timing`;
 - DEBUG browser-event forwarding under `POST /api/diagnostics/client-event`;
 - temporary state/display-history restoration under `GET /api/session`.

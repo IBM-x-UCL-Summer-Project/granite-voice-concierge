@@ -9,8 +9,10 @@ from voice_concierge.app import (
     build_voice_concierge_pipeline,
 )
 from voice_concierge.app import factory as factory_module
+from voice_concierge.app import voice_io as voice_io_module
 from voice_concierge.app.memory import NullMemoryGateway
 from voice_concierge.app.reasoning import ReasoningTurnContext, ReasoningTurnResult
+from voice_concierge.app.voice_io import VoiceIOConfig
 from voice_concierge.memory import LocalMemoryConfig
 from voice_concierge.reasoning.types import ReasoningResponse
 
@@ -134,3 +136,37 @@ def test_build_voice_concierge_pipeline_can_disable_default_runtime_context() ->
     context = reasoning.calls[0]["context"]
     assert isinstance(context, ReasoningTurnContext)
     assert context.runtime_context == ()
+
+
+def test_build_voice_concierge_pipeline_loads_selected_voice_io(monkeypatch) -> None:
+    config = VoiceIOConfig(
+        stt_model="turbo",
+        tts_voice="en_US-lessac-medium",
+    )
+    speech_to_text = object()
+    text_to_speech = object()
+    audio_player = object()
+    calls: list[tuple[str, VoiceIOConfig]] = []
+
+    monkeypatch.setattr(
+        voice_io_module,
+        "build_configured_speech_to_text",
+        lambda supplied: calls.append(("stt", supplied)) or speech_to_text,
+    )
+    monkeypatch.setattr(
+        voice_io_module,
+        "build_configured_text_to_speech",
+        lambda supplied: calls.append(("tts", supplied)) or text_to_speech,
+    )
+
+    pipeline = build_voice_concierge_pipeline(
+        reasoning_service=FakeReasoning(),
+        audio_player=audio_player,
+        voice_io_config=config,
+        load_voice_io=True,
+    )
+
+    assert pipeline.speech_to_text is speech_to_text
+    assert pipeline.text_to_speech is text_to_speech
+    assert pipeline.audio_player is audio_player
+    assert calls == [("stt", config), ("tts", config)]

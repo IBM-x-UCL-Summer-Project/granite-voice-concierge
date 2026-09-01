@@ -18,6 +18,7 @@ from voice_concierge.app.types import (
     SpeechToTextAdapter,
     TextToSpeechAdapter,
 )
+from voice_concierge.app.voice_io import VoiceIOConfig
 
 if TYPE_CHECKING:
     from voice_concierge.memory.factory import LocalMemoryConfig
@@ -33,6 +34,7 @@ def build_voice_concierge_pipeline(
     text_to_speech: TextToSpeechAdapter | None = None,
     audio_player: AudioPlayerAdapter | None = None,
     runtime_context: RuntimeContextProvider | None = None,
+    voice_io_config: VoiceIOConfig | None = None,
     load_memory: bool = False,
     load_voice_io: bool = False,
     load_runtime_context: bool = True,
@@ -40,16 +42,17 @@ def build_voice_concierge_pipeline(
     """Build the app pipeline with configured local-only component backends."""
 
     service = reasoning_service or build_reasoning_turn_service(config)
+    resolved_voice_config = voice_io_config or VoiceIOConfig()
 
     if load_voice_io and speech_to_text is None:
-        from voice_concierge.voice_input.stt.factory import build_speech_to_text
+        from voice_concierge.app.voice_io import build_configured_speech_to_text
 
-        speech_to_text = build_speech_to_text()
+        speech_to_text = build_configured_speech_to_text(resolved_voice_config)
 
     if load_voice_io and text_to_speech is None:
-        from voice_concierge.voice_output.factory import build_text_to_speech
+        from voice_concierge.app.voice_io import build_configured_text_to_speech
 
-        text_to_speech = build_text_to_speech()
+        text_to_speech = build_configured_text_to_speech(resolved_voice_config)
 
     if load_voice_io and audio_player is None:
         from voice_concierge.audio.player import SoundDevicePlayer

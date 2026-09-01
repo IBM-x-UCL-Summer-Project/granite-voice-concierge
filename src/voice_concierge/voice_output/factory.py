@@ -21,10 +21,11 @@ from voice_concierge.voice_output.pacing import (
     SpeechRate,
 )
 from voice_concierge.voice_output.piper import (
-    DEFAULT_CONFIG_PATH,
     DEFAULT_LENGTH_SCALE,
-    DEFAULT_MODEL_PATH,
+    DEFAULT_MODEL_DIRECTORY,
+    DEFAULT_VOICE,
     PiperTextToSpeech,
+    resolve_piper_voice_paths,
 )
 from voice_concierge.voice_output.say import DEFAULT_SAY_EXECUTABLE, SayTextToSpeech
 
@@ -36,12 +37,25 @@ def _find_macos_say_executable() -> str | None:
 
 
 def build_text_to_speech(
-    model_path: str = DEFAULT_MODEL_PATH,
-    config_path: str = DEFAULT_CONFIG_PATH,
+    model_path: str | None = None,
+    config_path: str | None = None,
     *,
+    voice: str = DEFAULT_VOICE,
+    model_directory: Path | str = DEFAULT_MODEL_DIRECTORY,
     length_scale: float = DEFAULT_LENGTH_SCALE,
 ) -> TextToSpeech:
-    """Build Piper with the native macOS voice as an available fallback."""
+    """Build the selected Piper voice with the native macOS fallback.
+
+    ``voice`` resolves the conventional ``<voice>.onnx`` and
+    ``<voice>.onnx.json`` pair in ``model_directory``. Explicit model and config
+    paths remain supported for callers managing their own Piper assets; they
+    must be supplied together so a model is never paired with the wrong config.
+    """
+
+    if (model_path is None) != (config_path is None):
+        raise ValueError("model_path and config_path must be supplied together.")
+    if model_path is None or config_path is None:
+        model_path, config_path = resolve_piper_voice_paths(voice, model_directory)
     piper = PiperTextToSpeech(model_path, config_path, length_scale=length_scale)
     say_executable = _find_macos_say_executable()
     if say_executable is None:
@@ -61,14 +75,22 @@ REFERENCE_WPM: int = PACE_LADDER[DEFAULT_PACE_LEVEL]
 
 
 def piper_backend_builder(
-    model_path: str = DEFAULT_MODEL_PATH,
-    config_path: str = DEFAULT_CONFIG_PATH,
+    model_path: str | None = None,
+    config_path: str | None = None,
+    *,
+    voice: str = DEFAULT_VOICE,
+    model_directory: Path | str = DEFAULT_MODEL_DIRECTORY,
 ) -> Callable[[int], TextToSpeech]:
     """Build Piper voices at a given words-per-minute.
 
     Piper expresses pace as a length scale, where larger is slower, so the
     requested rate is inverted against the reference rate.
     """
+
+    if (model_path is None) != (config_path is None):
+        raise ValueError("model_path and config_path must be supplied together.")
+    if model_path is None or config_path is None:
+        model_path, config_path = resolve_piper_voice_paths(voice, model_directory)
 
     def _build(rate_wpm: int) -> TextToSpeech:
         scale = DEFAULT_LENGTH_SCALE * REFERENCE_WPM / rate_wpm

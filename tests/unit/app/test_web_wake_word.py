@@ -73,6 +73,35 @@ def test_new_tab_supersedes_old_stream_without_crossing_audio() -> None:
     assert detector.reset_count == 3
 
 
+def test_stale_connection_cannot_stop_new_stream_in_the_same_session() -> None:
+    detector = FakeStreamDetector()
+    service = WebWakeWordService(detector)
+    service.start("session-a", sensitivity=60, stream_id="old")
+    service.start("session-a", sensitivity=80, stream_id="new")
+
+    assert service.stop("session-a", stream_id="old") is False
+    result = service.process_pcm("session-a", b"\0\0", stream_id="new")
+
+    assert result.detected is False
+    assert detector.calls[-1][1] == 0.2
+
+
+def test_reset_can_update_sensitivity_without_replacing_stream_owner() -> None:
+    detector = FakeStreamDetector()
+    service = WebWakeWordService(detector)
+    service.start("session-a", sensitivity=60, stream_id="stream")
+
+    threshold = service.reset(
+        "session-a",
+        stream_id="stream",
+        sensitivity=100,
+    )
+    service.process_pcm("session-a", b"\0\0", stream_id="stream")
+
+    assert threshold == 0.1
+    assert detector.calls[-1][1] == 0.1
+
+
 @pytest.mark.parametrize("pcm", [b"", b"\0"])
 def test_stream_rejects_empty_or_partial_samples(pcm: bytes) -> None:
     service = WebWakeWordService(FakeStreamDetector())

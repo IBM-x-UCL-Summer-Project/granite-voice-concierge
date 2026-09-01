@@ -15,25 +15,14 @@ function voiceCommandContextActive() {
 }
 
 function resetVoiceCommandFrameBuffer() {
-  state.voiceCommands.frameChunks = [];
-  state.voiceCommands.frameSampleCount = 0;
+  state.voiceCommands.stream?.drainPendingSamples();
 }
 
 function tearDownVoiceCommandAudio() {
   const audio = state.voiceCommands.audio;
   state.voiceCommands.audio = null;
   if (!audio) return;
-  audio.processor.onaudioprocess = null;
-  for (const node of [audio.processor, audio.source, audio.silentGain]) {
-    try {
-      node.disconnect();
-    } catch {
-      // Browsers may disconnect audio nodes while their context is closing.
-    }
-  }
-  audio.stream.getTracks().forEach((track) => track.stop());
-  const closing = audio.context.close();
-  if (closing?.catch) closing.catch(() => {});
+  audio.stop({ flush: false }).catch(() => {});
 }
 
 async function startVoiceCommandListening() {
@@ -49,16 +38,27 @@ async function startVoiceCommandListening() {
     wake_word_active: state.wakeWord.active,
   });
   try {
-    await requestJson(
-      "/api/routine-command/start",
-      {},
-      {
-        updateConnection: false,
-        timeoutMilliseconds: WAKE_WORD_REQUEST_TIMEOUT_MILLISECONDS,
+    const stream = new PcmWebSocketStream({
+      mode: "voice_command",
+      onResult: (result) => handleVoiceCommandStreamResult(result, generation),
+      onError: (error) => {
+        if (generation !== state.voiceCommands.generation) return;
+        diagnostics.error("voice_command_stream_failed", {
+          generation,
+          error_message: error.message,
+        });
+        showToast("Hands-free playback controls stopped");
+        stopVoiceCommandListening();
       },
-    );
+      onDrop: (event) => diagnostics.warning("voice_command_frame_dropped", event),
+    });
+    state.voiceCommands.stream = stream;
+    await stream.start();
     state.voiceCommands.serverActive = true;
-    diagnostics.info("voice_command_backend_started", { generation });
+    diagnostics.info("voice_command_backend_started", {
+      generation,
+      transport: "binary_websocket",
+    });
     resetVoiceCommandFrameBuffer();
     if (!voiceCommandContextActive()
         || generation !== state.voiceCommands.generation) {
@@ -67,58 +67,39 @@ async function startVoiceCommandListening() {
     }
     if (state.wakeWord.active || state.voiceCommands.audio) return;
 
-    const selectedDevice = state.settings.microphone_id === "default"
-      ? {}
-      : { deviceId: { exact: state.settings.microphone_id } };
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        ...selectedDevice,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
+    const audio = await openMicrophoneCapture({
+      microphoneId: state.settings.microphone_id,
+      purpose: "voice_command",
+      onSamples: enqueueVoiceCommandFrame,
+      onEnded: () => {
+        if (generation !== state.voiceCommands.generation) return;
+        showToast("Hands-free playback controls stopped");
+        stopVoiceCommandListening();
+      },
+      onStateChange: (contextState) => {
+        if (contextState === "suspended" && voiceCommandContextActive()) {
+          diagnostics.warning("voice_command_microphone_suspended", { generation });
+        }
       },
     });
     if (!voiceCommandContextActive()
         || generation !== state.voiceCommands.generation
         || state.wakeWord.active) {
-      stream.getTracks().forEach((track) => track.stop());
+      await audio.stop({ flush: false });
       if (!voiceCommandContextActive()) stopVoiceCommandListening();
       return;
     }
-    const AudioContext = window.AudioContext || window.webkitAudioContext;
-    const context = new AudioContext();
-    await context.resume();
-    const source = context.createMediaStreamSource(stream);
-    const processor = context.createScriptProcessor(4096, 1, 1);
-    const silentGain = context.createGain();
-    silentGain.gain.value = 0;
-    source.connect(processor);
-    processor.connect(silentGain);
-    silentGain.connect(context.destination);
-    state.voiceCommands.audio = {
-      stream,
-      context,
-      source,
-      processor,
-      silentGain,
-      sourceRate: context.sampleRate,
-    };
+    state.voiceCommands.audio = audio;
     diagnostics.info("voice_command_microphone_started", {
       generation,
-      sample_rate: context.sampleRate,
+      sample_rate: MICROPHONE_TARGET_SAMPLE_RATE,
       microphone_id: state.settings.microphone_id,
+      settings: audio.settings,
     });
-    processor.onaudioprocess = (event) => {
-      const samples = resampleAudio(
-        new Float32Array(event.inputBuffer.getChannelData(0)),
-        context.sampleRate,
-        16000,
-      );
-      enqueueVoiceCommandFrame(samples);
-    };
   } catch (error) {
-    state.voiceCommands.serverActive = false;
-    tearDownVoiceCommandAudio();
+    const backendWasActive = state.voiceCommands.serverActive;
+    stopVoiceCommandListening();
+    if (!backendWasActive) state.voiceCommands.serverActive = false;
     diagnostics.error("voice_command_listener_failed", {
       generation,
       error_name: error.name,
@@ -135,25 +116,16 @@ async function startVoiceCommandListening() {
 
 function stopVoiceCommandListening() {
   const wasServerActive = state.voiceCommands.serverActive;
+  const stream = state.voiceCommands.stream;
   state.voiceCommands.generation += 1;
-  state.voiceCommands.sendingFrame = false;
   resetVoiceCommandFrameBuffer();
   tearDownVoiceCommandAudio();
+  state.voiceCommands.stream = null;
+  stream?.stop();
   state.voiceCommands.serverActive = false;
   diagnostics.info("voice_command_listener_stopped", {
     generation: state.voiceCommands.generation,
     server_was_active: wasServerActive,
-  });
-  if (!wasServerActive) return;
-  requestJson(
-    "/api/routine-command/stop",
-    {},
-    {
-      updateConnection: false,
-      timeoutMilliseconds: WAKE_WORD_REQUEST_TIMEOUT_MILLISECONDS,
-    },
-  ).catch(() => {
-    // Local state is already stopped; the server expires with the session.
   });
 }
 
@@ -163,59 +135,43 @@ function syncVoiceCommandListening() {
 }
 
 function enqueueVoiceCommandFrame(samples) {
-  if (!voiceCommandContextActive() || !state.voiceCommands.serverActive) return;
+  if (!voiceCommandContextActive()
+      || !state.voiceCommands.serverActive
+      || state.voiceCommands.processingCommand) return;
   if (state.routine.awaiting_confirmation
       && !state.routine.confirmationReady
       && !state.playback) return;
-  state.voiceCommands.frameChunks.push(samples);
-  state.voiceCommands.frameSampleCount += samples.length;
-  flushVoiceCommandFrame();
+  state.voiceCommands.stream?.push(samples);
 }
 
-async function flushVoiceCommandFrame() {
-  if (!voiceCommandContextActive()
-      || !state.voiceCommands.serverActive
-      || state.voiceCommands.sendingFrame
-      || state.voiceCommands.frameSampleCount < VOICE_COMMAND_FRAME_SAMPLES) return;
-  const samples = mergeAudioChunks(state.voiceCommands.frameChunks);
-  const generation = state.voiceCommands.generation;
-  const frame = samples.slice(0, VOICE_COMMAND_FRAME_SAMPLES);
-  const remainder = samples.slice(VOICE_COMMAND_FRAME_SAMPLES);
-  state.voiceCommands.frameChunks = remainder.length ? [remainder] : [];
-  state.voiceCommands.frameSampleCount = remainder.length;
-  state.voiceCommands.sendingFrame = true;
+async function handleVoiceCommandStreamResult(result, generation) {
+  if (!result.command
+      || !voiceCommandContextActive()
+      || generation !== state.voiceCommands.generation
+      || state.voiceCommands.processingCommand) return;
+
+  state.voiceCommands.processingCommand = true;
+  const stream = state.voiceCommands.stream;
+  resetVoiceCommandFrameBuffer();
   try {
-    const result = await requestJson(
-      "/api/routine-command/frame",
-      { pcm_base64: encodePcmBase64(frame) },
-      {
-        updateConnection: false,
-        timeoutMilliseconds: WAKE_WORD_REQUEST_TIMEOUT_MILLISECONDS,
-      },
-    );
-    if (result.command
-        && voiceCommandContextActive()
-        && generation === state.voiceCommands.generation) {
-      diagnostics.info("voice_command_detected", {
-        command: result.command,
-        phrase: result.phrase,
-        confidence: result.confidence,
-        target: state.routine.active ? "routine" : "playback",
-      });
-      if (state.routine.active) await handleRoutineVoiceCommand(result.command);
-      else await handlePlaybackVoiceCommand(result.command);
-    }
-  } catch {
-    if (generation === state.voiceCommands.generation) {
-      state.voiceCommands.serverActive = false;
-      tearDownVoiceCommandAudio();
-      showToast("Hands-free playback controls stopped");
-    }
+    // Reset both sides of the stream at the trusted command boundary. Audio
+    // arriving while the command is handled is discarded by
+    // enqueueVoiceCommandFrame, so the tail of one utterance cannot become a
+    // second command after the recognizer cooldown expires.
+    await stream?.reset();
+    if (!voiceCommandContextActive()
+        || generation !== state.voiceCommands.generation) return;
+    diagnostics.info("voice_command_detected", {
+      command: result.command,
+      phrase: result.phrase,
+      confidence: result.confidence,
+      server_processing_ms: result.processing_ms,
+      target: state.routine.active ? "routine" : "playback",
+    });
+    if (state.routine.active) await handleRoutineVoiceCommand(result.command);
+    else await handlePlaybackVoiceCommand(result.command);
   } finally {
-    if (generation === state.voiceCommands.generation) {
-      state.voiceCommands.sendingFrame = false;
-      flushVoiceCommandFrame();
-    }
+    state.voiceCommands.processingCommand = false;
   }
 }
 
@@ -346,14 +302,7 @@ function armRoutineConfirmationWindow() {
       if (generation !== state.routine.autoGeneration) return;
       resetVoiceCommandFrameBuffer();
       try {
-        await requestJson(
-          "/api/routine-command/reset",
-          {},
-          {
-            updateConnection: false,
-            timeoutMilliseconds: WAKE_WORD_REQUEST_TIMEOUT_MILLISECONDS,
-          },
-        );
+        await state.voiceCommands.stream?.reset();
         if (generation === state.routine.autoGeneration) {
           state.routine.confirmationReady = true;
         }
@@ -363,4 +312,3 @@ function armRoutineConfirmationWindow() {
     }, 500);
   });
 }
-

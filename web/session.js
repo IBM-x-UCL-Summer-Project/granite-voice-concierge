@@ -96,14 +96,17 @@ function updateSendState() {
   const wakeModeOpen = elements.wakeWordScreen.open;
   elements.send.disabled = state.running
     || Boolean(state.recorder)
+    || state.recorderStarting
     || state.connection !== "ready"
     || !state.capabilities.text_input
     || !elements.input.value.trim();
   elements.modeSelect.disabled = state.running
     || Boolean(state.recorder)
+    || state.recorderStarting
     || state.connection !== "ready"
     || !state.capabilities.text_input;
   elements.microphoneButton.disabled = state.running
+    || state.recorderStarting
     || state.connection !== "ready"
     || !state.capabilities.voice_input;
   elements.newConversation.disabled = state.running || state.connection !== "ready";
@@ -112,6 +115,7 @@ function updateSendState() {
   elements.wakeWordButton.disabled = !wakeModeOpen && (
     state.running
     || Boolean(state.recorder)
+    || state.recorderStarting
     || state.connection !== "ready"
     || !state.capabilities.wake_word
   );
@@ -316,6 +320,7 @@ async function connectPipeline({ silent = false } = {}) {
       diagnostic: !silent,
     });
     state.capabilities = { ...state.capabilities, ...health.capabilities };
+    state.audioStream = health.audio_stream || null;
     diagnostics.setEnabled(Boolean(state.capabilities.diagnostics));
     if (!silent) diagnostics.debug("health_received", health);
     const healthStatus = ["ready", "starting", "error"].includes(health.status)
@@ -362,6 +367,7 @@ async function connectPipeline({ silent = false } = {}) {
       diagnostics: false,
       privacy_centre: false,
     };
+    state.audioStream = null;
     diagnostics.setEnabled(false);
     setConnectionStatus("offline");
   }

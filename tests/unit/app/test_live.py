@@ -181,6 +181,14 @@ def test_config_from_args_maps_live_options() -> None:
     args = live._build_parser().parse_args(
         [
             "--no-wake-word",
+            "--stt-model",
+            "turbo",
+            "--stt-device",
+            "cuda",
+            "--stt-compute-type",
+            "float16",
+            "--tts-voice",
+            "en_US-lessac-medium",
             "--device-index",
             "2",
             "--threshold",
@@ -196,6 +204,10 @@ def test_config_from_args_maps_live_options() -> None:
     config = live._config_from_args(args)
 
     assert config.use_wake_word is False
+    assert config.voice_io.stt_model == "turbo"
+    assert config.voice_io.stt_device == "cuda"
+    assert config.voice_io.stt_compute_type == "float16"
+    assert config.voice_io.tts_voice == "en_US-lessac-medium"
     assert config.device_index == 2
     assert config.wake_word_threshold == 0.2
     assert config.load_memory is False

@@ -471,9 +471,11 @@ h3 { font-size: 17px; }
 .setup-footer > div { display: flex; gap: 8px; }
 
 .data-dialog {
-  width: min(820px, calc(100% - 32px));
+  width: min(820px, calc(100vw - 32px));
+  height: min(820px, calc(100vh - 32px));
+  height: min(820px, calc(100dvh - 32px));
   max-width: none;
-  max-height: min(820px, calc(100% - 32px));
+  max-height: none;
   padding: 0;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-lg);
@@ -483,11 +485,11 @@ h3 { font-size: 17px; }
   overflow: hidden;
 }
 .data-dialog::backdrop { background: rgba(20, 20, 17, 0.58); backdrop-filter: blur(6px); }
-.data-shell { display: flex; max-height: inherit; flex-direction: column; }
-.data-header { padding: 28px 30px 22px; display: flex; justify-content: space-between; gap: 24px; border-bottom: 1px solid var(--line); }
+.data-shell { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+.data-header { flex: 0 0 auto; padding: 28px 30px 22px; display: flex; justify-content: space-between; gap: 24px; border-bottom: 1px solid var(--line); }
 .data-header h2 { font-size: clamp(26px, 4vw, 36px); }
 .data-header p:last-child { max-width: 620px; margin: 10px 0 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
-.data-content { padding: 0 30px 30px; overflow-y: auto; }
+.data-content { min-height: 0; flex: 1 1 auto; padding: 0 30px 30px; overflow-y: auto; }
 .data-section { padding: 25px 0; border-bottom: 1px solid var(--line); }
 .data-section:last-child { border-bottom: 0; }
 .data-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
@@ -590,7 +592,7 @@ h3 { font-size: 17px; }
   .wake-settings { top: 66px; right: 18px; }
   .wake-conversation-panel { width: 100%; padding: 82px 18px 24px; }
   .wake-word-screen.show-conversation .wake-word-stage { visibility: hidden; margin-left: 0; }
-  .data-dialog { width: calc(100% - 16px); max-height: calc(100% - 16px); border-radius: 18px; }
+  .data-dialog { width: calc(100vw - 16px); height: calc(100vh - 16px); height: calc(100dvh - 16px); border-radius: 18px; }
   .data-header { padding: 23px 20px 18px; }
   .data-content { padding: 0 20px 20px; }
   .data-section-heading, .data-item-main { flex-direction: column; }

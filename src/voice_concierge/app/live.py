@@ -5,7 +5,8 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TextIO
 
 from voice_concierge.app.factory import build_voice_concierge_pipeline
@@ -19,6 +20,11 @@ from voice_concierge.app.reminders import (
 )
 from voice_concierge.app.routines import RoutineTurnHandler
 from voice_concierge.app.types import AppPipelineState, AppTurnResult
+from voice_concierge.app.voice_io import (
+    VoiceIOConfig,
+    build_configured_speech_to_text,
+    build_configured_text_to_speech,
+)
 from voice_concierge.audio import CapturedAudio, PyAudioSource
 from voice_concierge.reasoning.errors import (
     ReasoningBackendUnavailableError,
@@ -54,6 +60,7 @@ from voice_concierge.voice_input.wake_word_detector import (
 )
 
 DEFAULT_WAKE_WORD_MODEL = "hey_jarvis_v0.1.onnx"
+DEFAULT_VOICE_IO_CONFIG = VoiceIOConfig()
 
 
 @dataclass(frozen=True)
@@ -66,6 +73,7 @@ class LiveAppConfig:
     play: bool = True
     one_shot: bool = False
     device_index: int | None = None
+    voice_io: VoiceIOConfig = field(default_factory=VoiceIOConfig)
     wake_word_model: str = DEFAULT_WAKE_WORD_MODEL
     wake_word_threshold: float = DEFAULT_WAKE_WORD_THRESHOLD
     download_wake_models: bool = False
@@ -205,14 +213,14 @@ def build_live_app_pipeline(config: LiveAppConfig) -> VoiceConciergePipeline:
     """Build the app pipeline with the real local voice dependencies."""
 
     from voice_concierge.audio.player import SoundDevicePlayer
-    from voice_concierge.voice_input.stt.factory import build_speech_to_text
-    from voice_concierge.voice_output.factory import build_text_to_speech
 
-    text_to_speech = build_text_to_speech() if config.synthesize else None
+    text_to_speech = (
+        build_configured_text_to_speech(config.voice_io) if config.synthesize else None
+    )
     audio_player = SoundDevicePlayer() if config.play else None
     return build_voice_concierge_pipeline(
         AppReasoningConfig(policy_profile=config.policy_profile),
-        speech_to_text=build_speech_to_text(),
+        speech_to_text=build_configured_speech_to_text(config.voice_io),
         text_to_speech=text_to_speech,
         audio_player=audio_player,
         load_memory=config.load_memory,
@@ -372,7 +380,10 @@ def build_routine_turn_handler(  # pragma: no cover - builds models and devices
     from voice_concierge.memory import build_memory_manager
     from voice_concierge.reasoning.factory import build_reasoning_engine
     from voice_concierge.routines import RoutineRunner, build_routine_adapter
-    from voice_concierge.voice_output.factory import build_paced_text_to_speech
+    from voice_concierge.voice_output.factory import (
+        build_paced_text_to_speech,
+        piper_backend_builder,
+    )
 
     if not echo_cancellation_available():
         # Without echo cancellation the assistant hears its own speech as a
@@ -391,7 +402,12 @@ def build_routine_turn_handler(  # pragma: no cover - builds models and devices
         player = VoiceProcessingAudioPlayer()
         # A paced voice, so "slower" and "faster" spoken during a step
         # change the rate and have the step read again at the new speed.
-        paced = build_paced_text_to_speech()
+        paced = build_paced_text_to_speech(
+            piper_backend_builder(
+                voice=config.voice_io.tts_voice,
+                model_directory=config.voice_io.tts_model_directory,
+            )
+        )
         speaker = EchoCancelledStepSpeaker(paced, player, spotter, pace=paced)
         waiter = MicCommandWaiter(
             PyAudioSource(rate=DEFAULT_RATE, input_device_index=config.device_index),
@@ -483,6 +499,35 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Run wake word -> VAD -> STT -> app pipeline -> TTS locally.",
     )
     parser.add_argument(
+        "--stt-model",
+        default=DEFAULT_VOICE_IO_CONFIG.stt_model,
+        help=(
+            "faster-whisper model name, Hugging Face model ID, or local converted "
+            "model directory."
+        ),
+    )
+    parser.add_argument(
+        "--stt-device",
+        default=DEFAULT_VOICE_IO_CONFIG.stt_device,
+        help="faster-whisper device, such as cpu, cuda, or auto.",
+    )
+    parser.add_argument(
+        "--stt-compute-type",
+        default=DEFAULT_VOICE_IO_CONFIG.stt_compute_type,
+        help="CTranslate2 compute type, such as int8, float16, or float32.",
+    )
+    parser.add_argument(
+        "--tts-voice",
+        default=DEFAULT_VOICE_IO_CONFIG.tts_voice,
+        help="Piper voice identifier, for example en_GB-alan-medium.",
+    )
+    parser.add_argument(
+        "--tts-model-dir",
+        type=Path,
+        default=DEFAULT_VOICE_IO_CONFIG.tts_model_directory,
+        help="Directory containing the selected Piper .onnx and .onnx.json files.",
+    )
+    parser.add_argument(
         "--no-wake-word",
         action="store_true",
         help="Skip wake word detection and repeatedly capture speech with VAD.",
@@ -567,6 +612,13 @@ def _config_from_args(args: argparse.Namespace) -> LiveAppConfig:
         play=play,
         one_shot=args.one_shot,
         device_index=args.device_index,
+        voice_io=VoiceIOConfig(
+            stt_model=args.stt_model,
+            stt_device=args.stt_device,
+            stt_compute_type=args.stt_compute_type,
+            tts_voice=args.tts_voice,
+            tts_model_directory=args.tts_model_dir,
+        ),
         wake_word_model=args.wake_model,
         wake_word_threshold=args.threshold,
         download_wake_models=args.download_wake_models,

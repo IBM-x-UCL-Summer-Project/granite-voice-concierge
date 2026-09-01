@@ -55,6 +55,7 @@ from voice_concierge.app.types import (
     SpeechToTextAdapter,
     TextToSpeechAdapter,
 )
+from voice_concierge.app.voice_io import VoiceIOConfig
 
 __all__ = [
     "AppPipelineState",
@@ -84,6 +85,7 @@ __all__ = [
     "SpeechToTextAdapter",
     "TextToSpeechAdapter",
     "VoiceConciergePipeline",
+    "VoiceIOConfig",
     "app_pipeline_state_from_dict",
     "app_pipeline_state_to_dict",
     "app_turn_options_from_dict",

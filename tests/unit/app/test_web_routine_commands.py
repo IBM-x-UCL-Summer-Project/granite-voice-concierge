@@ -57,6 +57,16 @@ def test_new_session_reuses_warm_spotter_but_rejects_old_session() -> None:
     assert service.stop("session-b") is True
 
 
+def test_stale_connection_cannot_stop_new_stream_in_the_same_session() -> None:
+    spotter = FakeSpotter()
+    service = WebRoutineCommandService(lambda: spotter)
+    service.start("session-a", stream_id="old")
+    service.start("session-a", stream_id="new")
+
+    assert service.stop("session-a", stream_id="old") is False
+    assert service.process_pcm("session-a", b"\0\0", stream_id="new") is None
+
+
 def test_reset_discards_audio_without_rebuilding_model() -> None:
     spotter = FakeSpotter()
     builds = 0

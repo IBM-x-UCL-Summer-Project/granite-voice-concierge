@@ -6,6 +6,16 @@ function showToast(message) {
   window.setTimeout(() => elements.toast.classList.remove("is-visible"), 1600);
 }
 
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) return;
+  resumeActiveMicrophoneCaptures().then((results) => {
+    if (results.some((result) => result.status === "rejected")) {
+      diagnostics.warning("microphone_resume_failed", {});
+    }
+  });
+});
+navigator.mediaDevices?.addEventListener("devicechange", handleAudioDeviceChange);
+
 elements.form.addEventListener("submit", (event) => {
   event.preventDefault();
   runTurn(elements.input.value);

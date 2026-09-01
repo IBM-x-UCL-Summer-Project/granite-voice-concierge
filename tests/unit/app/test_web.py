@@ -34,6 +34,7 @@ from voice_concierge.app.reminders import ReminderTurnHandler
 from voice_concierge.app.serialization import app_pipeline_state_to_dict
 from voice_concierge.app.smoke import SmokeReasoningService, build_smoke_pipeline
 from voice_concierge.app.types import AppPipelineState
+from voice_concierge.app.voice_io import VoiceIOConfig
 from voice_concierge.app.web import PipelineWebServer
 from voice_concierge.app.web_features import (
     WebFeatureServices,
@@ -57,12 +58,14 @@ from voice_concierge.voice_input.wake_word_detector import WakeWordPrediction
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 WEB_APPLICATION_SCRIPTS = (
+    "audio-stream.js",
     "app-context.js",
     "diagnostics.js",
     "settings.js",
     "conversation.js",
     "api-client.js",
     "playback.js",
+    "audio-capture.js",
     "voice-input.js",
     "voice-commands.js",
     "wake-word.js",
@@ -116,6 +119,7 @@ def running_server(
     warm_up: Callable[[], None] | None = None,
     voice_input_enabled: bool = False,
     diagnostics_enabled: bool = False,
+    audio_stream: dict[str, object] | None = None,
 ) -> Iterator[str]:
     resolved_pipeline = pipeline or build_smoke_pipeline()
     server = PipelineWebServer(
@@ -128,6 +132,7 @@ def running_server(
         warm_up=warm_up,
         voice_input_enabled=voice_input_enabled,
         diagnostics_enabled=diagnostics_enabled,
+        audio_stream=audio_stream,
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -181,6 +186,18 @@ def test_health_reports_pipeline_capabilities() -> None:
         },
         "runtime": {"model": "smoke model", "policy_profile": "strict"},
     }
+
+
+def test_health_advertises_binary_audio_stream_when_enabled() -> None:
+    configuration: dict[str, object] = {
+        "path": "/api/audio-stream",
+        "port": 4174,
+        "subprotocol": "granite-audio-v1",
+    }
+    with running_server(audio_stream=configuration) as base_url:
+        response = read_json(f"{base_url}/api/health")
+
+    assert response["audio_stream"] == configuration
 
 
 def test_speech_preview_uses_configured_local_synthesizer() -> None:
@@ -327,11 +344,71 @@ def test_web_application_uses_relaxed_uat_policy_by_default(
         pipeline.close()
 
 
+def test_web_application_builds_selected_voice_backends(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    pipeline = build_smoke_pipeline()
+    selected = VoiceIOConfig(
+        stt_model="turbo",
+        stt_device="cuda",
+        stt_compute_type="float16",
+        tts_voice="en_US-lessac-medium",
+        tts_model_directory=tmp_path,
+    )
+    calls: list[tuple[str, VoiceIOConfig]] = []
+    speech_to_text = object()
+    text_to_speech = object()
+
+    monkeypatch.setattr(
+        web_module,
+        "build_configured_speech_to_text",
+        lambda config: calls.append(("stt", config)) or speech_to_text,
+    )
+    monkeypatch.setattr(
+        web_module,
+        "build_configured_text_to_speech",
+        lambda config: calls.append(("tts", config)) or text_to_speech,
+    )
+
+    def fake_build_pipeline(_config=None, **kwargs: object):
+        assert kwargs["speech_to_text"] is speech_to_text
+        assert kwargs["text_to_speech"] is text_to_speech
+        return pipeline
+
+    monkeypatch.setattr(
+        web_module,
+        "build_voice_concierge_pipeline",
+        fake_build_pipeline,
+    )
+
+    built_pipeline, features = web_module.build_web_application(
+        load_memory=False,
+        load_voice_io=True,
+        voice_io_config=selected,
+        load_reminders=False,
+        load_guided_routines=False,
+    )
+
+    try:
+        assert built_pipeline is pipeline
+        assert calls == [("stt", selected), ("tts", selected)]
+    finally:
+        features.close()
+        pipeline.close()
+
+
 def test_static_ui_disables_browser_cache() -> None:
     with running_server() as base_url:
         with urlopen(f"{base_url}/", timeout=2) as response:
             html = response.read().decode("utf-8")
             cache_control = response.headers.get("Cache-Control")
+        worklet_assets = []
+        for asset in ("audio-capture-worklet.mjs", "audio-resampler.mjs"):
+            with urlopen(f"{base_url}/{asset}", timeout=2) as response:
+                worklet_assets.append(
+                    (response.status, response.headers.get("Cache-Control"))
+                )
 
     assert cache_control == "no-store"
     assert "./playback-policy.js?v=20260820" in html
@@ -339,7 +416,35 @@ def test_static_ui_disables_browser_cache() -> None:
     for name in WEB_APPLICATION_SCRIPTS:
         assert f"./{name}?v=20260820-" in html
     assert "./app.js?v=20260820-3" in html
-    assert "./styles.css?v=20260820-2" in html
+    assert "./styles.css?v=20260901-1" in html
+
+    assert worklet_assets == [(200, "no-store"), (200, "no-store")]
+
+
+def test_browser_microphone_capture_uses_audio_worklet() -> None:
+    script = read_web_application_scripts()
+
+    assert "openMicrophoneCapture({" in script
+    assert "getSupportedConstraints" in script
+    assert "getSettings" in script
+    assert "createScriptProcessor" not in script
+    assert "onaudioprocess" not in script
+
+
+def test_continuous_browser_audio_uses_bounded_binary_websocket() -> None:
+    stream = (REPOSITORY_ROOT / "web" / "audio-stream.js").read_text(encoding="utf-8")
+    wake_word = (REPOSITORY_ROOT / "web" / "wake-word.js").read_text(encoding="utf-8")
+    voice_commands = (REPOSITORY_ROOT / "web" / "voice-commands.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert "new WebSocket(" in stream
+    assert 'binaryType = "arraybuffer"' in stream
+    assert "AUDIO_STREAM_MAX_QUEUED_FRAMES" in stream
+    assert "bufferedAmount" in stream
+    assert "encodePcmBase64" not in wake_word + voice_commands
+    assert 'requestJson("/api/wake-word/frame"' not in wake_word
+    assert 'requestJson("/api/routine-command/frame"' not in voice_commands
 
 
 def test_browser_never_persists_conversation_state() -> None:
